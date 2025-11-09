@@ -49,6 +49,9 @@ set(PORPOISE_SOURCES
     src/pad/PAD.c
     src/pad/PADClamp.c
     src/pad/PADConfig.c
+    
+    # DVD (File System)
+    src/dvd/DVD.c
 )
 
 # Create library

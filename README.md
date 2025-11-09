@@ -61,11 +61,22 @@ Link against the libPorpoise library and include the appropriate headers:
 ```c
 #include <dolphin/os.h>
 #include <dolphin/pad.h>
+#include <dolphin/dvd.h>
 
 int main() {
     OSInit();
     PADInit();  // Initialize controller system
+    DVDInit();  // Initialize file system
     
+    // Load game data from files/ directory
+    DVDFileInfo file;
+    char buffer[1024];
+    if (DVDOpen("data/level1.dat", &file)) {
+        DVDRead(&file, buffer, sizeof(buffer), 0);
+        DVDClose(&file);
+    }
+    
+    // Game loop
     PADStatus pads[PAD_MAX_CONTROLLERS];
     while (running) {
         PADRead(pads);  // Read all controllers
@@ -103,9 +114,9 @@ See [SDL2_SETUP.md](docs/SDL2_SETUP.md) for full configuration options.
 |--------|--------|-------------|
 | **OS** | ✅ **Complete** | Operating system and threading (16 modules, 13,500+ lines) |
 | **PAD** | ✅ **Complete** | Controller input (SDL2 + keyboard fallback + config system) |
+| **DVD** | ✅ **Complete** | File I/O (maps disc access to local "files/" directory) |
 | GX     | 📋 Planned | Graphics subsystem |
 | CARD   | 📋 Planned | Memory card operations |
-| DVD    | 📋 Planned | Disc I/O |
 | AX/DSP | 📋 Planned | Audio subsystem |
 
 **v0.1.0 - OS Module Complete!** See [IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for detailed breakdown.

@@ -25,3 +25,8 @@ add_executable(pad_test pad_test.c)
 target_link_libraries(pad_test porpoise)
 target_include_directories(pad_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
+# DVD (file system) example
+add_executable(dvd_test dvd_test.c)
+target_link_libraries(dvd_test porpoise)
+target_include_directories(dvd_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+

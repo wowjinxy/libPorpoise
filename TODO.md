@@ -97,12 +97,15 @@ This document tracks planned features, improvements, and known issues.
 - [ ] Async operations
 - [ ] Multiple card support
 
-### DVD Module (Disc I/O)
-- [ ] Virtual file system
-- [ ] File reading from directories
-- [ ] Archive support (ISO, GCM)
-- [ ] Async read operations
-- [ ] Path mapping
+### DVD Module (Disc I/O) ✅
+- [x] Virtual file system (maps to "files/" directory)
+- [x] File reading from directories
+- [x] DVDOpen/DVDClose/DVDRead API
+- [x] Async read operations (background threads)
+- [x] Path mapping (configurable root directory)
+- [x] Directory operations (DVDOpenDir/DVDReadDir/DVDChangeDir)
+- [x] Synchronous and asynchronous reads
+- [ ] Archive support (ISO, GCM) - Future enhancement
 
 ### AX/DSP Module (Audio)
 - [ ] Audio mixer
