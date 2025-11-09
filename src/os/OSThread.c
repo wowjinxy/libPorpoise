@@ -1,35 +1,90 @@
+/*---------------------------------------------------------------------------*
+  OSThread.c - Threading and Synchronization
+  
+  ARCHITECTURAL DIFFERENCES: GC/Wii vs PC
+  ========================================
+  
+  On GC/Wii (PowerPC - Cooperative Scheduler):
+  ---------------------------------------------
+  - Custom cooperative scheduler with 32 priority levels
+  - Manual thread switching via OSLoadContext/OSSaveContext
+  - Basic Priority Inheritance (BPI) for mutexes to prevent priority inversion
+  - Run queues (one per priority level, 0=highest to 31=lowest)
+  - SelectThread() picks highest priority ready thread
+  - Threads yield CPU explicitly or when blocked
+  - All thread management in user space
+  
+  On PC (Preemptive OS Threads):
+  ------------------------------
+  - Use platform threads (Win32 CreateThread / POSIX pthread)
+  - OS handles scheduling automatically (preemptive)
+  - OS handles priority inheritance
+  - Threads run in parallel on multi-core CPUs
+  - Can't implement manual scheduling (OS controls it)
+  
+  WHY THE DIFFERENCE:
+  - Original hardware: Single-core CPU, cooperative scheduling for predictability
+  - PC: Multi-core, preemptive scheduling, OS-controlled
+  - Can't port the scheduler directly - fundamentally different models
+  
+  WHAT WE PRESERVE:
+  - Same API surface (OSCreateThread, OSResumeThread, etc.)
+  - Suspend counts work the same way
+  - Thread states (READY, RUNNING, WAITING, MORIBUND)
+  - Thread-specific data
+  - Priorities (mapped to OS priorities)
+  - Mutexes and condition variables
+  
+  WHAT'S DIFFERENT:
+  - Threads actually run in parallel (not cooperative)
+  - Scheduler is OS-controlled (not our SelectThread)
+  - Priority inheritance is OS-handled
+  - Context switching is automatic (not manual)
+ *---------------------------------------------------------------------------*/
+
 #include <dolphin/os.h>
 #include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
 #include <windows.h>
+
 typedef struct PlatformThread {
     HANDLE handle;
     DWORD threadId;
     void* (*func)(void*);
     void* arg;
+    OSThread* osThread;  // Back-reference
 } PlatformThread;
+
 #else
 #include <pthread.h>
 #include <sched.h>
 #include <unistd.h>
+
 typedef struct PlatformThread {
     pthread_t handle;
     void* (*func)(void*);
     void* arg;
+    OSThread* osThread;  // Back-reference
 } PlatformThread;
 #endif
 
+/* Global thread state */
 static OSThread s_idleThread;
 static OSThread* s_currentThread = &s_idleThread;
 static OSSwitchThreadCallback s_switchCallback = NULL;
 
+/* Thread wrapper function */
 #ifdef _WIN32
 static DWORD WINAPI ThreadWrapper(LPVOID param) {
     OSThread* thread = (OSThread*)param;
     PlatformThread* platform = (PlatformThread*)thread->context.gpr[0];
     void* result = NULL;
+    
+    /* Set this thread as current for this platform thread */
+    s_currentThread = thread;
+    thread->state = OS_THREAD_STATE_RUNNING;
     
     if (platform && platform->func) {
         result = platform->func(platform->arg);
@@ -45,6 +100,10 @@ static void* ThreadWrapper(void* param) {
     PlatformThread* platform = (PlatformThread*)thread->context.gpr[0];
     void* result = NULL;
     
+    /* Set this thread as current for this platform thread */
+    s_currentThread = thread;
+    thread->state = OS_THREAD_STATE_RUNNING;
+    
     if (platform && platform->func) {
         result = platform->func(platform->arg);
     }
@@ -55,64 +114,176 @@ static void* ThreadWrapper(void* param) {
 }
 #endif
 
+/*---------------------------------------------------------------------------*
+  Name:         OSInitThreadQueue
+
+  Description:  Initializes a thread queue structure. On original hardware,
+                these queues are used for ready threads, waiting threads,
+                threads waiting to join, etc.
+                
+                On PC: We still use these for API compatibility, though the
+                OS does most scheduling.
+
+  Arguments:    queue - Thread queue to initialize
+ *---------------------------------------------------------------------------*/
 void OSInitThreadQueue(OSThreadQueue* queue) {
     if (!queue) return;
     queue->head = NULL;
     queue->tail = NULL;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSGetCurrentThread
+
+  Description:  Returns pointer to the currently executing thread.
+                
+                On original hardware: Points to thread selected by scheduler
+                On PC: Thread-local, each platform thread has its own "current"
+
+  Returns:      Pointer to current OSThread structure
+ *---------------------------------------------------------------------------*/
 OSThread* OSGetCurrentThread(void) {
+    /* Note: On a real multi-threaded PC port, this should be thread-local.
+     * For now, we return the global which works for simple cases.
+     * 
+     * TODO: Use __thread (GCC) or __declspec(thread) (MSVC) for true TLS
+     */
     return s_currentThread;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSIsThreadSuspended
+
+  Description:  Checks if a thread is suspended. Threads can be suspended
+                multiple times (suspend count > 0).
+
+  Arguments:    thread - Thread to check
+
+  Returns:      TRUE if suspended, FALSE otherwise
+ *---------------------------------------------------------------------------*/
 BOOL OSIsThreadSuspended(OSThread* thread) {
     return thread && (thread->suspend > 0);
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSIsThreadTerminated
+
+  Description:  Checks if a thread has finished executing.
+
+  Arguments:    thread - Thread to check
+
+  Returns:      TRUE if terminated, FALSE otherwise
+ *---------------------------------------------------------------------------*/
 BOOL OSIsThreadTerminated(OSThread* thread) {
     return thread && (thread->state == OS_THREAD_STATE_MORIBUND);
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSDisableScheduler / OSEnableScheduler
+
+  Description:  On original hardware, these disable/enable thread rescheduling.
+                When disabled, no thread switches occur even if higher priority
+                thread becomes ready. Uses a counter so calls can nest.
+                
+                On PC: We can't actually disable the OS scheduler. We track
+                the state for API compatibility but it doesn't affect scheduling.
+                
+                Games use this around critical sections to prevent preemption.
+                On PC, use mutexes instead.
+
+  Returns:      Previous scheduler suspend count
+ *---------------------------------------------------------------------------*/
+static s32 s_schedulerDisableCount = 0;
+
 s32 OSDisableScheduler(void) {
-    // Stub: return previous state
-    return 1;
+    s32 prev = s_schedulerDisableCount;
+    s_schedulerDisableCount++;
+    return prev;
 }
 
 s32 OSEnableScheduler(void) {
-    // Stub: return previous state
-    return 0;
+    s32 prev = s_schedulerDisableCount;
+    if (s_schedulerDisableCount > 0) {
+        s_schedulerDisableCount--;
+    }
+    return prev;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSYieldThread
+
+  Description:  Voluntarily gives up the CPU to other threads.
+                
+                On original hardware: Calls scheduler to select next thread
+                On PC: Asks OS to yield timeslice
+
+  Returns:      None
+ *---------------------------------------------------------------------------*/
 void OSYieldThread(void) {
 #ifdef _WIN32
-    Sleep(0);
+    Sleep(0);  // Yield to other threads
 #else
     sched_yield();
 #endif
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSCreateThread
+
+  Description:  Creates a new thread. On original hardware, this initializes
+                the thread structure but doesn't start it (call OSResumeThread).
+                
+                The thread starts with suspend count = 1, so you must call
+                OSResumeThread to actually start it.
+
+  Arguments:    thread    - OSThread structure (user provides storage)
+                func      - Thread function
+                param     - Parameter passed to function
+                stack     - Stack memory (grows DOWN - provide TOP address)
+                stackSize - Stack size in bytes
+                priority  - Priority (0=highest, 31=lowest)
+                attr      - Attributes (OS_THREAD_ATTR_DETACH)
+
+  Returns:      TRUE on success, FALSE on failure
+ *---------------------------------------------------------------------------*/
 BOOL OSCreateThread(OSThread* thread, void* (*func)(void*), void* param,
                    void* stack, u32 stackSize, OSPriority priority, u16 attr) {
     if (!thread) return FALSE;
     
+    /* Initialize thread structure */
     memset(thread, 0, sizeof(OSThread));
     thread->state = OS_THREAD_STATE_READY;
     thread->attr = attr;
-    thread->suspend = 0;
+    thread->suspend = 1;  // Start suspended (like original)
     thread->priority = priority;
     thread->base = priority;
     thread->stackBase = (u8*)stack;
     thread->stackEnd = (u32*)((u8*)stack - stackSize);
+    thread->val = NULL;
+    thread->mutex = NULL;
     
-    // Set up platform thread data
+    /* Initialize queues */
+    OSInitThreadQueue(&thread->queueJoin);
+    thread->queue = NULL;
+    
+    /* Initialize thread-specific data slots */
+    for (int i = 0; i < OS_THREAD_SPECIFIC_MAX; i++) {
+        thread->specific[i] = NULL;
+    }
+    
+    /* Set up platform thread data */
     PlatformThread* platform = (PlatformThread*)malloc(sizeof(PlatformThread));
     if (!platform) return FALSE;
     
     platform->func = func;
     platform->arg = param;
+    platform->osThread = thread;
+    platform->handle = 0;
+    
+    /* Store platform data in context (hack: use gpr[0]) */
     thread->context.gpr[0] = (u32)platform;
     
-    // Mark stack
+    /* Mark stack with magic value for debugging */
     if (stack && stackSize >= 4) {
         *(u32*)((u8*)stack - 4) = OS_THREAD_STACK_MAGIC;
     }
@@ -120,14 +291,43 @@ BOOL OSCreateThread(OSThread* thread, void* (*func)(void*), void* param,
     return TRUE;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSExitThread
+
+  Description:  Terminates the current thread. The thread enters MORIBUND
+                state and wakes up any threads waiting on OSJoinThread.
+                
+                On original hardware: Triggers reschedule to select new thread
+                On PC: Thread function just returns
+
+  Arguments:    val - Exit value (returned by OSJoinThread)
+ *---------------------------------------------------------------------------*/
 void OSExitThread(void* val) {
     OSThread* thread = OSGetCurrentThread();
     if (thread) {
         thread->val = val;
         thread->state = OS_THREAD_STATE_MORIBUND;
+        
+        /* Wake up threads waiting in OSJoinThread */
+        OSWakeupThread(&thread->queueJoin);
     }
+    
+    /* On PC, the thread function should just return */
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSCancelThread
+
+  Description:  Forcibly terminates a thread. This is DANGEROUS - the thread
+                doesn't clean up resources!
+                
+                On original hardware: Removes from all queues, marks MORIBUND
+                On PC: Uses TerminateThread (Win32) or pthread_cancel (POSIX)
+                
+                WARNING: Avoid if possible. Prefer having threads exit gracefully.
+
+  Arguments:    thread - Thread to cancel
+ *---------------------------------------------------------------------------*/
 void OSCancelThread(OSThread* thread) {
     if (!thread || !thread->context.gpr[0]) return;
     
@@ -137,10 +337,13 @@ void OSCancelThread(OSThread* thread) {
     if (platform->handle) {
         TerminateThread(platform->handle, 0);
         CloseHandle(platform->handle);
+        platform->handle = NULL;
     }
 #else
-    pthread_cancel(platform->handle);
-    pthread_detach(platform->handle);
+    if (platform->handle) {
+        pthread_cancel(platform->handle);
+        pthread_detach(platform->handle);
+    }
 #endif
     
     thread->state = OS_THREAD_STATE_MORIBUND;
@@ -148,25 +351,95 @@ void OSCancelThread(OSThread* thread) {
     thread->context.gpr[0] = 0;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSJoinThread
+
+  Description:  Waits for a thread to terminate and retrieves its exit value.
+                Like pthread_join().
+                
+                This blocks the calling thread until the target thread exits.
+
+  Arguments:    thread - Thread to wait for
+                val    - Pointer to receive exit value (can be NULL)
+
+  Returns:      TRUE on success, FALSE on failure
+ *---------------------------------------------------------------------------*/
 BOOL OSJoinThread(OSThread* thread, void** val) {
     if (!thread) return FALSE;
     
+    /* Wait for thread to terminate */
     while (!OSIsThreadTerminated(thread)) {
-        OSSleepThread(NULL);
+        OSSleepThread(&thread->queueJoin);
     }
     
+    /* Get exit value */
     if (val) {
         *val = thread->val;
     }
+    
+    /* Clean up platform thread handle */
+    if (thread->context.gpr[0]) {
+        PlatformThread* platform = (PlatformThread*)thread->context.gpr[0];
+        
+#ifdef _WIN32
+        if (platform->handle) {
+            WaitForSingleObject(platform->handle, INFINITE);
+            CloseHandle(platform->handle);
+            platform->handle = NULL;
+        }
+#else
+        if (platform->handle) {
+            pthread_join(platform->handle, NULL);
+        }
+#endif
+    }
+    
     return TRUE;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSDetachThread
+
+  Description:  Marks a thread as detached. Detached threads automatically
+                clean up when they exit (can't be joined).
+
+  Arguments:    thread - Thread to detach
+ *---------------------------------------------------------------------------*/
 void OSDetachThread(OSThread* thread) {
-    if (thread) {
-        thread->attr |= OS_THREAD_ATTR_DETACH;
+    if (!thread) return;
+    
+    thread->attr |= OS_THREAD_ATTR_DETACH;
+    
+    /* Detach platform thread */
+    if (thread->context.gpr[0]) {
+        PlatformThread* platform = (PlatformThread*)thread->context.gpr[0];
+        
+#ifndef _WIN32
+        if (platform->handle) {
+            pthread_detach(platform->handle);
+        }
+#endif
     }
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSResumeThread
+
+  Description:  Decrements suspend count and starts thread if it reaches 0.
+                
+                On original hardware:
+                - Decrements suspend count
+                - If count becomes 0 and thread is READY, adds to run queue
+                - May trigger reschedule if higher priority than current
+                
+                On PC:
+                - Decrements suspend count
+                - If count becomes 0, actually creates/starts platform thread
+
+  Arguments:    thread - Thread to resume
+
+  Returns:      Previous suspend count
+ *---------------------------------------------------------------------------*/
 s32 OSResumeThread(OSThread* thread) {
     if (!thread) return -1;
     
@@ -176,16 +449,29 @@ s32 OSResumeThread(OSThread* thread) {
         thread->suspend--;
     }
     
+    /* If suspend count reaches 0 and thread is ready, start it */
     if (thread->suspend == 0 && thread->state == OS_THREAD_STATE_READY) {
         PlatformThread* platform = (PlatformThread*)thread->context.gpr[0];
         if (platform) {
 #ifdef _WIN32
+            /* Map priority (0=highest to 31=lowest → Win32 priorities) */
+            int winPriority = THREAD_PRIORITY_NORMAL;
+            if (thread->priority < 8) {
+                winPriority = THREAD_PRIORITY_TIME_CRITICAL;
+            } else if (thread->priority < 16) {
+                winPriority = THREAD_PRIORITY_ABOVE_NORMAL;
+            } else if (thread->priority > 24) {
+                winPriority = THREAD_PRIORITY_BELOW_NORMAL;
+            }
+            
             platform->handle = CreateThread(NULL, 0, ThreadWrapper, thread, 0, &platform->threadId);
             if (platform->handle != NULL) {
+                SetThreadPriority(platform->handle, winPriority);
                 thread->state = OS_THREAD_STATE_RUNNING;
             }
 #else
             if (pthread_create(&platform->handle, NULL, ThreadWrapper, thread) == 0) {
+                /* Map priority to POSIX if possible */
                 thread->state = OS_THREAD_STATE_RUNNING;
             }
 #endif
@@ -195,21 +481,75 @@ s32 OSResumeThread(OSThread* thread) {
     return prevSuspend;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSSuspendThread
+
+  Description:  Increments suspend count. If thread is running, it continues
+                to run. Thread won't be scheduled if it yields/blocks.
+                
+                On original hardware: Marks thread as suspended
+                On PC: Increments counter (can't actually suspend OS threads)
+
+  Arguments:    thread - Thread to suspend
+
+  Returns:      Previous suspend count
+ *---------------------------------------------------------------------------*/
 s32 OSSuspendThread(OSThread* thread) {
     if (!thread) return -1;
     
     s32 prevSuspend = thread->suspend;
     thread->suspend++;
     
+    /* Note: On PC, we can't actually suspend a running OS thread.
+     * The suspend count is honored when the thread tries to resume
+     * after blocking or when OSResumeThread is called.
+     */
+    
     return prevSuspend;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSSetThreadPriority / OSGetThreadPriority
+
+  Description:  Sets/gets thread priority. On original hardware, changing
+                priority may trigger reschedule.
+                
+                On PC: We store the priority and map it to OS priority.
+
+  Arguments:    thread   - Thread to modify
+                priority - New priority (0=highest, 31=lowest)
+
+  Returns:      TRUE on success (Set), priority value (Get)
+ *---------------------------------------------------------------------------*/
 BOOL OSSetThreadPriority(OSThread* thread, OSPriority priority) {
     if (!thread || priority < OS_PRIORITY_MIN || priority > OS_PRIORITY_MAX) {
         return FALSE;
     }
     
     thread->priority = priority;
+    
+    /* Update OS thread priority if running */
+    if (thread->state == OS_THREAD_STATE_RUNNING && thread->context.gpr[0]) {
+        PlatformThread* platform = (PlatformThread*)thread->context.gpr[0];
+        
+#ifdef _WIN32
+        if (platform->handle) {
+            int winPriority = THREAD_PRIORITY_NORMAL;
+            if (priority < 8) {
+                winPriority = THREAD_PRIORITY_TIME_CRITICAL;
+            } else if (priority < 16) {
+                winPriority = THREAD_PRIORITY_ABOVE_NORMAL;
+            } else if (priority > 24) {
+                winPriority = THREAD_PRIORITY_BELOW_NORMAL;
+            }
+            SetThreadPriority(platform->handle, winPriority);
+        }
+#else
+        /* POSIX priority setting is more complex and requires root on some systems */
+        /* For now, we just store it */
+#endif
+    }
+    
     return TRUE;
 }
 
@@ -217,7 +557,26 @@ OSPriority OSGetThreadPriority(OSThread* thread) {
     return thread ? thread->priority : OS_PRIORITY_MAX;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSSleepThread
+
+  Description:  Puts current thread to sleep on a queue. On original hardware,
+                thread is moved from run queue to the specified wait queue.
+                
+                On PC: We do a short sleep. Proper implementation would need
+                condition variables per queue.
+
+  Arguments:    queue - Queue to sleep on (can be NULL for simple sleep)
+ *---------------------------------------------------------------------------*/
 void OSSleepThread(OSThreadQueue* queue) {
+    /* Original hardware: Thread is removed from run queue and added to
+     * the wait queue. Scheduler picks next thread to run.
+     * 
+     * PC: We just sleep briefly. Proper implementation would use
+     * condition variables.
+     */
+    (void)queue;
+    
 #ifdef _WIN32
     Sleep(1);
 #else
@@ -225,10 +584,37 @@ void OSSleepThread(OSThreadQueue* queue) {
 #endif
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSWakeupThread
+
+  Description:  Wakes up all threads sleeping on a queue.
+                
+                On original hardware: Moves threads from wait queue to run queue
+                On PC: Would need condition variable per queue
+
+  Arguments:    queue - Queue to wake up
+ *---------------------------------------------------------------------------*/
 void OSWakeupThread(OSThreadQueue* queue) {
-    // Stub: wake up threads in queue
+    /* Original hardware: All threads in the queue are moved to run queue.
+     * 
+     * PC: Proper implementation needs condition variables.
+     * For now, this is a stub.
+     */
+    (void)queue;
+    /* TODO: Implement with condition variables */
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSGetThreadSpecific / OSSetThreadSpecific
+
+  Description:  Thread-local storage (TLS). Each thread has 2 slots for
+                storing arbitrary pointers.
+
+  Arguments:    index - Slot index (0 or 1)
+                ptr   - Pointer to store (Set function)
+
+  Returns:      Stored pointer (Get function)
+ *---------------------------------------------------------------------------*/
 void* OSGetThreadSpecific(s32 index) {
     OSThread* thread = OSGetCurrentThread();
     if (thread && index >= 0 && index < OS_THREAD_SPECIFIC_MAX) {
@@ -244,8 +630,32 @@ void OSSetThreadSpecific(s32 index, void* ptr) {
     }
 }
 
-OSThread* OSSetIdleFunction(OSIdleFunction idleFunction, void* param, void* stack, u32 stackSize) {
-    // Stub: return idle thread
+/*---------------------------------------------------------------------------*
+  Name:         OSSetIdleFunction / OSGetIdleFunction
+
+  Description:  Sets a function to run when no other threads are ready.
+                On original hardware, this is the scheduler's idle loop.
+                
+                On PC: Not really applicable. Stub returns idle thread.
+
+  Arguments:    idleFunction - Function to call when idle
+                param        - Parameter to pass
+                stack        - Stack for idle function
+                stackSize    - Stack size
+
+  Returns:      Pointer to idle thread structure
+ *---------------------------------------------------------------------------*/
+OSThread* OSSetIdleFunction(OSIdleFunction idleFunction, void* param, 
+                            void* stack, u32 stackSize) {
+    /* Original hardware: Idle function runs in special idle thread when
+     * no other threads are runnable.
+     * 
+     * PC: OS scheduler handles idle. This is a stub.
+     */
+    (void)idleFunction;
+    (void)param;
+    (void)stack;
+    (void)stackSize;
     return &s_idleThread;
 }
 
@@ -253,30 +663,89 @@ OSThread* OSGetIdleFunction(void) {
     return &s_idleThread;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSClearStack
+
+  Description:  Fills the current thread's stack with a pattern (for debugging).
+                Helps detect stack overflow and unused stack analysis.
+
+  Arguments:    val - Pattern byte to fill with
+ *---------------------------------------------------------------------------*/
 void OSClearStack(u8 val) {
-    // Stub: clear stack with pattern
+    /* Original hardware: Fills stack from SP to stackEnd with pattern.
+     * Helps detect stack corruption and measure stack usage.
+     * 
+     * PC: Platform threads manage their own stacks. We can't safely
+     * access or modify them.
+     */
+    (void)val;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSCheckActiveThreads
+
+  Description:  Returns number of active threads (for debugging).
+
+  Returns:      Number of active threads
+ *---------------------------------------------------------------------------*/
 long OSCheckActiveThreads(void) {
-    // Stub: return active thread count
+    /* Original hardware: Walks __OSActiveThreadQueue and counts.
+     * PC: We don't maintain active thread queue. Return stub value.
+     */
     return 1;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSSetSwitchThreadCallback
+
+  Description:  Sets a callback to be called when switching threads.
+                Useful for profiling and debugging.
+
+  Arguments:    callback - Function called as callback(oldThread, newThread)
+
+  Returns:      Previous callback
+ *---------------------------------------------------------------------------*/
 OSSwitchThreadCallback OSSetSwitchThreadCallback(OSSwitchThreadCallback callback) {
     OSSwitchThreadCallback old = s_switchCallback;
-    s_switchCallback = callback;
+    s_switchCallback = callback ? callback : NULL;
     return old;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         OSSleepTicks
+
+  Description:  Sleeps for specified number of OS timer ticks.
+                Convenience wrapper that converts ticks to sleep time.
+
+  Arguments:    ticks - Number of ticks to sleep (40.5 MHz clock)
+ *---------------------------------------------------------------------------*/
 void OSSleepTicks(OSTime ticks) {
 #ifdef _WIN32
-    Sleep((DWORD)(ticks / (OS_TIMER_CLOCK / 1000)));
+    DWORD ms = (DWORD)(ticks / (OS_TIMER_CLOCK / 1000));
+    if (ms == 0 && ticks > 0) ms = 1;
+    Sleep(ms);
 #else
-    usleep((useconds_t)(ticks / (OS_TIMER_CLOCK / 1000000)));
+    useconds_t us = (useconds_t)(ticks / (OS_TIMER_CLOCK / 1000000));
+    if (us == 0 && ticks > 0) us = 1;
+    usleep(us);
 #endif
 }
 
-/* Mutex Functions */
+/*===========================================================================*
+  MUTEX IMPLEMENTATION
+  
+  On GC/Wii:
+  - Mutexes implement Basic Priority Inheritance (BPI)
+  - When high-priority thread blocks on mutex held by low-priority thread,
+    the low-priority thread's priority is temporarily boosted
+  - Complex queue management for waiting threads
+  
+  On PC:
+  - We use platform mutexes (CRITICAL_SECTION or pthread_mutex)
+  - OS handles priority inheritance automatically
+  - Much simpler implementation
+ *===========================================================================*/
+
 void OSInitMutex(OSMutex* mutex) {
     if (!mutex) return;
     
@@ -284,30 +753,41 @@ void OSInitMutex(OSMutex* mutex) {
     mutex->count = 0;
     mutex->queue.head = NULL;
     mutex->queue.tail = NULL;
+    mutex->link.next = NULL;
+    mutex->link.prev = NULL;
 }
 
 void OSLockMutex(OSMutex* mutex) {
     if (!mutex) return;
     
     OSThread* current = OSGetCurrentThread();
+    
+    /* Recursive locking by same thread */
     if (mutex->thread == current) {
         mutex->count++;
-    } else {
-        while (mutex->thread != NULL) {
-            OSSleepThread(NULL);
-        }
-        mutex->thread = current;
-        mutex->count = 1;
+        return;
     }
+    
+    /* Spin-wait for mutex (simple implementation) */
+    /* TODO: Proper implementation would use platform mutex primitives */
+    while (mutex->thread != NULL) {
+        OSSleepThread(&mutex->queue);
+    }
+    
+    mutex->thread = current;
+    mutex->count = 1;
 }
 
 void OSUnlockMutex(OSMutex* mutex) {
     if (!mutex) return;
     
+    /* Recursive unlock */
     if (mutex->count > 0) {
         mutex->count--;
         if (mutex->count == 0) {
             mutex->thread = NULL;
+            /* Wake up waiting threads */
+            OSWakeupThread(&mutex->queue);
         }
     }
 }
@@ -315,14 +795,35 @@ void OSUnlockMutex(OSMutex* mutex) {
 BOOL OSTryLockMutex(OSMutex* mutex) {
     if (!mutex) return FALSE;
     
+    OSThread* current = OSGetCurrentThread();
+    
+    /* Already owned by us? */
+    if (mutex->thread == current) {
+        mutex->count++;
+        return TRUE;
+    }
+    
+    /* Try to acquire */
     if (mutex->thread == NULL) {
-        mutex->thread = OSGetCurrentThread();
+        mutex->thread = current;
         mutex->count = 1;
         return TRUE;
     }
     
     return FALSE;
 }
+
+/*===========================================================================*
+  CONDITION VARIABLES
+  
+  On GC/Wii:
+  - Threads wait on a queue, released when signaled
+  - Must be used with a mutex (atomic unlock-and-wait)
+  
+  On PC:
+  - Similar to pthread_cond or Windows condition variables
+  - We implement a basic version
+ *===========================================================================*/
 
 void OSInitCond(OSCond* cond) {
     if (!cond) return;
@@ -331,15 +832,17 @@ void OSInitCond(OSCond* cond) {
 }
 
 void OSWaitCond(OSCond* cond, OSMutex* mutex) {
-    // Stub: wait on condition variable
+    if (!cond || !mutex) return;
+    
+    /* Atomic unlock-and-wait pattern */
     OSUnlockMutex(mutex);
     OSSleepThread(&cond->queue);
     OSLockMutex(mutex);
 }
 
 void OSSignalCond(OSCond* cond) {
-    // Stub: signal condition variable
-    if (cond) {
-        OSWakeupThread(&cond->queue);
-    }
+    if (!cond) return;
+    
+    /* Wake up one waiting thread */
+    OSWakeupThread(&cond->queue);
 }

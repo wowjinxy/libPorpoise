@@ -50,6 +50,10 @@ cmake --build .
 
 See [MEMORY_EMULATION.md](docs/MEMORY_EMULATION.md) for details on memory emulation modes.
 
+## Architecture Notes
+
+Porpoise SDK adapts the original cooperative threading model to modern preemptive OS threads. See [THREADING_ARCHITECTURE.md](docs/THREADING_ARCHITECTURE.md) for detailed explanation of differences and migration patterns.
+
 ## Usage
 
 Link against the Porpoise SDK library and include the appropriate headers:
