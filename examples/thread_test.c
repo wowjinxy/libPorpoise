@@ -8,7 +8,7 @@ static OSThread testThread;
 static OSMutex testMutex;
 static int sharedCounter = 0;
 
-void ThreadFunction(void* arg) {
+void* ThreadFunction(void* arg) {
     int threadId = *(int*)arg;
     
     OSReport("Thread %d started!\n", threadId);
@@ -19,10 +19,11 @@ void ThreadFunction(void* arg) {
         OSReport("Thread %d: counter = %d\n", threadId, sharedCounter);
         OSUnlockMutex(&testMutex);
         
-        OSSleepThread();
+        OSSleepThread(NULL);
     }
     
     OSReport("Thread %d finished!\n", threadId);
+    return NULL;
 }
 
 int main(void) {
@@ -54,12 +55,12 @@ int main(void) {
         OSReport("Main thread: counter = %d\n", sharedCounter);
         OSUnlockMutex(&testMutex);
         
-        OSSleepThread();
+        OSSleepThread(NULL);
     }
     
     // Wait for thread to complete
     while (!OSIsThreadTerminated(&testThread)) {
-        OSSleepThread();
+        OSSleepThread(NULL);
     }
     
     OSReport("\nThread test completed!\n");
