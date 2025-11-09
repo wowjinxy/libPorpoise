@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Options
 option(PORPOISE_BUILD_EXAMPLES "Build example programs" ON)
 option(PORPOISE_BUILD_SHARED "Build shared library" OFF)
+option(PORPOISE_USE_GECKO_MEMORY "Enable full memory emulation (locked cache support)" OFF)
 
 # Output directories
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -37,6 +38,7 @@ set(PORPOISE_SOURCES
     src/os/OSSemaphore.c
     src/os/OSReset.c
     src/os/OSResetSW.c
+    src/os/GeckoMemory.c
 )
 
 # Create library
@@ -51,6 +53,11 @@ set_target_properties(porpoise PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
 )
+
+# Enable full memory emulation if requested
+if(PORPOISE_USE_GECKO_MEMORY)
+    target_compile_definitions(porpoise PUBLIC PORPOISE_USE_GECKO_MEMORY)
+endif()
 
 # Platform-specific settings
 if(WIN32)
@@ -83,3 +90,4 @@ message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Library type: ${PORPOISE_BUILD_SHARED}")
 message(STATUS "  Build examples: ${PORPOISE_BUILD_EXAMPLES}")
+message(STATUS "  Full memory emulation: ${PORPOISE_USE_GECKO_MEMORY}")

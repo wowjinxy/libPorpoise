@@ -12,6 +12,7 @@ Porpoise SDK provides a compatibility layer that allows GameCube and Wii games t
 - **Cross-Platform**: Builds on Windows, Linux, and macOS
 - **Modern Backend**: Uses modern graphics APIs and input systems while maintaining the classic interface
 - **Modular Design**: Include only the modules you need
+- **Dual Mode**: Simple mode for basic ports, or full memory emulation for advanced features
 
 ## Project Structure
 
@@ -36,12 +37,18 @@ See [QUICKSTART.md](QUICKSTART.md) for detailed build instructions and getting s
 
 **TL;DR:**
 ```bash
-# Linux/macOS
+# Linux/macOS - Simple mode
 ./build.sh
 
-# Windows
+# Windows - Simple mode
 build.bat
+
+# Enable full memory emulation (for locked cache support)
+cmake .. -DPORPOISE_USE_GECKO_MEMORY=ON
+cmake --build .
 ```
+
+See [MEMORY_EMULATION.md](docs/MEMORY_EMULATION.md) for details on memory emulation modes.
 
 ## Usage
 
