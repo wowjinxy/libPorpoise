@@ -15,6 +15,10 @@ OSResetCallback OSSetResetCallback   (OSResetCallback callback);
 OSPowerCallback OSSetPowerCallback   (OSPowerCallback callback);
 BOOL            OSGetResetSwitchState(void);
 
+/* PC Extensions - Manual button simulation */
+void OSSimulateResetButton(void);
+void OSSimulatePowerButton(void);
+
 #ifdef __cplusplus
 }
 #endif
