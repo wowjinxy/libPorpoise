@@ -1,6 +1,6 @@
 /**
  * @file gecko_memory.h
- * @brief Gekko/Broadway CPU Memory Emulation for Porpoise SDK
+ * @brief Gekko/Broadway CPU Memory Emulation for libPorpoise
  * 
  * Optional full memory emulation for games requiring precise hardware behavior.
  * Enable with PORPOISE_USE_GECKO_MEMORY define.

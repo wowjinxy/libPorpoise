@@ -1,4 +1,4 @@
-# Porpoise SDK v0.1.0 Release Notes
+# libPorpoise v0.1.0 Release Notes
 
 **Release Date:** November 9, 2025  
 **Codename:** "Foundation"  
@@ -8,7 +8,7 @@
 
 ## 🎊 What's New
 
-This is the **initial release** of Porpoise SDK - a drop-in replacement for the GameCube/Wii SDK designed for PC ports.
+This is the **initial release** of libPorpoise - a drop-in replacement for the GameCube/Wii SDK designed for PC ports.
 
 ### ✅ Complete OS Module Implementation
 
@@ -140,7 +140,7 @@ OSSetLanguage(OS_LANG_ENGLISH);
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd Porpoise_SDK
+cd libPorpoise
 
 # Build (Linux/macOS)
 ./build.sh
@@ -169,7 +169,7 @@ int main() {
     OSInit();
     
     // Use any OS functions!
-    OSReport("Hello from Porpoise SDK!\n");
+    OSReport("Hello from libPorpoise!\n");
     
     // Threading
     OSThread thread;
@@ -349,7 +349,7 @@ For questions, issues, or contributions:
 
 ---
 
-**Thank you for using Porpoise SDK!**
+**Thank you for using libPorpoise!**
 
 **Start porting your GameCube/Wii games to PC today!** 🎮→💻
 

@@ -1,4 +1,4 @@
-# Porpoise SDK Implementation Status
+# libPorpoise Implementation Status
 
 **Version:** 0.1.0  
 **Last Updated:** 2025-11-09  

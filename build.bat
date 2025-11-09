@@ -1,5 +1,5 @@
 @echo off
-REM Build script for Porpoise SDK on Windows
+REM Build script for libPorpoise on Windows
 
 setlocal
 
@@ -8,7 +8,7 @@ if "%BUILD_TYPE%"=="" set BUILD_TYPE=Release
 
 set BUILD_DIR=build
 
-echo Building Porpoise SDK...
+echo Building libPorpoise...
 echo Build type: %BUILD_TYPE%
 
 REM Create build directory

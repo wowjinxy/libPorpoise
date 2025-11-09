@@ -9,7 +9,7 @@
 
 ## Overview
 
-Currently, Porpoise SDK tracks error handlers registered via `OSSetErrorHandler()` but doesn't actually call them when exceptions occur. This is because modern operating systems handle exceptions before user code can intercept them.
+Currently, libPorpoise tracks error handlers registered via `OSSetErrorHandler()` but doesn't actually call them when exceptions occur. This is because modern operating systems handle exceptions before user code can intercept them.
 
 This document outlines how we could integrate platform-specific exception handling to call user error handlers, maintaining full compatibility with games that use custom exception handling.
 
@@ -373,7 +373,7 @@ When implemented, code would go in:
 
 ## Conclusion
 
-This feature would make Porpoise SDK more complete but is **not critical** for most ports. It's a **nice-to-have** rather than essential.
+This feature would make libPorpoise more complete but is **not critical** for most ports. It's a **nice-to-have** rather than essential.
 
 **Recommendation:** Implement only if:
 1. Specific game needs it

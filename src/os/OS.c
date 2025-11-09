@@ -81,7 +81,7 @@ void OSInit(void) {
     
     // Report initialization
     OSReport("==================================\n");
-    OSReport("Porpoise SDK v0.1.0\n");
+    OSReport("libPorpoise v0.1.0\n");
     OSReport("GC/Wii SDK PC Port\n");
     OSReport("==================================\n");
     OSReport("Initialized: %s %s\n", __DATE__, __TIME__);

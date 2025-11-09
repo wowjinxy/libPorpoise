@@ -1,4 +1,4 @@
-# Example programs for Porpoise SDK
+# Example programs for libPorpoise
 
 # Simple example
 add_executable(simple_example simple.c)

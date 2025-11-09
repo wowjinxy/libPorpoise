@@ -1,7 +1,7 @@
 #include <dolphin/os.h>
 
 int main(void) {
-    OSReport("Initializing Porpoise SDK...\n");
+    OSReport("Initializing libPorpoise...\n");
     
     // Initialize the OS
     OSInit();

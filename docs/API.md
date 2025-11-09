@@ -1,6 +1,6 @@
-# Porpoise SDK API Reference
+# libPorpoise API Reference
 
-This document provides a reference for the Porpoise SDK API, organized by module.
+This document provides a reference for the libPorpoise API, organized by module.
 
 ## OS Module (dolphin/os.h)
 

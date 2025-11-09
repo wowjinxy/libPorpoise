@@ -1,4 +1,4 @@
-# Porpoise SDK Development TODO
+# libPorpoise Development TODO
 
 This document tracks planned features, improvements, and known issues.
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(PorpoiseSDK VERSION 0.1.0 LANGUAGES C CXX)
+project(libPorpoise VERSION 0.1.0 LANGUAGES C CXX)
 
 # Set C/C++ standards
 set(CMAKE_C_STANDARD 11)
@@ -86,7 +86,7 @@ if(PORPOISE_BUILD_EXAMPLES)
 endif()
 
 # Print configuration
-message(STATUS "Porpoise SDK Configuration:")
+message(STATUS "libPorpoise Configuration:")
 message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Library type: ${PORPOISE_BUILD_SHARED}")

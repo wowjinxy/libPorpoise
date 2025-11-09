@@ -1,12 +1,12 @@
 #!/bin/bash
-# Build script for Porpoise SDK on Unix-like systems
+# Build script for libPorpoise on Unix-like systems
 
 set -e
 
 BUILD_TYPE="${1:-Release}"
 BUILD_DIR="build"
 
-echo "Building Porpoise SDK..."
+echo "Building libPorpoise..."
 echo "Build type: $BUILD_TYPE"
 
 # Create build directory

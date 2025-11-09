@@ -54,7 +54,7 @@ CurrentThread saves context → SelectThread picks next → LoadContext switches
 
 ---
 
-## PC Implementation (Porpoise SDK)
+## PC Implementation (libPorpoise)
 
 ### Preemptive OS Threads
 

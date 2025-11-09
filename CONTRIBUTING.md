@@ -1,6 +1,6 @@
-# Contributing to Porpoise SDK
+# Contributing to libPorpoise
 
-Thank you for your interest in contributing to Porpoise SDK! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to libPorpoise! This document provides guidelines and information for contributors.
 
 ## Code of Conduct
 

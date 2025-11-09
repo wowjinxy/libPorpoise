@@ -1,6 +1,6 @@
 # Memory Emulation Modes
 
-Porpoise SDK supports two memory emulation modes to accommodate different porting needs.
+libPorpoise supports two memory emulation modes to accommodate different porting needs.
 
 ## Mode 1: Simple Mode (Default)
 

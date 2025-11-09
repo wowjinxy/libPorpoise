@@ -1,4 +1,4 @@
-# Porpoise SDK - Project Summary
+# libPorpoise - Project Summary
 
 **Version:** 0.1.0  
 **Status:** OS Module Complete ✅  
@@ -209,7 +209,7 @@
 ## 📂 File Structure
 
 ```
-Porpoise_SDK/
+libPorpoise/
 ├── src/os/               (8,024 lines)
 │   ├── OS.c              (214)
 │   ├── OSAlarm.c         (545)

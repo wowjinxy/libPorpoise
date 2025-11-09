@@ -1,6 +1,6 @@
-# Porpoise SDK Quick Start Guide
+# libPorpoise Quick Start Guide
 
-Get up and running with Porpoise SDK in minutes!
+Get up and running with libPorpoise in minutes!
 
 ## Prerequisites
 
@@ -58,7 +58,7 @@ After building, run the example programs:
 ./build/bin/thread_example
 ```
 
-## Using Porpoise SDK in Your Project
+## Using libPorpoise in Your Project
 
 ### 1. Install the SDK
 
@@ -67,14 +67,14 @@ cd build
 cmake --install . --prefix /path/to/install
 ```
 
-### 2. Link Against Porpoise SDK
+### 2. Link Against libPorpoise
 
 **CMakeLists.txt:**
 ```cmake
 cmake_minimum_required(VERSION 3.15)
 project(MyGame)
 
-# Find Porpoise SDK
+# Find libPorpoise
 include_directories(/path/to/install/include)
 link_directories(/path/to/install/lib)
 
@@ -90,7 +90,7 @@ target_link_libraries(mygame porpoise)
 
 int main(void) {
     OSInit();
-    OSReport("Hello from Porpoise SDK!\n");
+    OSReport("Hello from libPorpoise!\n");
     return 0;
 }
 ```

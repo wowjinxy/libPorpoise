@@ -1,10 +1,10 @@
-# Porpoise SDK
+# libPorpoise
 
 A drop-in replacement for the GameCube/Wii SDK designed for PC ports.
 
 ## Overview
 
-Porpoise SDK provides a compatibility layer that allows GameCube and Wii games to be ported to PC with minimal code changes. By replicating the original SDK's API surface, developers can port their games while maintaining the same programming model.
+libPorpoise provides a compatibility layer that allows GameCube and Wii games to be ported to PC with minimal code changes. By replicating the original SDK's API surface, developers can port their games while maintaining the same programming model.
 
 ## Features
 
@@ -17,7 +17,7 @@ Porpoise SDK provides a compatibility layer that allows GameCube and Wii games t
 ## Project Structure
 
 ```
-Porpoise_SDK/
+libPorpoise/
 ├── include/          # Public header files (GC/Wii SDK API)
 │   ├── dolphin/      # Dolphin SDK headers
 │   └── revolution/   # Revolution SDK headers
@@ -52,11 +52,11 @@ See [MEMORY_EMULATION.md](docs/MEMORY_EMULATION.md) for details on memory emulat
 
 ## Architecture Notes
 
-Porpoise SDK adapts the original cooperative threading model to modern preemptive OS threads. See [THREADING_ARCHITECTURE.md](docs/THREADING_ARCHITECTURE.md) for detailed explanation of differences and migration patterns.
+libPorpoise adapts the original cooperative threading model to modern preemptive OS threads. See [THREADING_ARCHITECTURE.md](docs/THREADING_ARCHITECTURE.md) for detailed explanation of differences and migration patterns.
 
 ## Usage
 
-Link against the Porpoise SDK library and include the appropriate headers:
+Link against the libPorpoise library and include the appropriate headers:
 
 ```c
 #include <dolphin/os.h>
