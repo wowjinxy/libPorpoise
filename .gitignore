@@ -1,0 +1,60 @@
+# Reference files (not tracked)
+reference/
+
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# Compiled binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+lib/*.a
+lib/*.lib
+lib/*.so
+lib/*.dll
+
+# Object files
+*.o
+*.obj
+*.lo
+*.slo
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# IDE specific files
+.vscode/
+.vs/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Visual Studio
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.vcxproj.filters
+*.vcxproj.user
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+*.old
+
