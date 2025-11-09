@@ -65,6 +65,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <SDL2/SDL.h>
+#include "PADConfig.h"
 
 /*---------------------------------------------------------------------------*
     Internal State
@@ -139,6 +140,9 @@ static BOOL InitSDL(void) {
     if (s_sdl_initialized) {
         return TRUE;
     }
+    
+    // Load configuration from pad_config.ini
+    PADLoadConfig();
     
     // Try to initialize gamepad + haptic (rumble)
     if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC) < 0) {
@@ -307,40 +311,46 @@ static void ReadKeyboard(PADStatus* status) {
     memset(status, 0, sizeof(PADStatus));
     status->err = PAD_ERR_NONE;
     
-    // D-pad buttons
-    if (s_keyboard.keys[KEY_LEFT])  status->button |= PAD_BUTTON_LEFT;
-    if (s_keyboard.keys[KEY_RIGHT]) status->button |= PAD_BUTTON_RIGHT;
-    if (s_keyboard.keys[KEY_UP])    status->button |= PAD_BUTTON_UP;
-    if (s_keyboard.keys[KEY_DOWN])  status->button |= PAD_BUTTON_DOWN;
+    // Get configured key bindings
+    SDL_Scancode key_up = PADGetKeyboardBinding(PAD_BUTTON_UP);
+    SDL_Scancode key_down = PADGetKeyboardBinding(PAD_BUTTON_DOWN);
+    SDL_Scancode key_left = PADGetKeyboardBinding(PAD_BUTTON_LEFT);
+    SDL_Scancode key_right = PADGetKeyboardBinding(PAD_BUTTON_RIGHT);
+    
+    // D-pad buttons (also used for main stick)
+    if (s_keyboard.keys[key_left])  status->button |= PAD_BUTTON_LEFT;
+    if (s_keyboard.keys[key_right]) status->button |= PAD_BUTTON_RIGHT;
+    if (s_keyboard.keys[key_up])    status->button |= PAD_BUTTON_UP;
+    if (s_keyboard.keys[key_down])  status->button |= PAD_BUTTON_DOWN;
     
     // Face buttons
-    if (s_keyboard.keys[KEY_A])     status->button |= PAD_BUTTON_A;
-    if (s_keyboard.keys[KEY_B])     status->button |= PAD_BUTTON_B;
-    if (s_keyboard.keys[KEY_X])     status->button |= PAD_BUTTON_X;
-    if (s_keyboard.keys[KEY_Y])     status->button |= PAD_BUTTON_Y;
-    if (s_keyboard.keys[KEY_START]) status->button |= PAD_BUTTON_START;
+    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_BUTTON_A)])     status->button |= PAD_BUTTON_A;
+    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_BUTTON_B)])     status->button |= PAD_BUTTON_B;
+    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_BUTTON_X)])     status->button |= PAD_BUTTON_X;
+    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_BUTTON_Y)])     status->button |= PAD_BUTTON_Y;
+    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_BUTTON_START)]) status->button |= PAD_BUTTON_START;
     
-    // Triggers (digital)
-    if (s_keyboard.keys[KEY_Z])     status->button |= PAD_TRIGGER_Z;
-    if (s_keyboard.keys[KEY_L])     status->button |= PAD_TRIGGER_L;
-    if (s_keyboard.keys[KEY_R])     status->button |= PAD_TRIGGER_R;
+    // Triggers (digital buttons)
+    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_TRIGGER_Z)])     status->button |= PAD_TRIGGER_Z;
+    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_TRIGGER_L)])     status->button |= PAD_TRIGGER_L;
+    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_TRIGGER_R)])     status->button |= PAD_TRIGGER_R;
     
     // Main analog stick (digital simulation: -100 or +100)
     // We use ±100 instead of ±127 to avoid triggering unintended actions
-    if (s_keyboard.keys[KEY_LEFT])  status->stickX = -100;
-    if (s_keyboard.keys[KEY_RIGHT]) status->stickX = 100;
-    if (s_keyboard.keys[KEY_UP])    status->stickY = 100;
-    if (s_keyboard.keys[KEY_DOWN])  status->stickY = -100;
+    if (s_keyboard.keys[key_left])  status->stickX = -100;
+    if (s_keyboard.keys[key_right]) status->stickX = 100;
+    if (s_keyboard.keys[key_up])    status->stickY = 100;
+    if (s_keyboard.keys[key_down])  status->stickY = -100;
     
-    // C-stick (digital simulation)
+    // C-stick (digital simulation) - uses separate bindings
     if (s_keyboard.keys[KEY_CLEFT])  status->substickX = -100;
     if (s_keyboard.keys[KEY_CRIGHT]) status->substickX = 100;
     if (s_keyboard.keys[KEY_CUP])    status->substickY = 100;
     if (s_keyboard.keys[KEY_CDOWN])  status->substickY = -100;
     
     // Triggers analog (digital: 0 or 255)
-    if (s_keyboard.keys[KEY_L]) status->triggerLeft = 255;
-    if (s_keyboard.keys[KEY_R]) status->triggerRight = 255;
+    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_TRIGGER_L)]) status->triggerLeft = 255;
+    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_TRIGGER_R)]) status->triggerRight = 255;
     
     // Analog A/B not supported on keyboard
     status->analogA = 0;
@@ -695,10 +705,11 @@ void PADControlMotor(s32 chan, u32 command) {
     }
     
     if (command == PAD_MOTOR_RUMBLE) {
-        // Start rumble (50% intensity, 1000ms duration)
+        // Start rumble (intensity from config, 1000ms duration)
         if (SDL_HapticRumbleSupported(haptic)) {
             SDL_HapticRumbleInit(haptic);
-            SDL_HapticRumblePlay(haptic, 0.5f, 1000);
+            float intensity = PADGetRumbleIntensity();
+            SDL_HapticRumblePlay(haptic, intensity, 1000);
         }
     } else {
         // Stop rumble (PAD_MOTOR_STOP or PAD_MOTOR_STOP_HARD)

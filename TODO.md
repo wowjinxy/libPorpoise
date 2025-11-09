@@ -69,8 +69,14 @@ This document tracks planned features, improvements, and known issues.
 - [x] Keyboard/mouse fallback
 - [x] Rumble support (if available)
 - [x] Multiple controller support (4 controllers)
-- [x] Button mapping configuration
+- [x] Button mapping configuration (INI file)
 - [x] Analog stick calibration
+- [x] Configuration system (pad_config.ini)
+  - [x] Keyboard rebinding
+  - [x] Gamepad button remapping
+  - [x] Adjustable dead zones
+  - [x] Sensitivity multipliers
+  - [x] Rumble intensity control
 
 ### VI Module (Video Interface)
 - [ ] Frame buffer management

@@ -60,22 +60,49 @@ Link against the libPorpoise library and include the appropriate headers:
 
 ```c
 #include <dolphin/os.h>
-#include <dolphin/gx.h>
 #include <dolphin/pad.h>
 
 int main() {
     OSInit();
-    // Your game code here
+    PADInit();  // Initialize controller system
+    
+    PADStatus pads[PAD_MAX_CONTROLLERS];
+    while (running) {
+        PADRead(pads);  // Read all controllers
+        // Your game code here
+    }
     return 0;
 }
 ```
+
+### Controller Configuration
+
+Customize controls via `pad_config.ini`:
+
+```ini
+[Keyboard]
+; Rebind keys (Player 1 fallback)
+up=W
+down=S
+left=A
+right=D
+a=Space
+
+[Settings]
+; Adjust dead zones and sensitivity
+stick_deadzone=15
+stick_sensitivity=1.0
+rumble_intensity=0.5
+```
+
+See [SDL2_SETUP.md](docs/SDL2_SETUP.md) for full configuration options.
 
 ## Module Status
 
 | Module | Status | Description |
 |--------|--------|-------------|
 | **OS** | ✅ **Complete** | Operating system and threading (16 modules, 13,500+ lines) |
-| **PAD** | ✅ **Complete** | Controller input (SDL2 + keyboard fallback) |
+| **PAD** | ✅ **Complete** | Controller input (SDL2 + keyboard fallback + config system) |
 | GX     | 📋 Planned | Graphics subsystem |
 | CARD   | 📋 Planned | Memory card operations |
 | DVD    | 📋 Planned | Disc I/O |

@@ -48,6 +48,7 @@ set(PORPOISE_SOURCES
     # PAD (Controller)
     src/pad/PAD.c
     src/pad/PADClamp.c
+    src/pad/PADConfig.c
 )
 
 # Create library
