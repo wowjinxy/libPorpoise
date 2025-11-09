@@ -58,3 +58,6 @@ _deps/
 *.bak
 *.old
 
+# Runtime generated files
+porpoise_sram.cfg
+

@@ -94,12 +94,16 @@ Use preprocessor directives for platform-specific code:
 
 ## Module Implementation Priority
 
-Current focus areas (in order):
-1. OS (Operating System) - In Progress
-2. GX (Graphics) - Planned
-3. PAD (Controller Input) - Planned
-4. CARD (Memory Card) - Planned
-5. DVD (Disc I/O) - Planned
+Current status (v0.1.0):
+1. ✅ **OS (Operating System) - COMPLETE!** (16 modules, 13,500+ lines)
+
+Next focus areas (v0.2.0):
+2. GX (Graphics) - High Priority
+3. PAD (Controller Input) - High Priority
+4. VI (Video Interface) - High Priority
+5. CARD (Memory Card) - Medium Priority
+6. DVD (Disc I/O) - Medium Priority
+7. AX (Audio) - Low Priority
 
 ## Building and Testing
 

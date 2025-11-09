@@ -1,36 +1,67 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
-# Source files
-*.c text
-*.h text
-*.cpp text
-*.hpp text
-*.cc text
-*.cxx text
-
-# Build files
-*.cmake text
-CMakeLists.txt text
-Makefile text
-*.mk text
-
-# Documentation
-*.md text
-*.txt text
-LICENSE text
+# Source code
+*.c     text diff=c
+*.h     text diff=c
+*.cpp   text diff=cpp
+*.hpp   text diff=cpp
+*.s     text
+*.asm   text
 
 # Scripts
-*.sh text eol=lf
-*.bat text eol=crlf
-*.ps1 text eol=crlf
+*.sh    text eol=lf
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+
+# Documentation
+*.md    text
+*.txt   text
+LICENSE text
+TODO    text
+
+# Build system
+*.cmake      text
+CMakeLists.txt text
+Makefile     text
 
 # Binary files
-*.a binary
-*.lib binary
-*.so binary
-*.dll binary
-*.exe binary
-*.o binary
-*.obj binary
+*.a     binary
+*.lib   binary
+*.so    binary
+*.dll   binary
+*.dylib binary
+*.exe   binary
 
+# Archives
+*.zip   binary
+*.tar   binary
+*.gz    binary
+*.7z    binary
+
+# Images
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.bmp   binary
+*.ico   binary
+
+# Data files
+*.bin   binary
+*.dat   binary
+*.gcm   binary
+*.iso   binary
+*.dol   binary
+*.rel   binary
+
+# Config files (treat as binary to preserve exact format)
+*.cfg   binary
+porpoise_sram.cfg binary
+
+# Export-ignore (files not needed in release archives)
+.gitignore      export-ignore
+.gitattributes  export-ignore
+reference/      export-ignore
+.git*           export-ignore
+TODO.md         export-ignore

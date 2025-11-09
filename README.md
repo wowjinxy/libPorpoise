@@ -74,12 +74,14 @@ int main() {
 
 | Module | Status | Description |
 |--------|--------|-------------|
-| OS     | 🚧 In Progress | Operating system and threading |
+| **OS** | ✅ **Complete** | Operating system and threading (16 modules, 13,500+ lines) |
 | GX     | 📋 Planned | Graphics subsystem |
 | PAD    | 📋 Planned | Controller input |
 | CARD   | 📋 Planned | Memory card operations |
 | DVD    | 📋 Planned | Disc I/O |
 | AX/DSP | 📋 Planned | Audio subsystem |
+
+**v0.1.0 - OS Module Complete!** See [IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for detailed breakdown.
 
 ## Contributing
 
