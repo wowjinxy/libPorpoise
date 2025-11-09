@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 typedef u16 OSError;
+typedef u8  __OSException;
 typedef void (*OSErrorHandler)(OSError error, OSContext* context, ...);
 
 #define OS_ERROR_SYSTEM_RESET         0
@@ -31,8 +32,15 @@ typedef void (*OSErrorHandler)(OSError error, OSContext* context, ...);
 #define OS_ERROR_MAX                  (OS_ERROR_FPE+1)
 
 OSErrorHandler OSSetErrorHandler(OSError error, OSErrorHandler handler);
+OSErrorHandler __OSGetErrorHandler(OSError error);
+
+/* Utility function for debugging (not in original SDK) */
+const char* OSGetErrorName(OSError error);
 
 extern u32 __OSFpscrEnableBits;
+
+/* Internal exception handler */
+void __OSUnhandledException(__OSException exception, OSContext* context, u32 dsisr, u32 dar);
 
 #ifdef __cplusplus
 }

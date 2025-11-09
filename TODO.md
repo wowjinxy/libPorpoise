@@ -5,17 +5,23 @@ This document tracks planned features, improvements, and known issues.
 ## High Priority
 
 ### OS Module Enhancements
-- [ ] Implement proper thread local storage (TLS)
+- [x] Implement proper thread local storage (TLS)
 - [ ] Add OSThread queue management (ready, suspended, waiting)
-- [ ] Implement condition variables
-- [ ] Add semaphore support
-- [ ] Implement message queues
-- [ ] Add proper exception/interrupt handling stubs
+- [x] Implement condition variables
+- [x] Add semaphore support
+- [x] Implement message queues
+- [ ] Add platform exception handler integration (SEH/signals)
+  * Windows: SetUnhandledExceptionFilter() or __try/__except
+  * Linux: sigaction() for SIGSEGV, SIGFPE, SIGILL, SIGBUS
+  * Convert platform exceptions to OSError types
+  * Convert platform context to OSContext
+  * Call registered error handlers
+  * See OSError.c header comment for detailed design notes
 
 ### Memory Management
-- [ ] Implement heap management (OSAllocFromHeap, OSFreeToHeap)
-- [ ] Add arena allocator
-- [ ] Memory protection and bounds checking
+- [x] Implement heap management (OSAllocFromHeap, OSFreeToHeap)
+- [x] Add arena allocator
+- [ ] Memory protection and bounds checking (OSProtectRange)
 - [ ] Memory card simulation in RAM
 
 ### Build System
