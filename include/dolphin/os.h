@@ -17,6 +17,7 @@
 #include "dolphin/os/OSMemory.h"
 #include "dolphin/os/OSReset.h"
 #include "dolphin/os/OSResetSW.h"
+#include "dolphin/os/OSRtc.h"
 
 #ifdef __cplusplus
 extern "C" {

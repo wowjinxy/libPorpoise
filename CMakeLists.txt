@@ -38,6 +38,7 @@ set(PORPOISE_SOURCES
     src/os/OSSemaphore.c
     src/os/OSReset.c
     src/os/OSResetSW.c
+    src/os/OSRtc.c
     src/os/GeckoMemory.c
 )
 
