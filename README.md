@@ -75,8 +75,8 @@ int main() {
 | Module | Status | Description |
 |--------|--------|-------------|
 | **OS** | ✅ **Complete** | Operating system and threading (16 modules, 13,500+ lines) |
+| **PAD** | ✅ **Complete** | Controller input (SDL2 + keyboard fallback) |
 | GX     | 📋 Planned | Graphics subsystem |
-| PAD    | 📋 Planned | Controller input |
 | CARD   | 📋 Planned | Memory card operations |
 | DVD    | 📋 Planned | Disc I/O |
 | AX/DSP | 📋 Planned | Audio subsystem |

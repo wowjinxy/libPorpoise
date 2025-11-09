@@ -20,3 +20,8 @@ target_include_directories(reset_button_example PRIVATE ${CMAKE_SOURCE_DIR}/incl
 
 target_include_directories(locked_cache_example PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
+# PAD (controller) example
+add_executable(pad_test pad_test.c)
+target_link_libraries(pad_test porpoise)
+target_include_directories(pad_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+

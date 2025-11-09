@@ -63,14 +63,14 @@ This document tracks planned features, improvements, and known issues.
 - [ ] Display list support
 - [ ] Geometry (quads, triangles, triangle strips)
 
-### PAD Module (Controller Input)
-- [ ] Controller input abstraction
-- [ ] SDL2 gamepad integration
-- [ ] Keyboard/mouse fallback
-- [ ] Rumble support (if available)
-- [ ] Multiple controller support (4 controllers)
-- [ ] Button mapping configuration
-- [ ] Analog stick calibration
+### PAD Module (Controller Input) ✅
+- [x] Controller input abstraction
+- [x] SDL2 gamepad integration
+- [x] Keyboard/mouse fallback
+- [x] Rumble support (if available)
+- [x] Multiple controller support (4 controllers)
+- [x] Button mapping configuration
+- [x] Analog stick calibration
 
 ### VI Module (Video Interface)
 - [ ] Frame buffer management

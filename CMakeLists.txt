@@ -17,8 +17,12 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+# Find SDL2
+find_package(SDL2 REQUIRED)
+
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
+include_directories(${SDL2_INCLUDE_DIRS})
 
 # Source files
 set(PORPOISE_SOURCES
@@ -40,6 +44,10 @@ set(PORPOISE_SOURCES
     src/os/OSResetSW.c
     src/os/OSRtc.c
     src/os/GeckoMemory.c
+    
+    # PAD (Controller)
+    src/pad/PAD.c
+    src/pad/PADClamp.c
 )
 
 # Create library
@@ -59,6 +67,9 @@ set_target_properties(porpoise PROPERTIES
 if(PORPOISE_USE_GECKO_MEMORY)
     target_compile_definitions(porpoise PUBLIC PORPOISE_USE_GECKO_MEMORY)
 endif()
+
+# Link SDL2
+target_link_libraries(porpoise PUBLIC ${SDL2_LIBRARIES})
 
 # Platform-specific settings
 if(WIN32)
