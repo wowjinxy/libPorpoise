@@ -61,11 +61,11 @@
  *---------------------------------------------------------------------------*/
 
 #include <dolphin/pad.h>
+#include <dolphin/PADConfig.h>
 #include <dolphin/os.h>
 #include <string.h>
 #include <stdlib.h>
 #include <SDL.h>
-#include "PADConfig.h"
 
 /*---------------------------------------------------------------------------*
     Internal State
