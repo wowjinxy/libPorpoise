@@ -1557,3 +1557,21 @@ BOOL DVDReadAbsAsyncPrio(DVDCommandBlock* block, void* addr, s32 length,
     return FALSE;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         DVDReadAbsAsyncForBS
+
+  Description:  Read from absolute disc offset for boot sector operations.
+
+  Arguments:    block     Command block
+                addr      Destination buffer
+                length    Bytes to read
+                offset    Absolute disc offset
+                callback  Completion callback
+
+  Returns:      TRUE if started
+ *---------------------------------------------------------------------------*/
+BOOL DVDReadAbsAsyncForBS(DVDCommandBlock* block, void* addr, s32 length,
+                          u32 offset, DVDCBCallback callback) {
+    return DVDReadAbsAsyncPrio(block, addr, length, offset, callback, 0);
+}
+
