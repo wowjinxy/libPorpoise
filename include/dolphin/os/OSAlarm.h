@@ -24,6 +24,7 @@ struct OSAlarm
     void*           userData;
 };
 
+void OSInitAlarm        (void);  // Initialize alarm subsystem
 void OSSetAlarm         (OSAlarm* alarm, OSTime tick, OSAlarmHandler handler);
 void OSSetAlarmTag      (OSAlarm* alarm, u32 tag);
 void OSSetAbsAlarm      (OSAlarm* alarm, OSTime time, OSAlarmHandler handler);

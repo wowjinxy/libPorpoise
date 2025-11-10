@@ -542,3 +542,24 @@ void OSSetAlarmUserData(OSAlarm* alarm, void* data) {
 void* OSGetAlarmUserData(const OSAlarm* alarm) {
     return alarm ? alarm->userData : NULL;
 }
+
+/*---------------------------------------------------------------------------*
+  Name:         OSInitAlarm
+
+  Description:  Initialize the alarm subsystem. Called internally during
+                OSInit(). Exposed for modules that need to verify alarm
+                system is ready (e.g., CARD module).
+                
+                On GC/Wii: Sets up alarm lists and interrupt handlers
+                On PC: Already initialized in OSInit(), this is a no-op stub
+
+  Arguments:    None
+
+  Returns:      None
+ *---------------------------------------------------------------------------*/
+void OSInitAlarm(void) {
+    /* Alarm system already initialized in OSInit().
+     * This stub exists for API compatibility with modules
+     * that call OSInitAlarm() explicitly (e.g., CARD).
+     */
+}

@@ -661,3 +661,64 @@ void OSResetSystem(int reset, u32 resetCode, BOOL forceMenu) {
     
     exit(0);
 }
+
+/*---------------------------------------------------------------------------*
+  Name:         OSRegisterResetFunction
+
+  Description:  Register a reset callback function. This is an alias for
+                OSRegisterShutdownFunction() for backward compatibility.
+                
+                On GC/Wii: Registers function in reset chain
+                On PC: Adds to shutdown function queue
+
+  Arguments:    info  Pointer to OSShutdownFunctionInfo structure
+
+  Returns:      TRUE if registered successfully
+ *---------------------------------------------------------------------------*/
+BOOL OSRegisterResetFunction(OSShutdownFunctionInfo* info) {
+    return OSRegisterShutdownFunction(info);
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         __OSDoHotReset
+
+  Description:  Perform a hot reset (restart without powering off).
+                Internal function called by reset button handler.
+                
+                On GC/Wii: Triggers hardware reset via PI register
+                On PC: Calls OSResetSystem with hot reset flag
+
+  Arguments:    None
+
+  Returns:      Does not return
+ *---------------------------------------------------------------------------*/
+void __OSDoHotReset(void) {
+    OSResetSystem(OS_RESET_HOTRESET, 0, FALSE);
+    /* NOT REACHED */
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         __DVDPrepareResetAsync
+
+  Description:  DVD-specific reset preparation. Called before reset to
+                ensure DVD operations complete cleanly.
+                
+                On GC/Wii: Stops disc motor, cancels pending operations
+                On PC: No-op stub (no DVD hardware to prepare)
+
+  Arguments:    callback  Callback when preparation complete
+
+  Returns:      TRUE (preparation is instant on PC)
+ *---------------------------------------------------------------------------*/
+BOOL __DVDPrepareResetAsync(void (*callback)(void)) {
+    /* On PC, there's no DVD hardware to prepare for reset.
+     * The DVD module uses regular file handles which don't
+     * need special shutdown handling.
+     * 
+     * Call the callback immediately to signal completion.
+     */
+    if (callback) {
+        callback();
+    }
+    return TRUE;
+}

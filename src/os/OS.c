@@ -211,3 +211,81 @@ void* OSGetMEM2ArenaHi(void) { return s_mem2ArenaHi; }
 void* OSGetMEM2ArenaLo(void) { return s_mem2ArenaLo; }
 void  OSSetMEM2ArenaHi(void* addr) { s_mem2ArenaHi = addr; }
 void  OSSetMEM2ArenaLo(void* addr) { s_mem2ArenaLo = addr; }
+
+/*---------------------------------------------------------------------------*
+  Name:         __OSGetDIConfig
+
+  Description:  Get DVD Interface (DI) configuration. Used by DVD module
+                to determine disc drive capabilities and settings.
+                
+                On GC/Wii: Reads DI configuration register
+                On PC: Returns fake config (no DVD hardware)
+
+  Arguments:    None
+
+  Returns:      DI configuration value (always 0xFF on PC = no hardware)
+ *---------------------------------------------------------------------------*/
+u8 __OSGetDIConfig(void) {
+    /* On PC, there's no DVD interface hardware.
+     * Return 0xFF to indicate no DI hardware present.
+     * 
+     * On original hardware, this returns:
+     * - Bit 7: 1 = DI present
+     * - Bits 6-0: Configuration flags
+     */
+    return 0xFF;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         __OSPSInit
+
+  Description:  Initialize processor state. Sets up PowerPC-specific
+                processor features like HID registers, exception vectors, etc.
+                
+                On GC/Wii: Configures HID0/HID2, sets up BAT registers, etc.
+                On PC: No-op stub (no PowerPC processor state to initialize)
+
+  Arguments:    None
+
+  Returns:      None
+ *---------------------------------------------------------------------------*/
+void __OSPSInit(void) {
+    /* On PC, there's no PowerPC processor state to initialize.
+     * 
+     * On original hardware, this function:
+     * - Sets up HID0 (Hardware Implementation Dependent register 0)
+     * - Enables instruction/data caches
+     * - Configures write gathering, speculative loading
+     * - Sets up BAT (Block Address Translation) registers
+     * - Enables/disables various CPU features
+     * 
+     * These are all PowerPC-specific and don't apply to x86/x64.
+     */
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         __OSCacheInit
+
+  Description:  Initialize the cache subsystem. Sets up L1/L2 cache
+                parameters and locking.
+                
+                On GC/Wii: Configures L1 instruction/data cache (32KB each)
+                           and L2 cache (256KB)
+                On PC: No-op stub (cache already initialized in OSInit)
+
+  Arguments:    None
+
+  Returns:      None
+ *---------------------------------------------------------------------------*/
+void __OSCacheInit(void) {
+    /* Cache subsystem already initialized in OSInit().
+     * 
+     * On original hardware, this function:
+     * - Invalidates all cache lines
+     * - Sets up cache locking registers
+     * - Configures L2 cache mode (data only, instruction+data, etc.)
+     * 
+     * On PC, our cache emulation (if enabled) is set up in OSInit()
+     * via GeckoMemoryInit(). This stub exists for API compatibility.
+     */
+}

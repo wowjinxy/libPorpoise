@@ -49,6 +49,11 @@ void* OSGetMEM2ArenaLo(void);
 void  OSSetMEM2ArenaHi(void* addr);
 void  OSSetMEM2ArenaLo(void* addr);
 
+// Internal initialization functions
+u8   __OSGetDIConfig(void);     // Get DVD interface config
+void __OSPSInit(void);          // Processor state init
+void __OSCacheInit(void);       // Cache init
+
 #ifdef __cplusplus
 }
 #endif

@@ -27,6 +27,7 @@ typedef u32 OSTick;
 OSTime OSGetTime(void);
 OSTick OSGetTick(void);
 OSTime OSGetSystemTime(void);
+OSTime __OSGetSystemTime(void);  // Internal system time getter
 
 void   OSTicksToCalendarTime(OSTime ticks, u16* year, u8* month, u8* day,
                              u8* hour, u8* minute, u8* second);

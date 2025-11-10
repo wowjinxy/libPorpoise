@@ -56,6 +56,7 @@ struct OSShutdownFunctionInfo
 };
 
 void OSRegisterShutdownFunction   (OSShutdownFunctionInfo* info);
+BOOL OSRegisterResetFunction      (OSShutdownFunctionInfo* info);  // Alias for shutdown
 void OSUnregisterShutdownFunction (OSShutdownFunctionInfo* info);
 void OSRebootSystem               (void);
 void OSShutdownSystem             (void);
@@ -67,6 +68,10 @@ u32  OSGetResetCode               (void);
 void OSGetSaveRegion              (void** start, void** end);
 void OSGetSavedRegion             (void** start, void** end);
 void OSSetSaveRegion              (void* start, void* end);
+
+// Internal functions
+void __OSDoHotReset               (void);  // Perform hot reset
+BOOL __DVDPrepareResetAsync       (void (*callback)(void));  // DVD reset prep
 
 #define OSIsRestart() ((OSGetResetCode() & OS_RESETCODE_RESTART) ? TRUE : FALSE)
 

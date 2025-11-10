@@ -531,3 +531,20 @@ char* OSTimeToString(OSTime time, char* buffer) {
 }
 
 #endif /* _DEBUG */
+
+/*---------------------------------------------------------------------------*
+  Name:         __OSGetSystemTime
+
+  Description:  Get raw system time in ticks. Internal function used by
+                various subsystems to get the current time base value.
+                
+                On GC/Wii: Reads TBR (Time Base Register) directly
+                On PC: Wraps OSGetTime()
+
+  Arguments:    None
+
+  Returns:      Current time in ticks (OSTime)
+ *---------------------------------------------------------------------------*/
+OSTime __OSGetSystemTime(void) {
+    return OSGetTime();
+}

@@ -846,3 +846,66 @@ void OSSignalCond(OSCond* cond) {
     /* Wake up one waiting thread */
     OSWakeupThread(&cond->queue);
 }
+
+/*---------------------------------------------------------------------------*
+  Name:         __OSGetEffectivePriority
+
+  Description:  Get the effective priority of a thread. On original hardware,
+                this accounts for priority inheritance when a high-priority
+                thread is blocked by a low-priority thread holding a mutex.
+                
+                On GC/Wii: Checks thread priority + any inheritance boost
+                On PC: OS handles priority inheritance, just return base priority
+
+  Arguments:    thread  Thread to query
+
+  Returns:      Effective priority (0-31, 0=highest)
+ *---------------------------------------------------------------------------*/
+s32 __OSGetEffectivePriority(OSThread* thread) {
+    if (!thread) {
+        return 31;  // Lowest priority
+    }
+    
+    /* On PC, the OS automatically handles priority inheritance
+     * for mutexes. We just return the thread's base priority.
+     * 
+     * On original hardware, this would check if the thread is
+     * holding a mutex that a higher-priority thread is waiting on,
+     * and return the boosted priority.
+     */
+    return thread->priority;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         __OSPromoteThread
+
+  Description:  Boost a thread's priority temporarily (priority inheritance).
+                Used when high-priority thread blocks on mutex held by
+                low-priority thread to prevent priority inversion.
+                
+                On GC/Wii: Adjusts thread priority, updates run queues
+                On PC: No-op stub (OS handles this automatically)
+
+  Arguments:    thread      Thread to promote
+                priority    New priority to boost to
+
+  Returns:      None
+ *---------------------------------------------------------------------------*/
+void __OSPromoteThread(OSThread* thread, s32 priority) {
+    (void)thread;
+    (void)priority;
+    
+    /* On PC, priority inheritance is handled automatically by the
+     * operating system's mutex implementation. We don't need to
+     * manually adjust priorities.
+     * 
+     * On original hardware, this function would:
+     * 1. Remove thread from its current priority run queue
+     * 2. Boost its priority to the specified level
+     * 3. Insert into new priority run queue
+     * 4. Potentially trigger a context switch
+     * 
+     * Since we use OS threads (Win32 CRITICAL_SECTION or pthread_mutex),
+     * the OS does this for us automatically.
+     */
+}

@@ -116,6 +116,10 @@ long       OSCheckActiveThreads (void);
 OSSwitchThreadCallback OSSetSwitchThreadCallback(OSSwitchThreadCallback callback);
 void       OSSleepTicks         (OSTime ticks);
 
+// Internal priority management functions
+s32        __OSGetEffectivePriority(OSThread* thread);  // Get effective priority
+void       __OSPromoteThread       (OSThread* thread, s32 priority);  // Boost priority
+
 #define OSSleepSeconds(sec)         OSSleepTicks(OSSecondsToTicks((OSTime)sec))
 #define OSSleepMilliseconds(msec)   OSSleepTicks(OSMillisecondsToTicks((OSTime)msec))
 #define OSSleepMicroseconds(usec)   OSSleepTicks(OSMicrosecondsToTicks((OSTime)usec))
