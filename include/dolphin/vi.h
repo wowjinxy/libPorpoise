@@ -279,7 +279,7 @@ void VIGetWindowSize(int* width, int* height);
  *---------------------------------------------------------------------------*/
 
 void __VIInit(VITVMode mode);
-void __VIResetSIIdle(void);
+BOOL __VIResetSIIdle(void);
 void __VIDisableDimming(void);
 u32  __VISetDimmingCountLimit(u32 newLimit);
 BOOL __VIResetRFIdle(void);
