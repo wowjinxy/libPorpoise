@@ -59,6 +59,7 @@
 
 #include <dolphin/dvd.h>
 #include <dolphin/os.h>
+#include "dvd_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,25 +81,6 @@
 /*---------------------------------------------------------------------------*
     Internal Structures
  *---------------------------------------------------------------------------*/
-
-// Command block for managing async operations
-struct DVDCommandBlock {
-    DVDFileInfo*  fileInfo;         // Associated file info
-    void*         addr;             // Destination buffer
-    s32           length;           // Bytes to read
-    s32           offset;           // File offset
-    DVDCallback   callback;         // User callback
-    s32           state;            // Current state
-    s32           result;           // Result code
-    FILE*         file;             // OS file handle
-    
-    // For async operations
-#ifdef _WIN32
-    HANDLE        thread;
-#else
-    pthread_t     thread;
-#endif
-};
 
 // Internal file entry (virtual FST)
 typedef struct DVDEntry {
