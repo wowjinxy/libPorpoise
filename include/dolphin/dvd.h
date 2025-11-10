@@ -425,11 +425,6 @@ BOOL __DVDIsBlockInWaitingQueue(DVDCommandBlock* block);
  *---------------------------------------------------------------------------*/
 
 void DVDLowInit(void);
-BOOL DVDLowRead(void* addr, u32 length, u32 offset, void (*callback)(u32));
-BOOL DVDLowSeek(u32 offset, void (*callback)(u32));
-BOOL DVDLowWaitCoverClose(void (*callback)(u32));
-BOOL DVDLowReadDiskID(DVDDiskID* diskID, void (*callback)(u32));
-BOOL DVDLowStopMotor(void (*callback)(u32));
 BOOL DVDLowRead(void* addr, u32 length, u32 offset, void (*callback)(s32));
 BOOL DVDLowSeek(u32 offset, void (*callback)(s32));
 BOOL DVDLowWaitCoverClose(void (*callback)(s32));
