@@ -408,6 +408,8 @@ s32 DVDCancelStream(DVDCommandBlock* block);
  */
 BOOL DVDReadAbsAsyncPrio(DVDCommandBlock* block, void* addr, s32 length,
                          u32 offset, DVDCBCallback callback, s32 prio);
+BOOL DVDReadAbsAsyncForBS(DVDCommandBlock* block, void* addr, s32 length,
+                          u32 offset, DVDCBCallback callback);
 
 /*---------------------------------------------------------------------------*
     Queue Management (Internal)
