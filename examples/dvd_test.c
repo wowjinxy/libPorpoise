@@ -148,6 +148,21 @@ int main(void) {
         OSReport("  Current directory: %s\n", currentDir);
     }
     
+    // List files in root directory
+    DVDDir rootDir;
+    DVDDirEntry entry;
+    if (DVDOpenDir(".", &rootDir)) {
+        OSReport("  Contents of files/ directory:\n");
+        while (DVDReadDir(&rootDir, &entry)) {
+            if (entry.isDir) {
+                OSReport("    [DIR]  %s\n", entry.name);
+            } else {
+                OSReport("    [FILE] %s\n", entry.name);
+            }
+        }
+        DVDCloseDir(&rootDir);
+    }
+    
     // Test 6: Create subdirectory
     OSReport("\n[Test 6] Creating subdirectory structure...\n");
 #ifdef _WIN32

@@ -101,6 +101,11 @@ typedef struct DVDDiskID {
  */
 typedef void (*DVDCallback)(s32 result, DVDFileInfo* fileInfo);
 
+/**
+ * @brief DVD command block callback type
+ */
+typedef void (*DVDCBCallback)(s32 result, DVDCommandBlock* block);
+
 /*---------------------------------------------------------------------------*
     Functions
  *---------------------------------------------------------------------------*/
@@ -200,12 +205,124 @@ BOOL DVDReadAsyncPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset,
 s32 DVDSeek(DVDFileInfo* fileInfo, s32 offset);
 
 /**
+ * @brief Seek with priority (synchronous)
+ * 
+ * @param fileInfo  Pointer to open file
+ * @param offset    Offset to seek to
+ * @param prio      Priority (DVD_PRIO_*)
+ * @return Current position in file
+ */
+s32 DVDSeekPrio(DVDFileInfo* fileInfo, s32 offset, s32 prio);
+
+/**
+ * @brief Seek asynchronously
+ * 
+ * @param fileInfo  Pointer to open file
+ * @param offset    Offset to seek to
+ * @param callback  Callback when complete
+ * @return TRUE if seek started
+ */
+BOOL DVDSeekAsync(DVDFileInfo* fileInfo, s32 offset, DVDCallback callback);
+
+/**
+ * @brief Seek asynchronously with priority
+ * 
+ * @param fileInfo  Pointer to open file
+ * @param offset    Offset to seek to
+ * @param callback  Callback when complete
+ * @param prio      Priority (DVD_PRIO_*)
+ * @return TRUE if seek started
+ */
+BOOL DVDSeekAsyncPrio(DVDFileInfo* fileInfo, s32 offset, DVDCallback callback, s32 prio);
+
+/**
  * @brief Get file information status
  * 
  * @param fileInfo  Pointer to file
  * @return DVD_STATE_* constant
  */
 s32 DVDGetFileInfoStatus(const DVDFileInfo* fileInfo);
+
+/**
+ * @brief Get command block status
+ * 
+ * @param block  Pointer to command block
+ * @return DVD_STATE_* constant
+ */
+s32 DVDGetCommandBlockStatus(const DVDCommandBlock* block);
+
+/**
+ * @brief Cancel a pending operation
+ * 
+ * @param fileInfo  Pointer to file with operation
+ * @return TRUE if canceled successfully
+ */
+BOOL DVDCancel(DVDFileInfo* fileInfo);
+
+/**
+ * @brief Cancel operation asynchronously
+ * 
+ * @param fileInfo  Pointer to file with operation
+ * @param callback  Callback when cancel completes
+ * @return TRUE if cancel initiated
+ */
+BOOL DVDCancelAsync(DVDFileInfo* fileInfo, DVDCallback callback);
+
+/**
+ * @brief Get bytes transferred for async operation
+ * 
+ * @param fileInfo  Pointer to file
+ * @return Number of bytes transferred so far
+ */
+s32 DVDGetTransferredSize(DVDFileInfo* fileInfo);
+
+/**
+ * @brief Convert file path to entry number
+ * 
+ * @param pathPtr  Path to file or directory
+ * @return Entry number, or -1 if not found
+ */
+s32 DVDConvertPathToEntrynum(const char* pathPtr);
+
+/**
+ * @brief Open file by entry number (fast open)
+ * 
+ * @param entrynum  Entry number
+ * @param fileInfo  Pointer to DVDFileInfo to fill
+ * @return TRUE if opened successfully
+ */
+BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo);
+
+/**
+ * @brief Read disc ID information
+ * 
+ * @param block     Command block
+ * @param diskID    Pointer to DVDDiskID to fill
+ * @param callback  Callback when complete
+ * @return TRUE if read started
+ */
+BOOL DVDReadDiskID(DVDCommandBlock* block, DVDDiskID* diskID, DVDCallback callback);
+
+/**
+ * @brief Get drive status
+ * 
+ * @return DVD_STATE_* constant
+ */
+s32 DVDGetDriveStatus(void);
+
+/**
+ * @brief Check if disc is present and readable
+ * 
+ * @return DVD_RESULT_GOOD if OK, negative on error
+ */
+s32 DVDCheckDisk(void);
+
+/**
+ * @brief Resume DVD operations
+ * 
+ * @return TRUE if resumed
+ */
+BOOL DVDResume(void);
 
 /**
  * @brief Open a directory

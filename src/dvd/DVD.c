@@ -108,6 +108,24 @@ typedef struct DVDEntry {
     BOOL    isDir;                  // TRUE if directory
 } DVDEntry;
 
+// Internal directory state
+typedef struct DVDDirState {
+    char    path[512];              // Full path to directory
+#ifdef _WIN32
+    HANDLE  handle;                 // Windows FindFirstFile handle
+    WIN32_FIND_DATAA findData;      // Current find data
+    BOOL    firstRead;              // TRUE if haven't read first entry yet
+#else
+    DIR*    handle;                 // POSIX directory handle
+    struct dirent* entry;           // Current entry
+#endif
+} DVDDirState;
+
+// Directory state pool
+#define MAX_OPEN_DIRS 8
+static DVDDirState s_dirStates[MAX_OPEN_DIRS];
+static BOOL s_dirStateUsed[MAX_OPEN_DIRS];
+
 /*---------------------------------------------------------------------------*
     Internal State
  *---------------------------------------------------------------------------*/
@@ -291,6 +309,10 @@ BOOL DVDInit(void) {
     // Initialize command block pool
     memset(s_commandBlocks, 0, sizeof(s_commandBlocks));
     memset(s_commandBlockUsed, 0, sizeof(s_commandBlockUsed));
+    
+    // Initialize directory state pool
+    memset(s_dirStates, 0, sizeof(s_dirStates));
+    memset(s_dirStateUsed, 0, sizeof(s_dirStateUsed));
     
     // Initialize current directory
     strcpy(s_currentDir, "/");
@@ -576,7 +598,7 @@ s32 DVDGetFileInfoStatus(const DVDFileInfo* fileInfo) {
   Description:  Open a directory for reading.
                 
                 On GC/Wii: Looks up directory in FST
-                On PC: Scans directory using OS APIs
+                On PC: Opens directory using platform APIs
 
   Arguments:    dirName  Path to directory
                 dir      Pointer to DVDDir structure to fill
@@ -588,19 +610,50 @@ BOOL DVDOpenDir(const char* dirName, DVDDir* dir) {
         return FALSE;
     }
     
+    // Find free directory state
+    int stateIndex = -1;
+    for (int i = 0; i < MAX_OPEN_DIRS; i++) {
+        if (!s_dirStateUsed[i]) {
+            stateIndex = i;
+            break;
+        }
+    }
+    
+    if (stateIndex < 0) {
+        OSReport("DVD: No free directory slots\n");
+        return FALSE;
+    }
+    
     // Build full path
     char fullPath[512];
     BuildPath(dirName, fullPath, sizeof(fullPath));
     
-    // Check if directory exists
-    struct stat st;
-    if (stat(fullPath, &st) != 0 || !(st.st_mode & S_IFDIR)) {
-        OSReport("DVD: Directory not found: %s\n", fullPath);
+    DVDDirState* state = &s_dirStates[stateIndex];
+    strncpy(state->path, fullPath, sizeof(state->path) - 1);
+    
+#ifdef _WIN32
+    // Windows: Use FindFirstFile
+    char searchPath[520];
+    snprintf(searchPath, sizeof(searchPath), "%s\\*", fullPath);
+    
+    state->handle = FindFirstFileA(searchPath, &state->findData);
+    if (state->handle == INVALID_HANDLE_VALUE) {
+        OSReport("DVD: Failed to open directory: %s\n", fullPath);
         return FALSE;
     }
+    state->firstRead = TRUE;
+#else
+    // POSIX: Use opendir
+    state->handle = opendir(fullPath);
+    if (!state->handle) {
+        OSReport("DVD: Failed to open directory: %s\n", fullPath);
+        return FALSE;
+    }
+#endif
     
-    // Initialize directory structure
-    dir->entryNum = 0;
+    // Mark state as used and store index in DVDDir
+    s_dirStateUsed[stateIndex] = TRUE;
+    dir->entryNum = stateIndex;
     dir->location = 0;
     dir->next = 0;
     
@@ -613,7 +666,7 @@ BOOL DVDOpenDir(const char* dirName, DVDDir* dir) {
   Description:  Read next entry from directory.
                 
                 On GC/Wii: Reads from FST
-                On PC: Uses opendir/readdir
+                On PC: Uses FindNextFile (Windows) or readdir (POSIX)
 
   Arguments:    dir      Pointer to open directory
                 dirent   Pointer to DVDDirEntry to fill
@@ -625,10 +678,71 @@ BOOL DVDReadDir(DVDDir* dir, DVDDirEntry* dirent) {
         return FALSE;
     }
     
-    // For simplicity, we'll implement basic directory reading
-    // A full implementation would scan the actual directory
-    // For now, return FALSE (end of directory)
-    return FALSE;
+    int stateIndex = dir->entryNum;
+    if (stateIndex < 0 || stateIndex >= MAX_OPEN_DIRS || !s_dirStateUsed[stateIndex]) {
+        return FALSE;
+    }
+    
+    DVDDirState* state = &s_dirStates[stateIndex];
+    
+#ifdef _WIN32
+    // Windows implementation
+    BOOL found = FALSE;
+    
+    if (state->firstRead) {
+        // First entry already loaded by FindFirstFile
+        state->firstRead = FALSE;
+        found = TRUE;
+    } else {
+        // Read next entry
+        found = FindNextFileA(state->handle, &state->findData);
+    }
+    
+    if (!found) {
+        return FALSE;  // End of directory
+    }
+    
+    // Skip "." and ".." entries
+    while (strcmp(state->findData.cFileName, ".") == 0 ||
+           strcmp(state->findData.cFileName, "..") == 0) {
+        if (!FindNextFileA(state->handle, &state->findData)) {
+            return FALSE;
+        }
+    }
+    
+    // Fill in entry info
+    dirent->isDir = (state->findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    dirent->name = state->findData.cFileName;  // Points to state (valid until next read)
+    dirent->entryNum = dir->location++;
+    
+#else
+    // POSIX implementation
+    state->entry = readdir(state->handle);
+    if (!state->entry) {
+        return FALSE;  // End of directory
+    }
+    
+    // Skip "." and ".." entries
+    while (strcmp(state->entry->d_name, ".") == 0 ||
+           strcmp(state->entry->d_name, "..") == 0) {
+        state->entry = readdir(state->handle);
+        if (!state->entry) {
+            return FALSE;
+        }
+    }
+    
+    // Check if entry is directory
+    char entryPath[1024];
+    snprintf(entryPath, sizeof(entryPath), "%s/%s", state->path, state->entry->d_name);
+    struct stat st;
+    dirent->isDir = (stat(entryPath, &st) == 0 && S_ISDIR(st.st_mode));
+    
+    // Fill in entry info
+    dirent->name = state->entry->d_name;  // Points to state (valid until next read)
+    dirent->entryNum = dir->location++;
+#endif
+    
+    return TRUE;
 }
 
 /*---------------------------------------------------------------------------*
@@ -645,7 +759,28 @@ BOOL DVDCloseDir(DVDDir* dir) {
         return FALSE;
     }
     
+    int stateIndex = dir->entryNum;
+    if (stateIndex < 0 || stateIndex >= MAX_OPEN_DIRS || !s_dirStateUsed[stateIndex]) {
+        return FALSE;
+    }
+    
+    DVDDirState* state = &s_dirStates[stateIndex];
+    
+#ifdef _WIN32
+    if (state->handle != INVALID_HANDLE_VALUE) {
+        FindClose(state->handle);
+        state->handle = INVALID_HANDLE_VALUE;
+    }
+#else
+    if (state->handle) {
+        closedir(state->handle);
+        state->handle = NULL;
+    }
+#endif
+    
+    s_dirStateUsed[stateIndex] = FALSE;
     memset(dir, 0, sizeof(DVDDir));
+    
     return TRUE;
 }
 
@@ -659,9 +794,35 @@ BOOL DVDCloseDir(DVDDir* dir) {
   Returns:      None
  *---------------------------------------------------------------------------*/
 void DVDRewindDir(DVDDir* dir) {
-    if (dir) {
-        dir->location = 0;
+    if (!dir) {
+        return;
     }
+    
+    int stateIndex = dir->entryNum;
+    if (stateIndex < 0 || stateIndex >= MAX_OPEN_DIRS || !s_dirStateUsed[stateIndex]) {
+        return;
+    }
+    
+    DVDDirState* state = &s_dirStates[stateIndex];
+    
+#ifdef _WIN32
+    // Close and reopen to rewind
+    if (state->handle != INVALID_HANDLE_VALUE) {
+        FindClose(state->handle);
+    }
+    
+    char searchPath[520];
+    snprintf(searchPath, sizeof(searchPath), "%s\\*", state->path);
+    state->handle = FindFirstFileA(searchPath, &state->findData);
+    state->firstRead = TRUE;
+#else
+    // POSIX: rewinddir
+    if (state->handle) {
+        rewinddir(state->handle);
+    }
+#endif
+    
+    dir->location = 0;
 }
 
 /*---------------------------------------------------------------------------*
@@ -789,5 +950,300 @@ BOOL DVDSetRootDirectory(const char* path) {
  *---------------------------------------------------------------------------*/
 const char* DVDGetRootDirectory(void) {
     return s_rootPath;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDCancel
+
+  Description:  Cancel a pending asynchronous operation.
+                
+                On GC/Wii: Cancels DMA transfer, clears DI queue
+                On PC: Waits for thread to complete (can't truly cancel)
+
+  Arguments:    fileInfo  Pointer to file with pending operation
+
+  Returns:      TRUE if canceled successfully
+ *---------------------------------------------------------------------------*/
+BOOL DVDCancel(DVDFileInfo* fileInfo) {
+    if (!fileInfo || !fileInfo->cb) {
+        return FALSE;
+    }
+    
+    DVDCommandBlock* cb = fileInfo->cb;
+    
+    // If operation is busy, wait for it to complete
+    if (cb->state == DVD_STATE_BUSY) {
+#ifdef _WIN32
+        if (cb->thread) {
+            WaitForSingleObject(cb->thread, INFINITE);
+            CloseHandle(cb->thread);
+            cb->thread = NULL;
+        }
+#else
+        if (cb->thread) {
+            pthread_join(cb->thread, NULL);
+        }
+#endif
+        cb->state = DVD_STATE_CANCELED;
+        cb->result = DVD_RESULT_CANCELED;
+    }
+    
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDCancelAsync
+
+  Description:  Cancel asynchronously with callback.
+
+  Arguments:    fileInfo  Pointer to file with pending operation
+                callback  Callback when cancel completes
+
+  Returns:      TRUE if cancel initiated
+ *---------------------------------------------------------------------------*/
+BOOL DVDCancelAsync(DVDFileInfo* fileInfo, DVDCallback callback) {
+    BOOL result = DVDCancel(fileInfo);
+    
+    if (callback) {
+        callback(result ? DVD_RESULT_CANCELED : DVD_RESULT_FATAL_ERROR, fileInfo);
+    }
+    
+    return result;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDGetTransferredSize
+
+  Description:  Get number of bytes transferred so far for async operation.
+                
+                On GC/Wii: Reads DI transfer counter
+                On PC: Returns full size (operations complete quickly)
+
+  Arguments:    fileInfo  Pointer to file with operation
+
+  Returns:      Number of bytes transferred
+ *---------------------------------------------------------------------------*/
+s32 DVDGetTransferredSize(DVDFileInfo* fileInfo) {
+    if (!fileInfo || !fileInfo->cb) {
+        return 0;
+    }
+    
+    DVDCommandBlock* cb = fileInfo->cb;
+    
+    // If operation complete, return result
+    if (cb->state == DVD_STATE_END) {
+        return cb->result;
+    }
+    
+    // If busy, return 0 (can't track partial progress easily)
+    return 0;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDGetCommandBlockStatus
+
+  Description:  Get status of a command block.
+
+  Arguments:    block  Pointer to command block
+
+  Returns:      DVD_STATE_* constant
+ *---------------------------------------------------------------------------*/
+s32 DVDGetCommandBlockStatus(const DVDCommandBlock* block) {
+    if (!block) {
+        return DVD_STATE_END;
+    }
+    return block->state;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDConvertPathToEntrynum
+
+  Description:  Convert a path to entry number in virtual FST.
+                Entry numbers are used for fast file access.
+                
+                On GC/Wii: Searches FST for matching path
+                On PC: Simulated - we don't build a real FST
+
+  Arguments:    pathPtr  Path to file or directory
+
+  Returns:      Entry number, or -1 if not found
+ *---------------------------------------------------------------------------*/
+s32 DVDConvertPathToEntrynum(const char* pathPtr) {
+    if (!s_initialized || !pathPtr) {
+        return -1;
+    }
+    
+    // For PC implementation, we could build an FST by scanning directories
+    // For now, return -1 (not implemented - use DVDOpen instead)
+    // This is acceptable since most games use path-based access
+    return -1;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDFastOpen
+
+  Description:  Open file by entry number (faster than path lookup).
+                
+                On GC/Wii: Directly indexes into FST
+                On PC: Not implemented (use DVDOpen with path instead)
+
+  Arguments:    entrynum  Entry number from DVDConvertPathToEntrynum
+                fileInfo  Pointer to DVDFileInfo to fill
+
+  Returns:      TRUE if opened successfully
+ *---------------------------------------------------------------------------*/
+BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo) {
+    (void)entrynum;
+    (void)fileInfo;
+    
+    /* Not implemented on PC.
+     * Entry numbers require a pre-built FST which we don't generate.
+     * Use DVDOpen() with file paths instead.
+     */
+    return FALSE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDReadDiskID
+
+  Description:  Read disc ID information.
+                
+                On GC/Wii: Reads disc ID sector from DVD
+                On PC: Returns fake disc ID
+
+  Arguments:    block   Command block (unused on PC)
+                diskID  Pointer to DVDDiskID to fill
+                callback Callback when complete
+
+  Returns:      TRUE always (instant on PC)
+ *---------------------------------------------------------------------------*/
+BOOL DVDReadDiskID(DVDCommandBlock* block, DVDDiskID* diskID, DVDCallback callback) {
+    (void)block;
+    
+    if (diskID) {
+        memcpy(diskID, &s_diskID, sizeof(DVDDiskID));
+    }
+    
+    if (callback) {
+        callback(DVD_RESULT_GOOD, NULL);
+    }
+    
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDGetDriveStatus
+
+  Description:  Get current drive status.
+                
+                On GC/Wii: Returns drive state (cover open, spinning, etc.)
+                On PC: Always returns "disc ready"
+
+  Arguments:    None
+
+  Returns:      DVD_STATE_COVER_CLOSED (always on PC)
+ *---------------------------------------------------------------------------*/
+s32 DVDGetDriveStatus(void) {
+    return s_initialized ? DVD_STATE_COVER_CLOSED : DVD_STATE_NO_DISK;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDCheckDisk
+
+  Description:  Check if disc is inserted and readable.
+                
+                On GC/Wii: Checks drive status, verifies disc
+                On PC: Checks if "files/" directory exists
+
+  Arguments:    None
+
+  Returns:      DVD_RESULT_GOOD if ready, negative on error
+ *---------------------------------------------------------------------------*/
+s32 DVDCheckDisk(void) {
+    if (!s_initialized) {
+        return DVD_RESULT_FATAL_ERROR;
+    }
+    
+    struct stat st;
+    if (stat(s_rootPath, &st) == 0 && (st.st_mode & S_IFDIR)) {
+        return DVD_RESULT_GOOD;
+    }
+    
+    return DVD_RESULT_FATAL_ERROR;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDResume
+
+  Description:  Resume DVD operations after pause.
+                
+                On GC/Wii: Restarts disc motor and operations
+                On PC: No-op (no motor to restart)
+
+  Arguments:    None
+
+  Returns:      TRUE always
+ *---------------------------------------------------------------------------*/
+BOOL DVDResume(void) {
+    // No-op on PC - no motor to resume
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDSeekAsyncPrio
+
+  Description:  Seek to position asynchronously with priority.
+                
+                On GC/Wii: Commands disc head to seek, returns immediately
+                On PC: Seeks immediately, calls callback
+
+  Arguments:    fileInfo  Pointer to open file
+                offset    Offset to seek to
+                callback  Callback when complete
+                prio      Priority (ignored on PC)
+
+  Returns:      TRUE if seek started
+ *---------------------------------------------------------------------------*/
+BOOL DVDSeekAsyncPrio(DVDFileInfo* fileInfo, s32 offset, DVDCallback callback, s32 prio) {
+    (void)prio;
+    
+    s32 result = DVDSeek(fileInfo, offset);
+    
+    if (callback) {
+        callback(result >= 0 ? DVD_RESULT_GOOD : DVD_RESULT_FATAL_ERROR, fileInfo);
+    }
+    
+    return (result >= 0);
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDSeekAsync
+
+  Description:  Seek to position asynchronously (convenience wrapper).
+
+  Arguments:    fileInfo  Pointer to open file
+                offset    Offset to seek to
+                callback  Callback when complete
+
+  Returns:      TRUE if seek started
+ *---------------------------------------------------------------------------*/
+BOOL DVDSeekAsync(DVDFileInfo* fileInfo, s32 offset, DVDCallback callback) {
+    return DVDSeekAsyncPrio(fileInfo, offset, callback, DVD_PRIO_MEDIUM);
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDSeekPrio
+
+  Description:  Seek to position with priority (synchronous).
+
+  Arguments:    fileInfo  Pointer to open file
+                offset    Offset to seek to
+                prio      Priority (ignored on PC)
+
+  Returns:      Current position, or -1 on error
+ *---------------------------------------------------------------------------*/
+s32 DVDSeekPrio(DVDFileInfo* fileInfo, s32 offset, s32 prio) {
+    (void)prio;
+    return DVDSeek(fileInfo, offset);
 }
 
