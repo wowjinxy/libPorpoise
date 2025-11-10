@@ -29,6 +29,7 @@ set(PORPOISE_SOURCES
     # Core OS
     src/os/OS.c
     src/os/OSThread.c
+    src/os/OSMutex.c
     src/os/OSTime.c
     src/os/OSAlarm.c
     src/os/OSAlloc.c
