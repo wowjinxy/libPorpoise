@@ -63,6 +63,9 @@ set(PORPOISE_SOURCES
     # AR (ARAM - Audio RAM)
     src/ar/AR.c
     src/ar/ARQ.c
+    
+    # VI (Video Interface)
+    src/vi/VI.c
 )
 
 # Create library

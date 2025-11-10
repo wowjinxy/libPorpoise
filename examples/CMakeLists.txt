@@ -35,3 +35,8 @@ add_executable(aram_test aram_test.c)
 target_link_libraries(aram_test porpoise)
 target_include_directories(aram_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
+# VI (video interface) example
+add_executable(vi_test vi_test.c)
+target_link_libraries(vi_test porpoise)
+target_include_directories(vi_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+

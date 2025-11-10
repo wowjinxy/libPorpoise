@@ -59,13 +59,15 @@ This document tracks planned features, improvements, and known issues.
 - [x] ARQInit - Queue system for large transfers
 - [x] ARQPostRequest - Queued DMA operations
 
-### VI Module (Video Interface) 🔄
-- [ ] VIInit - Initialize video system
-- [ ] VIFlush - Flush frame buffer
-- [ ] VISetBlack - Black screen control
-- [ ] VIWaitForRetrace - Wait for vblank
-- [ ] Frame buffer management
-- [ ] Resolution/video mode stubs
+### VI Module (Video Interface) ✅
+- [x] VIInit - Initialize video system
+- [x] VIFlush - Flush frame buffer
+- [x] VISetBlack - Black screen control
+- [x] VIWaitForRetrace - Wait for vblank (60Hz simulation)
+- [x] Frame buffer management (VISetNextFrameBuffer, etc.)
+- [x] Retrace callback system (pre/post retrace)
+- [x] TV format and scan mode queries
+- [x] VBlank simulation thread (60Hz timing)
 
 ### GX Module (Graphics)
 - [ ] Design GX API structure (TEV, transform pipeline)
