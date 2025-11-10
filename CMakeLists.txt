@@ -67,6 +67,9 @@ set(PORPOISE_SOURCES
     # VI (Video Interface)
     src/vi/VI.c
     src/vi/VIConfig.c
+    
+    # EXI (External Interface)
+    src/exi/EXI.c
 )
 
 # Create library

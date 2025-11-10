@@ -138,6 +138,7 @@ See [SDL2_SETUP.md](docs/SDL2_SETUP.md) for full configuration options.
 | **SI** | ✅ **Complete** | Serial Interface stubs (for PAD compatibility) |
 | **AR** | ✅ **Complete** | ARAM (16MB audio RAM simulation with DMA) |
 | **VI** | ✅ **Complete** | Video Interface (SDL2 window + OpenGL + config system) |
+| **EXI** | ✅ **Complete** | External Interface stubs (for CARD/network compatibility) |
 | GX     | 📋 Planned | Graphics subsystem |
 | CARD   | 📋 Planned | Memory card operations |
 | AX/DSP | 📋 Planned | Audio subsystem |
