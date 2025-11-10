@@ -9,7 +9,7 @@
 #define PAD_CONFIG_H
 
 #include <dolphin/types.h>
-#include <SDL2/SDL.h>
+#include <SDL.h>
 
 /**
  * @brief Load configuration from pad_config.ini
