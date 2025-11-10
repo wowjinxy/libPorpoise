@@ -15,6 +15,9 @@ extern "C" {
 
 #include <dolphin/types.h>
 
+// Forward declarations
+typedef struct OSContext OSContext;
+
 /*---------------------------------------------------------------------------*
     Constants
  *---------------------------------------------------------------------------*/
