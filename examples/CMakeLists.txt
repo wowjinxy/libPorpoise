@@ -30,3 +30,8 @@ add_executable(dvd_test dvd_test.c)
 target_link_libraries(dvd_test porpoise)
 target_include_directories(dvd_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
+# ARAM example
+add_executable(aram_test aram_test.c)
+target_link_libraries(aram_test porpoise)
+target_include_directories(aram_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+

@@ -51,6 +51,14 @@ This document tracks planned features, improvements, and known issues.
 
 ## High Priority (v0.2.0)
 
+### AR Module (ARAM - Audio RAM) ✅
+- [x] ARInit - Initialize 16MB audio RAM simulation
+- [x] ARAlloc/ARFree - ARAM allocation system
+- [x] ARGetSize/ARGetBaseAddress - Query ARAM info
+- [x] ARStartDMA - DMA transfers (instant memcpy on PC)
+- [x] ARQInit - Queue system for large transfers
+- [x] ARQPostRequest - Queued DMA operations
+
 ### VI Module (Video Interface) 🔄
 - [ ] VIInit - Initialize video system
 - [ ] VIFlush - Flush frame buffer

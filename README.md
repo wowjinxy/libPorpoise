@@ -116,6 +116,7 @@ See [SDL2_SETUP.md](docs/SDL2_SETUP.md) for full configuration options.
 | **PAD** | ✅ **Complete** | Controller input (SDL2 + keyboard fallback + config system) |
 | **DVD** | ✅ **Complete** | File I/O (5 modules: DVD, Queue, Low, Error, Fatal) |
 | **SI** | ✅ **Complete** | Serial Interface stubs (for PAD compatibility) |
+| **AR** | ✅ **Complete** | ARAM (16MB audio RAM simulation with DMA) |
 | VI     | 🔄 In Progress | Video Interface (frame buffer, display) |
 | GX     | 📋 Planned | Graphics subsystem |
 | CARD   | 📋 Planned | Memory card operations |

@@ -59,6 +59,10 @@ set(PORPOISE_SOURCES
     
     # SI (Serial Interface - Controller Hardware)
     src/si/SI.c
+    
+    # AR (ARAM - Audio RAM)
+    src/ar/AR.c
+    src/ar/ARQ.c
 )
 
 # Create library
