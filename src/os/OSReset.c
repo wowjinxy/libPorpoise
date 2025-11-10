@@ -676,7 +676,8 @@ void OSResetSystem(int reset, u32 resetCode, BOOL forceMenu) {
   Returns:      TRUE if registered successfully
  *---------------------------------------------------------------------------*/
 BOOL OSRegisterResetFunction(OSShutdownFunctionInfo* info) {
-    return OSRegisterShutdownFunction(info);
+    OSRegisterShutdownFunction(info);
+    return TRUE;
 }
 
 /*---------------------------------------------------------------------------*
