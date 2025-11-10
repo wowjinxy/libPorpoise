@@ -3,7 +3,7 @@
  * @brief VI configuration loader
  */
 
-#include "VIConfig.h"
+#include <dolphin/VIConfig.h>
 #include <dolphin/os.h>
 #include <stdio.h>
 #include <stdlib.h>

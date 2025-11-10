@@ -8,8 +8,8 @@
  *---------------------------------------------------------------------------*/
 
 #include <dolphin/dvd.h>
+#include <dolphin/dvd_internal.h>
 #include <dolphin/os.h>
-#include "dvd_internal.h"
 #include <string.h>
 
 /*---------------------------------------------------------------------------*

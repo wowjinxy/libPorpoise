@@ -46,9 +46,9 @@
  *---------------------------------------------------------------------------*/
 
 #include <dolphin/vi.h>
+#include <dolphin/VIConfig.h>
 #include <dolphin/os.h>
 #include <SDL2/SDL.h>
-#include "VIConfig.h"
 #include <string.h>
 
 /*---------------------------------------------------------------------------*
