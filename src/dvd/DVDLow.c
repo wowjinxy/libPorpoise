@@ -227,3 +227,32 @@ BOOL __DVDLowTestAlarm(const OSAlarm* alarm) {
     return FALSE;
 }
 
+// Additional s32 callback variants for compatibility
+BOOL DVDLowRead(void* addr, u32 length, u32 offset, void (*callback)(s32)) {
+    (void)addr; (void)length; (void)offset;
+    if (callback) callback(0);
+    return TRUE;
+}
+
+BOOL DVDLowSeek(u32 offset, void (*callback)(s32)) {
+    (void)offset;
+    if (callback) callback(0);
+    return TRUE;
+}
+
+BOOL DVDLowWaitCoverClose(void (*callback)(s32)) {
+    if (callback) callback(0);
+    return TRUE;
+}
+
+BOOL DVDLowStopMotor(void (*callback)(s32)) {
+    if (callback) callback(0);
+    return TRUE;
+}
+
+BOOL DVDLowReadDiskID(DVDDiskID* diskID, void (*callback)(s32)) {
+    (void)diskID;
+    if (callback) callback(0);
+    return TRUE;
+}
+
