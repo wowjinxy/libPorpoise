@@ -197,8 +197,3 @@ BOOL __DVDIsBlockInWaitingQueue(DVDCommandBlock* block) {
     return (block->next != NULL && block->prev != NULL);
 }
 
-// Convenience function - pushes to low priority queue
-void __DVDPushWaitingQueue(DVDCommandBlock* block) {
-    __DVDPushWaitingQueue(2, block);
-}
-
