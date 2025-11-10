@@ -51,6 +51,14 @@ This document tracks planned features, improvements, and known issues.
 
 ## High Priority (v0.2.0)
 
+### VI Module (Video Interface) 🔄
+- [ ] VIInit - Initialize video system
+- [ ] VIFlush - Flush frame buffer
+- [ ] VISetBlack - Black screen control
+- [ ] VIWaitForRetrace - Wait for vblank
+- [ ] Frame buffer management
+- [ ] Resolution/video mode stubs
+
 ### GX Module (Graphics)
 - [ ] Design GX API structure (TEV, transform pipeline)
 - [ ] Implement immediate mode rendering

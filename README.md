@@ -112,14 +112,17 @@ See [SDL2_SETUP.md](docs/SDL2_SETUP.md) for full configuration options.
 
 | Module | Status | Description |
 |--------|--------|-------------|
-| **OS** | ✅ **Complete** | Operating system and threading (16 modules, 13,500+ lines) |
+| **OS** | ✅ **Complete** | Operating system and threading (17 modules, 14,000+ lines) |
 | **PAD** | ✅ **Complete** | Controller input (SDL2 + keyboard fallback + config system) |
-| **DVD** | ✅ **Complete** | File I/O (maps disc access to local "files/" directory) |
+| **DVD** | ✅ **Complete** | File I/O (5 modules: DVD, Queue, Low, Error, Fatal) |
+| **SI** | ✅ **Complete** | Serial Interface stubs (for PAD compatibility) |
+| VI     | 🔄 In Progress | Video Interface (frame buffer, display) |
 | GX     | 📋 Planned | Graphics subsystem |
 | CARD   | 📋 Planned | Memory card operations |
 | AX/DSP | 📋 Planned | Audio subsystem |
 
-**v0.1.0 - OS Module Complete!** See [IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for detailed breakdown.
+**Current Version:** Working toward v0.2.0 with OS, PAD, DVD, and SI complete!  
+See [IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for detailed breakdown.
 
 ## Contributing
 

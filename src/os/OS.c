@@ -289,3 +289,50 @@ void __OSCacheInit(void) {
      * via GeckoMemoryInit(). This stub exists for API compatibility.
      */
 }
+
+/*---------------------------------------------------------------------------*
+  Name:         OSRegisterVersion
+
+  Description:  Register a library version string. Used by SDK modules to
+                log their version at initialization for debugging.
+                
+                On GC/Wii: Stores version strings in internal list
+                On PC: Just logs to console
+
+  Arguments:    id  Version string (usually from DOLPHIN_LIB_VERSION macro)
+
+  Returns:      None
+ *---------------------------------------------------------------------------*/
+void OSRegisterVersion(const char* id) {
+    if (id) {
+        OSReport("Library version registered: %s\n", id);
+    }
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         OSFatal
+
+  Description:  Display fatal error message and halt. Similar to OSPanic but
+                with on-screen display capability.
+                
+                On GC/Wii: Renders error screen with colored background
+                On PC: Logs error and calls OSPanic
+
+  Arguments:    textColor   Foreground color (unused on PC)
+                bgColor     Background color (unused on PC)
+                msg         Error message
+
+  Returns:      Does not return
+ *---------------------------------------------------------------------------*/
+void OSFatal(u32 textColor, u32 bgColor, const char* msg) {
+    (void)textColor;
+    (void)bgColor;
+    
+    OSReport("==================================================\n");
+    OSReport("FATAL ERROR\n");
+    OSReport("==================================================\n");
+    OSReport("%s\n", msg);
+    OSReport("==================================================\n");
+    
+    OSPanic(__FILE__, __LINE__, "OSFatal: %s", msg);
+}

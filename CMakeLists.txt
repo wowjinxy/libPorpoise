@@ -56,6 +56,9 @@ set(PORPOISE_SOURCES
     src/dvd/DVDLow.c
     src/dvd/DVDError.c
     src/dvd/DVDFatal.c
+    
+    # SI (Serial Interface - Controller Hardware)
+    src/si/SI.c
 )
 
 # Create library

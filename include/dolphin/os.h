@@ -18,6 +18,7 @@
 #include "dolphin/os/OSReset.h"
 #include "dolphin/os/OSResetSW.h"
 #include "dolphin/os/OSRtc.h"
+#include "dolphin/os/OSAssert.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,6 +33,10 @@ u32  OSGetConsoleType(void);
 /* Debug Output */
 void OSReport(const char* fmt, ...);
 void OSPanic(const char* file, int line, const char* fmt, ...);
+void OSFatal(u32 textColor, u32 bgColor, const char* msg);
+
+/* Version Registration */
+void OSRegisterVersion(const char* id);
 
 /* Arena Management */
 void* OSGetArenaHi(void);
