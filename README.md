@@ -86,7 +86,27 @@ int main() {
 }
 ```
 
-### Controller Configuration
+### Video Configuration
+
+Edit `vi_config.ini` to customize display settings:
+
+```ini
+[Display]
+width = 1280
+height = 720
+fullscreen = 0        # 0 = windowed, 1 = fullscreen
+title = My Game
+
+[Graphics]
+vsync = 1             # 0 = off, 1 = on, -1 = adaptive
+fps_cap = 60          # FPS limit (0 = uncapped)
+msaa_samples = 4      # Anti-aliasing (0, 2, 4, 8, 16)
+
+[Emulation]
+tv_mode = NTSC        # NTSC (60Hz) or PAL (50Hz)
+```
+
+## Controller Configuration
 
 Customize controls via `pad_config.ini`:
 
@@ -117,7 +137,7 @@ See [SDL2_SETUP.md](docs/SDL2_SETUP.md) for full configuration options.
 | **DVD** | ✅ **Complete** | File I/O (5 modules: DVD, Queue, Low, Error, Fatal) |
 | **SI** | ✅ **Complete** | Serial Interface stubs (for PAD compatibility) |
 | **AR** | ✅ **Complete** | ARAM (16MB audio RAM simulation with DMA) |
-| **VI** | ✅ **Complete** | Video Interface (frame buffers, VBlank, retrace callbacks) |
+| **VI** | ✅ **Complete** | Video Interface (SDL2 window + OpenGL + config system) |
 | GX     | 📋 Planned | Graphics subsystem |
 | CARD   | 📋 Planned | Memory card operations |
 | AX/DSP | 📋 Planned | Audio subsystem |

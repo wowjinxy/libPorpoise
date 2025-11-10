@@ -48,6 +48,7 @@
 #include <dolphin/vi.h>
 #include <dolphin/os.h>
 #include <SDL2/SDL.h>
+#include "VIConfig.h"
 #include <string.h>
 
 /*---------------------------------------------------------------------------*
@@ -66,6 +67,9 @@ static SDL_Window* s_window = NULL;
 static SDL_GLContext s_glContext = NULL;
 static int s_windowWidth = 640;
 static int s_windowHeight = 480;
+
+// Configuration
+static VIConfig s_config;
 
 // Video timing
 static u32 s_retraceCount = 0;           // Number of VBlanks since init
@@ -104,15 +108,22 @@ static void* RetraceThread(void* arg)
 {
     (void)arg;
     
-    // Calculate frame time based on TV mode
-    u32 frameTimeMs = (s_tvFormat == VI_PAL) ? 20 : 16;  // 50Hz or 60Hz
+    // Calculate frame time based on TV mode from config
+    u32 frameTimeMs;
+    if (s_config.tvMode == 1) {
+        frameTimeMs = 20;  // PAL: 50Hz
+    } else if (s_config.fpsCap > 0 && s_config.vsync == 0) {
+        frameTimeMs = 1000 / s_config.fpsCap;  // Custom FPS cap
+    } else {
+        frameTimeMs = 16;  // NTSC: 60Hz (default)
+    }
     
     while (s_retraceRunning) {
         // Sleep for one frame
         OSSleepTicks(OSMillisecondsToTicks(frameTimeMs));
         
-        // Pre-retrace callback
-        if (s_preRetraceCallback) {
+        // Pre-retrace callback (if enabled in config)
+        if (s_config.enableCallbacks && s_preRetraceCallback) {
             s_preRetraceCallback(s_retraceCount);
         }
         
@@ -124,8 +135,8 @@ static void* RetraceThread(void* arg)
         // Increment retrace count
         s_retraceCount++;
         
-        // Post-retrace callback
-        if (s_postRetraceCallback) {
+        // Post-retrace callback (if enabled in config)
+        if (s_config.enableCallbacks && s_postRetraceCallback) {
             s_postRetraceCallback(s_retraceCount);
         }
     }
@@ -156,27 +167,52 @@ void VIInit(void) {
     
     OSReport("VI: Initializing video interface...\n");
     
+    // Load configuration from vi_config.ini
+    VILoadConfig(&s_config);
+    
+    // Apply config values
+    s_windowWidth = s_config.windowWidth;
+    s_windowHeight = s_config.windowHeight;
+    
     // Initialize SDL2 video subsystem
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
         OSReport("VI: Failed to initialize SDL video: %s\n", SDL_GetError());
         return;
     }
     
-    // Set OpenGL attributes
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    // Set OpenGL attributes from config
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, s_config.openglMajor);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, s_config.openglMinor);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     
+    // Set MSAA if requested
+    if (s_config.msaaSamples > 0) {
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, s_config.msaaSamples);
+    }
+    
+    // Determine window flags
+    u32 windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN;
+    
+    if (s_config.fullscreen) {
+        windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    } else {
+        windowFlags |= SDL_WINDOW_RESIZABLE;
+        if (s_config.maximized) {
+            windowFlags |= SDL_WINDOW_MAXIMIZED;
+        }
+    }
+    
     // Create window
     s_window = SDL_CreateWindow(
-        "libPorpoise Game",
+        s_config.windowTitle,
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         s_windowWidth,
         s_windowHeight,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+        windowFlags
     );
     
     if (!s_window) {
@@ -195,11 +231,20 @@ void VIInit(void) {
         return;
     }
     
-    // Enable VSync
-    SDL_GL_SetSwapInterval(1);
+    // Set VSync from config
+    if (SDL_GL_SetSwapInterval(s_config.vsync) < 0) {
+        OSReport("VI: Warning: Failed to set VSync mode %d\n", s_config.vsync);
+        // Try fallback to VSync on
+        SDL_GL_SetSwapInterval(1);
+    }
     
-    OSReport("VI: SDL2 window created (%dx%d)\n", s_windowWidth, s_windowHeight);
-    OSReport("VI: OpenGL context created\n");
+    OSReport("VI: SDL2 window created (%dx%d) %s\n", 
+             s_windowWidth, s_windowHeight,
+             s_config.fullscreen ? "fullscreen" : "windowed");
+    OSReport("VI: OpenGL %d.%d context created\n", 
+             s_config.openglMajor, s_config.openglMinor);
+    OSReport("VI: VSync: %s\n", 
+             s_config.vsync == 1 ? "On" : (s_config.vsync == -1 ? "Adaptive" : "Off"));
     
     // Initialize state
     s_black = TRUE;
