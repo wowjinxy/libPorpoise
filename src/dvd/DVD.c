@@ -1247,3 +1247,331 @@ s32 DVDSeekPrio(DVDFileInfo* fileInfo, s32 offset, s32 prio) {
     return DVDSeek(fileInfo, offset);
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         DVDInquiry
+
+  Description:  Query DVD drive information.
+                
+                On GC/Wii: Sends INQUIRY command to drive
+                On PC: Returns fake drive info
+
+  Arguments:    block     Command block
+                info      Pointer to DVDDriveInfo to fill
+                callback  Callback when complete
+
+  Returns:      DVD_RESULT_GOOD
+ *---------------------------------------------------------------------------*/
+s32 DVDInquiry(DVDCommandBlock* block, void* info, DVDCBCallback callback) {
+    (void)block;
+    (void)info;
+    
+    if (callback) {
+        callback(DVD_RESULT_GOOD, block);
+    }
+    
+    return DVD_RESULT_GOOD;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDInquiryAsync
+
+  Description:  Query DVD drive information asynchronously.
+
+  Arguments:    block     Command block
+                info      Pointer to DVDDriveInfo to fill
+                callback  Callback when complete
+
+  Returns:      TRUE always
+ *---------------------------------------------------------------------------*/
+BOOL DVDInquiryAsync(DVDCommandBlock* block, void* info, DVDCBCallback callback) {
+    DVDInquiry(block, info, callback);
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDChangeDisk
+
+  Description:  Change disc (eject and wait for new disc).
+                
+                On GC/Wii: Waits for user to change disc
+                On PC: No-op (no disc to change)
+
+  Arguments:    block     Command block
+                diskID    Expected new disc ID
+
+  Returns:      DVD_RESULT_GOOD
+ *---------------------------------------------------------------------------*/
+s32 DVDChangeDisk(DVDCommandBlock* block, DVDDiskID* diskID) {
+    (void)block;
+    (void)diskID;
+    
+    OSReport("DVD: ChangeDisk called (no-op on PC)\n");
+    return DVD_RESULT_GOOD;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDChangeDiskAsync
+
+  Description:  Change disc asynchronously.
+
+  Arguments:    block     Command block
+                diskID    Expected new disc ID
+                callback  Callback when complete
+
+  Returns:      TRUE always
+ *---------------------------------------------------------------------------*/
+BOOL DVDChangeDiskAsync(DVDCommandBlock* block, DVDDiskID* diskID, DVDCBCallback callback) {
+    s32 result = DVDChangeDisk(block, diskID);
+    
+    if (callback) {
+        callback(result, block);
+    }
+    
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDStopMotor
+
+  Description:  Stop disc motor.
+                
+                On GC/Wii: Sends motor stop command
+                On PC: No-op (no motor)
+
+  Arguments:    block  Command block
+
+  Returns:      DVD_RESULT_GOOD
+ *---------------------------------------------------------------------------*/
+s32 DVDStopMotor(DVDCommandBlock* block) {
+    (void)block;
+    return DVD_RESULT_GOOD;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDStopMotorAsync
+
+  Description:  Stop disc motor asynchronously.
+
+  Arguments:    block     Command block
+                callback  Callback when complete
+
+  Returns:      TRUE always
+ *---------------------------------------------------------------------------*/
+BOOL DVDStopMotorAsync(DVDCommandBlock* block, DVDCBCallback callback) {
+    s32 result = DVDStopMotor(block);
+    
+    if (callback) {
+        callback(result, block);
+    }
+    
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDReset
+
+  Description:  Reset DVD system.
+                
+                On GC/Wii: Resets DI hardware, disc state
+                On PC: Reinitializes file system
+
+  Arguments:    block     Command block
+                callback  Callback when complete
+
+  Returns:      TRUE always
+ *---------------------------------------------------------------------------*/
+BOOL DVDResetAsync(DVDCommandBlock* block, DVDCBCallback callback) {
+    DVDInit();  // Reinitialize
+    
+    if (callback) {
+        callback(DVD_RESULT_GOOD, block);
+    }
+    
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDResetRequired
+
+  Description:  Check if DVD reset is required.
+                
+                On GC/Wii: Checks if error state requires reset
+                On PC: Always returns FALSE
+
+  Arguments:    None
+
+  Returns:      FALSE always on PC
+ *---------------------------------------------------------------------------*/
+BOOL DVDResetRequired(void) {
+    return FALSE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDSetAutoInvalidation
+
+  Description:  Enable/disable automatic cache invalidation for reads.
+                
+                On GC/Wii: Controls whether cache is invalidated on DMA reads
+                On PC: No-op (no DMA or cache concerns)
+
+  Arguments:    autoInval  TRUE to enable, FALSE to disable
+
+  Returns:      Previous state (always TRUE on PC)
+ *---------------------------------------------------------------------------*/
+BOOL DVDSetAutoInvalidation(BOOL autoInval) {
+    (void)autoInval;
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDCancelAllAsync
+
+  Description:  Cancel all pending DVD operations.
+
+  Arguments:    callback  Callback when complete
+
+  Returns:      TRUE always
+ *---------------------------------------------------------------------------*/
+BOOL DVDCancelAllAsync(DVDCBCallback callback) {
+    /* On PC, operations complete quickly so nothing to cancel.
+     * Call callback immediately.
+     */
+    if (callback) {
+        callback(DVD_RESULT_GOOD, NULL);
+    }
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDCancelAll
+
+  Description:  Cancel all pending DVD operations (synchronous).
+
+  Arguments:    None
+
+  Returns:      DVD_RESULT_GOOD
+ *---------------------------------------------------------------------------*/
+s32 DVDCancelAll(void) {
+    return DVD_RESULT_GOOD;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDCheckDiskAsync
+
+  Description:  Check disc asynchronously.
+
+  Arguments:    block     Command block
+                callback  Callback when complete
+
+  Returns:      TRUE always
+ *---------------------------------------------------------------------------*/
+BOOL DVDCheckDiskAsync(DVDCommandBlock* block, DVDCBCallback callback) {
+    s32 result = DVDCheckDisk();
+    
+    if (callback) {
+        callback(result, block);
+    }
+    
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDPrepareStreamAbsAsync
+
+  Description:  Prepare DVD for audio streaming from absolute offset.
+                
+                On GC/Wii: Configures hardware audio streaming DMA
+                On PC: No-op (no hardware streaming)
+
+  Arguments:    block     Command block
+                length    Stream length
+                offset    Disc offset
+                callback  Callback when complete
+
+  Returns:      TRUE always
+ *---------------------------------------------------------------------------*/
+BOOL DVDPrepareStreamAbsAsync(DVDCommandBlock* block, u32 length, u32 offset,
+                               DVDCBCallback callback) {
+    (void)block;
+    (void)length;
+    (void)offset;
+    
+    /* Hardware audio streaming not supported on PC.
+     * Games should use regular DVDRead for audio data.
+     */
+    if (callback) {
+        callback(DVD_RESULT_GOOD, block);
+    }
+    
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDCancelStreamAsync
+
+  Description:  Cancel audio streaming.
+
+  Arguments:    block     Command block
+                callback  Callback when complete
+
+  Returns:      TRUE always
+ *---------------------------------------------------------------------------*/
+BOOL DVDCancelStreamAsync(DVDCommandBlock* block, DVDCBCallback callback) {
+    (void)block;
+    
+    if (callback) {
+        callback(DVD_RESULT_GOOD, block);
+    }
+    
+    return TRUE;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDCancelStream
+
+  Description:  Cancel audio streaming (synchronous).
+
+  Arguments:    block  Command block
+
+  Returns:      DVD_RESULT_GOOD
+ *---------------------------------------------------------------------------*/
+s32 DVDCancelStream(DVDCommandBlock* block) {
+    (void)block;
+    return DVD_RESULT_GOOD;
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDReadAbsAsyncPrio
+
+  Description:  Read from absolute disc offset with priority.
+                
+                On GC/Wii: Reads raw sectors from disc
+                On PC: Not supported (use DVDOpen/DVDRead instead)
+
+  Arguments:    block     Command block
+                addr      Destination buffer
+                length    Bytes to read
+                offset    Absolute disc offset
+                callback  Callback when complete
+                prio      Priority
+
+  Returns:      FALSE (not supported on PC)
+ *---------------------------------------------------------------------------*/
+BOOL DVDReadAbsAsyncPrio(DVDCommandBlock* block, void* addr, s32 length,
+                         u32 offset, DVDCBCallback callback, s32 prio) {
+    (void)block;
+    (void)addr;
+    (void)length;
+    (void)offset;
+    (void)prio;
+    
+    /* Absolute sector reads not supported on PC.
+     * Games should use DVDOpen() + DVDRead() for file-based access.
+     */
+    if (callback) {
+        callback(DVD_RESULT_FATAL_ERROR, block);
+    }
+    
+    return FALSE;
+}
+

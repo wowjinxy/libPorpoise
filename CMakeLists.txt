@@ -52,6 +52,10 @@ set(PORPOISE_SOURCES
     
     # DVD (File System)
     src/dvd/DVD.c
+    src/dvd/DVDQueue.c
+    src/dvd/DVDLow.c
+    src/dvd/DVDError.c
+    src/dvd/DVDFatal.c
 )
 
 # Create library

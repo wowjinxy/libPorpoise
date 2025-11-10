@@ -325,6 +325,131 @@ s32 DVDCheckDisk(void);
 BOOL DVDResume(void);
 
 /**
+ * @brief Query drive information
+ * 
+ * @param block     Command block
+ * @param info      Pointer to drive info structure
+ * @param callback  Callback when complete
+ * @return DVD_RESULT_GOOD
+ */
+s32 DVDInquiry(DVDCommandBlock* block, void* info, DVDCBCallback callback);
+
+/**
+ * @brief Query drive information (async)
+ */
+BOOL DVDInquiryAsync(DVDCommandBlock* block, void* info, DVDCBCallback callback);
+
+/**
+ * @brief Change disc (sync)
+ */
+s32 DVDChangeDisk(DVDCommandBlock* block, DVDDiskID* diskID);
+
+/**
+ * @brief Change disc (async)
+ */
+BOOL DVDChangeDiskAsync(DVDCommandBlock* block, DVDDiskID* diskID, DVDCBCallback callback);
+
+/**
+ * @brief Stop disc motor (sync)
+ */
+s32 DVDStopMotor(DVDCommandBlock* block);
+
+/**
+ * @brief Stop disc motor (async)
+ */
+BOOL DVDStopMotorAsync(DVDCommandBlock* block, DVDCBCallback callback);
+
+/**
+ * @brief Reset DVD system (async)
+ */
+BOOL DVDResetAsync(DVDCommandBlock* block, DVDCBCallback callback);
+
+/**
+ * @brief Check if reset is required
+ */
+BOOL DVDResetRequired(void);
+
+/**
+ * @brief Set auto cache invalidation
+ */
+BOOL DVDSetAutoInvalidation(BOOL autoInval);
+
+/**
+ * @brief Cancel all operations (sync)
+ */
+s32 DVDCancelAll(void);
+
+/**
+ * @brief Cancel all operations (async)
+ */
+BOOL DVDCancelAllAsync(DVDCBCallback callback);
+
+/**
+ * @brief Prepare audio streaming (async)
+ */
+BOOL DVDPrepareStreamAbsAsync(DVDCommandBlock* block, u32 length, u32 offset,
+                               DVDCBCallback callback);
+
+/**
+ * @brief Cancel audio streaming (async)
+ */
+BOOL DVDCancelStreamAsync(DVDCommandBlock* block, DVDCBCallback callback);
+
+/**
+ * @brief Cancel audio streaming (sync)
+ */
+s32 DVDCancelStream(DVDCommandBlock* block);
+
+/**
+ * @brief Read from absolute disc offset
+ */
+BOOL DVDReadAbsAsyncPrio(DVDCommandBlock* block, void* addr, s32 length,
+                         u32 offset, DVDCBCallback callback, s32 prio);
+
+/*---------------------------------------------------------------------------*
+    Queue Management (Internal)
+ *---------------------------------------------------------------------------*/
+
+void __DVDClearWaitingQueue(void);
+BOOL __DVDPushWaitingQueue(s32 prio, DVDCommandBlock* block);
+DVDCommandBlock* __DVDPopWaitingQueue(void);
+BOOL __DVDCheckWaitingList(void);
+BOOL __DVDDequeueWaitingQueue(DVDCommandBlock* block);
+BOOL __DVDIsBlockInWaitingQueue(DVDCommandBlock* block);
+
+/*---------------------------------------------------------------------------*
+    Low-Level Commands (Internal)
+ *---------------------------------------------------------------------------*/
+
+void DVDLowInit(void);
+BOOL DVDLowRead(void* addr, u32 length, u32 offset, void (*callback)(u32));
+BOOL DVDLowSeek(u32 offset, void (*callback)(u32));
+BOOL DVDLowWaitCoverClose(void (*callback)(u32));
+BOOL DVDLowReadDiskID(DVDDiskID* diskID, void (*callback)(u32));
+BOOL DVDLowStopMotor(void (*callback)(u32));
+BOOL DVDLowRequestError(void (*callback)(u32));
+BOOL DVDLowReset(void (*callback)(u32));
+BOOL DVDLowBreak(void);
+void DVDLowClearCallback(void);
+BOOL __DVDLowTestAlarm(const OSAlarm* alarm);
+
+/*---------------------------------------------------------------------------*
+    Error Handling (Internal)
+ *---------------------------------------------------------------------------*/
+
+void __DVDStoreErrorCode(u32 errorCode, u32 result);
+u32  __DVDGetLastError(void);
+void __DVDClearErrorLog(void);
+BOOL __DVDHasErrorLogged(void);
+
+/*---------------------------------------------------------------------------*
+    Fatal Error (Internal)
+ *---------------------------------------------------------------------------*/
+
+void __DVDShowFatalMessage(void);
+void __DVDPrintFatalMessage(void);
+
+/**
  * @brief Open a directory
  * 
  * @param dirName  Path to directory (relative to DVD root)
