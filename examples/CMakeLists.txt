@@ -40,3 +40,8 @@ add_executable(vi_test vi_test.c)
 target_link_libraries(vi_test porpoise)
 target_include_directories(vi_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
+# CARD (memory card) example
+add_executable(card_test card_test.c)
+target_link_libraries(card_test porpoise)
+target_include_directories(card_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
