@@ -70,6 +70,9 @@ set(PORPOISE_SOURCES
     
     # EXI (External Interface)
     src/exi/EXI.c
+    
+    # CARD (Memory Card)
+    src/card/CARD.c
 )
 
 # Create library

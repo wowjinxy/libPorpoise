@@ -69,6 +69,17 @@ This document tracks planned features, improvements, and known issues.
 - [x] TV format and scan mode queries
 - [x] VBlank simulation thread (60Hz timing)
 
+### CARD Module (Memory Card) ✅
+- [x] CARDInit - Initialize subsystem
+- [x] CARDMount/Unmount - Mount cards (map to directories)
+- [x] CARDProbe - Check card presence
+- [x] CARDCreate/Delete - File management
+- [x] CARDOpen/Close - File operations
+- [x] CARDRead/Write - Data I/O (basic implementation)
+- [x] CARDFormat/Check - Card management
+- [x] CARDGetMemSize, CARDFreeBlocks - Queries
+- [x] Maps to memcard_a/ and memcard_b/ directories
+
 ### GX Module (Graphics)
 - [ ] Design GX API structure (TEV, transform pipeline)
 - [ ] Implement immediate mode rendering

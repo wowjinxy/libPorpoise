@@ -139,8 +139,8 @@ See [SDL2_SETUP.md](docs/SDL2_SETUP.md) for full configuration options.
 | **AR** | ✅ **Complete** | ARAM (16MB audio RAM simulation with DMA) |
 | **VI** | ✅ **Complete** | Video Interface (SDL2 window + OpenGL + config system) |
 | **EXI** | ✅ **Complete** | External Interface stubs (for CARD/network compatibility) |
+| **CARD** | ✅ **Complete** | Memory cards (maps to memcard_a/, memcard_b/ directories) |
 | GX     | 📋 Planned | Graphics subsystem |
-| CARD   | 📋 Planned | Memory card operations |
 | AX/DSP | 📋 Planned | Audio subsystem |
 
 **Current Version:** Working toward v0.2.0 with OS, PAD, DVD, and SI complete!  
