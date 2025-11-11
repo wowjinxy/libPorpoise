@@ -203,6 +203,15 @@ void* OSInitAlloc(void* arenaStart, void* arenaEnd, int maxHeaps) {
     
     OSReport("OSInitAlloc: start=%p end=%p maxHeaps=%d\n", arenaStart, arenaEnd, maxHeaps);
     
+    // WORKAROUND: If pointers are NULL, use MEM1 arena directly
+    // This handles transpiler pointer translation issues
+    if (arenaStart == NULL || arenaEnd == NULL) {
+        OSReport("OSInitAlloc: NULL pointers detected, using MEM1 arena instead\n");
+        arenaStart = OSGetMEM1ArenaLo();
+        arenaEnd = OSGetMEM1ArenaHi();
+        OSReport("OSInitAlloc: Using MEM1: start=%p end=%p\n", arenaStart, arenaEnd);
+    }
+    
     if (maxHeaps <= 0) {
         OSPanic(__FILE__, __LINE__, "OSInitAlloc: Invalid maxHeaps %d", maxHeaps);
     }
