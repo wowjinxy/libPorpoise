@@ -1575,3 +1575,43 @@ BOOL DVDReadAbsAsyncForBS(DVDCommandBlock* block, void* addr, s32 length,
     return DVDReadAbsAsyncPrio(block, addr, length, offset, callback, 0);
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         DVDReset
+
+  Description:  Reset DVD drive.
+
+  Arguments:    None
+
+  Returns:      None
+ *---------------------------------------------------------------------------*/
+void DVDReset(void) {
+    /* No DVD hardware to reset on PC. */
+    OSReport("DVD: Reset requested (no-op on PC)\n");
+}
+
+/*---------------------------------------------------------------------------*
+  Name:         DVDPrepareStreamAsync
+
+  Description:  Prepare streaming from absolute offset.
+
+  Arguments:    block     Command block
+                length    Stream length
+                offset    Disc offset
+                callback  Completion callback
+
+  Returns:      TRUE if started
+ *---------------------------------------------------------------------------*/
+BOOL DVDPrepareStreamAsync(DVDCommandBlock* block, u32 length, u32 offset,
+                           DVDCBCallback callback) {
+    (void)block;
+    (void)length;
+    (void)offset;
+    
+    /* Streaming not implemented on PC. */
+    if (callback) {
+        callback(DVD_RESULT_READY, block);
+    }
+    
+    return TRUE;
+}
+
