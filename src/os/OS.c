@@ -195,10 +195,22 @@ void OSPanic(const char* file, int line, const char* fmt, ...) {
  *---------------------------------------------------------------------------*/
 
 /* Default arena (usually points to MEM1) */
-void* OSGetArenaHi(void) { return s_arenaHi; }
-void* OSGetArenaLo(void) { return s_arenaLo; }
-void  OSSetArenaHi(void* addr) { s_arenaHi = addr; }
-void  OSSetArenaLo(void* addr) { s_arenaLo = addr; }
+void* OSGetArenaHi(void) { 
+    OSReport("OSGetArenaHi() returning %p\n", s_arenaHi);
+    return s_arenaHi; 
+}
+void* OSGetArenaLo(void) { 
+    OSReport("OSGetArenaLo() returning %p\n", s_arenaLo);
+    return s_arenaLo; 
+}
+void  OSSetArenaHi(void* addr) { 
+    OSReport("OSSetArenaHi(%p)\n", addr);
+    s_arenaHi = addr; 
+}
+void  OSSetArenaLo(void* addr) { 
+    OSReport("OSSetArenaLo(%p)\n", addr);
+    s_arenaLo = addr; 
+}
 
 /* MEM1 arena (24MB main RAM) */
 void* OSGetMEM1ArenaHi(void) { return s_mem1ArenaHi; }
