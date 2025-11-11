@@ -302,6 +302,11 @@ BOOL CARDGetFastMode(void);
  */
 s32 CARDGetCurrentMode(s32 chan, u32* mode);
 
+/**
+ * @brief Get bytes transferred in last operation
+ */
+s32 CARDGetXferredBytes(s32 chan);
+
 #ifdef __cplusplus
 }
 #endif

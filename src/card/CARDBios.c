@@ -296,3 +296,21 @@ s32 CARDGetCurrentMode(s32 chan, u32* mode) {
     return CARD_RESULT_READY;
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         CARDGetXferredBytes
+
+  Description:  Get number of bytes transferred in last operation.
+
+  Arguments:    chan  Card channel
+
+  Returns:      Bytes transferred
+ *---------------------------------------------------------------------------*/
+s32 CARDGetXferredBytes(s32 chan) {
+    if (chan < 0 || chan >= CARD_MAX_CHAN) {
+        return 0;
+    }
+    
+    // On PC, all transfers are instant
+    return 0;
+}
+
