@@ -73,7 +73,17 @@ set(PORPOISE_SOURCES
     src/exi/EXI.c
     
     # CARD (Memory Card)
-    src/card/CARD.c
+    src/card/CARDBios.c
+    src/card/CARDMount.c
+    src/card/CARDOpen.c
+    src/card/CARDCreate.c
+    src/card/CARDDelete.c
+    src/card/CARDRead.c
+    src/card/CARDWrite.c
+    src/card/CARDCheck.c
+    src/card/CARDFormat.c
+    src/card/CARDStat.c
+    src/card/CARDRename.c
 )
 
 # Create library
