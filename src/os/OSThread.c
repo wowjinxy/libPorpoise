@@ -235,9 +235,16 @@ void OSYieldThread(void) {
                 
                 On PC: Yields to the OS scheduler, allowing other threads
                 to run. Similar to OSYieldThread but with internal naming.
+                
+                Note: This function is marked as weak so that projects
+                providing their own implementation (e.g., in ppc_runtime)
+                can override this default implementation.
 
   Returns:      None
  *---------------------------------------------------------------------------*/
+#ifdef __GNUC__
+__attribute__((weak))
+#endif
 void __OSReschedule(void) {
     OSYieldThread();  // On PC, just yield to OS scheduler
 }
