@@ -839,6 +839,20 @@ void PADSetSamplingRate(u32 msec) {
 }
 
 /*---------------------------------------------------------------------------*
+  Name:         PADSetSpec
+
+  Description:  Set controller specification/version.
+
+  Arguments:    spec  Controller spec
+
+  Returns:      None
+ *---------------------------------------------------------------------------*/
+void PADSetSpec(u32 spec) {
+    (void)spec;
+    /* SDL2 handles all controller types - no spec needed */
+}
+
+/*---------------------------------------------------------------------------*
   Name:         PADSetSamplingCallback
 
   Description:  Installs a callback function that is called during PADRead()
