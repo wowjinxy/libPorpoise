@@ -40,13 +40,30 @@ s32 CARDOpen(s32 chan, const char* fileName, CARDFileInfo* fileInfo) {
         return CARD_RESULT_NOFILE;
     }
     
+    // Find free file slot
+    s32 fileNo = -1;
+    for (int i = 0; i < 127; i++) {
+        if (__CARDCards[chan].openFiles[i][0] == '\0') {
+            fileNo = i;
+            break;
+        }
+    }
+    
+    if (fileNo < 0) {
+        return CARD_RESULT_LIMIT;  // Too many open files
+    }
+    
+    // Store filename for later read/write operations
+    strncpy(__CARDCards[chan].openFiles[fileNo], fileName, CARD_FILENAME_MAX - 1);
+    __CARDCards[chan].openFiles[fileNo][CARD_FILENAME_MAX - 1] = '\0';
+    
     fileInfo->chan = chan;
-    fileInfo->fileNo = 0;
+    fileInfo->fileNo = fileNo;
     fileInfo->offset = 0;
     fileInfo->length = (s32)st.st_size;
     fileInfo->iBlock = 0;
     
-    OSReport("CARD: Opened '%s' (%d bytes)\n", fileName, fileInfo->length);
+    OSReport("CARD: Opened '%s' (%d bytes) [fileNo=%d]\n", fileName, fileInfo->length, fileNo);
     
     return CARD_RESULT_READY;
 }
@@ -87,6 +104,14 @@ s32 CARDFastOpen(s32 chan, s32 fileNo, CARDFileInfo* fileInfo) {
 s32 CARDClose(CARDFileInfo* fileInfo) {
     if (!fileInfo) {
         return CARD_RESULT_FATAL_ERROR;
+    }
+    
+    s32 chan = fileInfo->chan;
+    s32 fileNo = fileInfo->fileNo;
+    
+    if (chan >= 0 && chan < CARD_MAX_CHAN && fileNo >= 0 && fileNo < 127) {
+        // Clear filename entry
+        __CARDCards[chan].openFiles[fileNo][0] = '\0';
     }
     
     fileInfo->offset = 0;

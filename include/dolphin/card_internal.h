@@ -23,6 +23,7 @@ typedef struct CARDState {
     void*       workArea;
     CARDCallback detachCallback;
     DVDDiskID   diskID;
+    char        openFiles[127][CARD_FILENAME_MAX];  // Track open files by fileNo
 } CARDState;
 
 /*---------------------------------------------------------------------------*

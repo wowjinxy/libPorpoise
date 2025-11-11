@@ -72,6 +72,7 @@ void CARDInit(void) {
         __CARDCards[i].workArea = NULL;
         __CARDCards[i].detachCallback = NULL;
         memset(&__CARDCards[i].diskID, 0, sizeof(DVDDiskID));
+        memset(__CARDCards[i].openFiles, 0, sizeof(__CARDCards[i].openFiles));
         
         // Create card directory if it doesn't exist
         struct stat st;

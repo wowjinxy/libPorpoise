@@ -5,6 +5,7 @@
 #include <dolphin/card.h>
 #include <dolphin/card_internal.h>
 #include <dolphin/os.h>
+#include <stdio.h>
 #include <string.h>
 
 /*---------------------------------------------------------------------------*
@@ -35,14 +36,35 @@ s32 CARDReadAsync(CARDFileInfo* fileInfo, void* buf, s32 length,
         return CARD_RESULT_NOCARD;
     }
     
-    // Stub - zero buffer
-    memset(buf, 0, length);
-    
-    if (callback) {
-        callback(chan, length);
+    // Get filename from file number
+    s32 fileNo = fileInfo->fileNo;
+    if (fileNo < 0 || fileNo >= 127 || __CARDCards[chan].openFiles[fileNo][0] == '\0') {
+        return CARD_RESULT_FATAL_ERROR;  // File not open
     }
     
-    return length;
+    const char* fileName = __CARDCards[chan].openFiles[fileNo];
+    char path[512];
+    __CARDBuildFilePath(chan, fileName, path, sizeof(path));
+    
+    // Read from actual file
+    FILE* file = fopen(path, "rb");
+    if (!file) {
+        return CARD_RESULT_IOERROR;
+    }
+    
+    if (fseek(file, offset, SEEK_SET) != 0) {
+        fclose(file);
+        return CARD_RESULT_IOERROR;
+    }
+    
+    size_t bytesRead = fread(buf, 1, length, file);
+    fclose(file);
+    
+    if (callback) {
+        callback(chan, (s32)bytesRead);
+    }
+    
+    return (s32)bytesRead;
 }
 
 /*---------------------------------------------------------------------------*
