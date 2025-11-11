@@ -201,11 +201,14 @@ void* OSInitAlloc(void* arenaStart, void* arenaEnd, int maxHeaps) {
     u32 arraySize;
     OSHeapHandle i;
     
+    OSReport("OSInitAlloc: start=%p end=%p maxHeaps=%d\n", arenaStart, arenaEnd, maxHeaps);
+    
     if (maxHeaps <= 0) {
         OSPanic(__FILE__, __LINE__, "OSInitAlloc: Invalid maxHeaps %d", maxHeaps);
     }
     
     if (arenaStart >= arenaEnd) {
+        OSReport("OSInitAlloc: ERROR - start (%p) >= end (%p)\n", arenaStart, arenaEnd);
         OSPanic(__FILE__, __LINE__, "OSInitAlloc: Invalid arena range");
     }
     
