@@ -44,6 +44,7 @@ set(PORPOISE_SOURCES
     src/os/OSReset.c
     src/os/OSResetSW.c
     src/os/OSRtc.c
+    src/os/OSUart.c
     src/os/GeckoMemory.c
     
     # PAD (Controller)
