@@ -40,6 +40,12 @@ extern BOOL __CARDInitialized;
 
 void __CARDBuildFilePath(s32 chan, const char* fileName, char* outPath, size_t maxLen);
 
+// Low-level operations
+s32 __CARDEraseSector(s32 chan, u32 addr, CARDCallback callback);
+void __CARDCheckSum(void* ptr, int length, u16* checkSum, u16* checkSumInv);
+s32 __CARDReadSegment(s32 chan, CARDCallback callback);
+s32 __CARDWritePage(s32 chan, CARDCallback callback);
+
 #ifdef __cplusplus
 }
 #endif

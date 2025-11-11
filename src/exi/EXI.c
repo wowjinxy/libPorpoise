@@ -443,4 +443,22 @@ void EXIWait(void) {
     /* No wait needed on PC. */
 }
 
+/*---------------------------------------------------------------------------*
+  Name:         EXISetExiCallback
+
+  Description:  Set EXI interrupt callback.
+
+  Arguments:    chan         Channel number
+                exiCallback  Callback function
+
+  Returns:      Previous callback
+ *---------------------------------------------------------------------------*/
+EXICallback EXISetExiCallback(s32 chan, EXICallback exiCallback) {
+    (void)chan;
+    (void)exiCallback;
+    
+    /* No interrupts on PC. */
+    return NULL;
+}
+
 

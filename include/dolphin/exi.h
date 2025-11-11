@@ -170,6 +170,11 @@ u32 EXIGetConsoleType(void);
  */
 void EXIWait(void);
 
+/**
+ * @brief Set EXI interrupt callback
+ */
+EXICallback EXISetExiCallback(s32 chan, EXICallback exiCallback);
+
 #ifdef __cplusplus
 }
 #endif

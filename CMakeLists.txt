@@ -84,6 +84,7 @@ set(PORPOISE_SOURCES
     src/card/CARDFormat.c
     src/card/CARDStat.c
     src/card/CARDRename.c
+    src/card/CARDBlock.c
 )
 
 # Create library
