@@ -24,6 +24,7 @@ typedef struct OSAlarm OSAlarm;
 
 // DVD result codes
 #define DVD_RESULT_GOOD         0
+#define DVD_RESULT_READY        0  // Alias for DVD_RESULT_GOOD
 #define DVD_RESULT_FATAL_ERROR  -1
 #define DVD_RESULT_IGNORED      -2
 #define DVD_RESULT_CANCELED     -3
