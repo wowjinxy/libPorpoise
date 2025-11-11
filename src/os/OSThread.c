@@ -228,6 +228,21 @@ void OSYieldThread(void) {
 }
 
 /*---------------------------------------------------------------------------*
+  Name:         __OSReschedule
+
+  Description:  Forces a thread reschedule. On original hardware, this would
+                call the scheduler to select the next ready thread.
+                
+                On PC: Yields to the OS scheduler, allowing other threads
+                to run. Similar to OSYieldThread but with internal naming.
+
+  Returns:      None
+ *---------------------------------------------------------------------------*/
+void __OSReschedule(void) {
+    OSYieldThread();  // On PC, just yield to OS scheduler
+}
+
+/*---------------------------------------------------------------------------*
   Name:         OSCreateThread
 
   Description:  Creates a new thread. On original hardware, this initializes

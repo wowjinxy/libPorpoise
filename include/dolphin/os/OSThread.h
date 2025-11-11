@@ -119,6 +119,7 @@ void       OSSleepTicks         (OSTime ticks);
 // Internal priority management functions
 s32        __OSGetEffectivePriority(OSThread* thread);  // Get effective priority
 void       __OSPromoteThread       (OSThread* thread, s32 priority);  // Boost priority
+void       __OSReschedule          (void);  // Force thread reschedule
 
 #define OSSleepSeconds(sec)         OSSleepTicks(OSSecondsToTicks((OSTime)sec))
 #define OSSleepMilliseconds(msec)   OSSleepTicks(OSMillisecondsToTicks((OSTime)msec))
