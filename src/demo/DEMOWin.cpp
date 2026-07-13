@@ -34,7 +34,11 @@ DEMOWinInfo* DEMOWinCreateWindow(s32 x1, s32 y1, s32 x2, s32 y2, char* caption, 
         win->y1 = y1;
         win->x2 = x2;
         win->y2 = y2;
+        #ifdef LIBPORPOISE_BUILD_WIN64
         win->caption = caption ? _strdup(caption) : NULL;
+        #elif LIBPORPOISE_BUILD_LINUX
+        win->caption = caption ? strdup(caption) : NULL;
+        #endif
         win->refresh = (void(*)(DEMOWinInfo*))func;
     }
     return win; // Stub

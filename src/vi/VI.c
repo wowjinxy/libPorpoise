@@ -50,8 +50,12 @@
 #include <dolphin/os.h>
 #include <dolphin/os/OSAlarm.h>
 #include <dolphin/porpoise/Guard.h>
+#ifdef LIBPORPOISE_BUILD_WIN64
 #include <SDL.h>
-#include <SDL_opengl.h>
+#else
+#include <SDL2/SDL.h>
+#endif
+#include <simulator/glad/glad.h>
 #include <string.h>
 #include <stdlib.h>
 

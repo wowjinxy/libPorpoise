@@ -9,7 +9,11 @@
 #define PAD_CONFIG_H
 
 #include <dolphin/types.h>
+#ifdef LIBPORPOISE_BUILD_WIN64
 #include <SDL.h>
+#else
+#include <SDL2/SDL.h>
+#endif
 
 /**
  * @brief Load configuration from pad_config.ini

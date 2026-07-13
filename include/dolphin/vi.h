@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 #include <dolphin/types.h>
-#include <dolphin/gx/gxstruct.h>
+#include <dolphin/gx/GXStruct.h>
 
 /*---------------------------------------------------------------------------*
     Constants
