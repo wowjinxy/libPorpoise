@@ -16,47 +16,59 @@ build_target = get_option('build_target')
 ############################################################
 ###                    COMPILER FLAGS                    ###
 ############################################################
-c_args = []
+shared_args = []
 
-add_project_arguments(c_args,
+add_project_arguments(shared_args,
     language: 'c',
     native: true
 )
 
-add_project_arguments(c_args,
+add_project_arguments(shared_args,
     language: 'cpp',
     native: true
 )
 
-libporpoise_args = [
+libporpoise_shared_args = [
 ]
 
+libporpoise_c_args = [
+]
+
+libporpoise_cpp_args = [
+]
+
+
 if (build_target == 'win64')
-    libporpoise_args += [
-        '-DHW2',
-        '-DGEKKO',
-        '-DGX_REV=2',
+    libporpoise_shared_args += [
         '-DLIBPORPOISE_BUILD_WIN64',
         '-w'
     ]
 endif
 
 if (build_target == 'linux')
-    libporpoise_args += [
-        '-DHW2',
-        '-DGEKKO',
-        '-DGX_REV=2',
+    libporpoise_shared_args += [
         '-DLIBPORPOISE_BUILD_LINUX',
+        '-D_POSIX_C_SOURCE=200112L',
         '-w'
     ]
 endif
 
-add_project_arguments(libporpoise_args,
+libporpoise_c_args += libporpoise_shared_args
+libporpoise_c_args += [
+    '-std=c99'
+]
+
+libporpoise_cpp_args += libporpoise_shared_args
+libporpoise_cpp_args += [
+    '-std=c++20'
+]
+
+add_project_arguments(libporpoise_c_args,
     language: 'c',
     native: true
 )
 
-add_project_arguments(libporpoise_args,
+add_project_arguments(libporpoise_cpp_args,
     language: 'cpp',
     native: true
 )
@@ -70,15 +82,24 @@ libporpoise_includes = include_directories('include')
 ###                      LIBRARIES                       ###
 ############################################################
 subdir('src')
+sdl2_lib = meson.get_compiler('c').find_library('SDL2')
+sdl2_dep = declare_dependency(dependencies: [sdl2_lib])
 
 ############################################################
 ###                    FOR CONSUMERS                     ###
 ############################################################
 
 libporpoise_dep = declare_dependency(
-    compile_args: libporpoise_args,
+    compile_args: libporpoise_shared_args,
     include_directories: libporpoise_includes,
-    link_with: libporpoise_libs + libporpoise_prebuilt
+    link_with: libporpoise_libs + libporpoise_prebuilt,
+    dependencies: sdl2_dep
 )
 
 meson.override_dependency('libporpoise', libporpoise_dep)
+
+standalone = get_option('standalone')
+
+if(standalone) 
+    subdir('standalone')
+endif

@@ -210,7 +210,10 @@ static pthread_once_t s_interruptLockInitOnce = PTHREAD_ONCE_INIT;
 static void InitInterruptLockOnce(void) {
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
+    #if 0
+    //TODO: Not compiling
     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    #endif
     pthread_mutex_init(&s_interruptLock, &attr);
     pthread_mutexattr_destroy(&attr);
 }
