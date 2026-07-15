@@ -66,11 +66,7 @@
 #include <dolphin/porpoise/Guard.h>
 #include <string.h>
 #include <stdlib.h>
-#ifdef LIBPORPOISE_BUILD_WIN64
-#include <SDL.h>
-#else
 #include <SDL2/SDL.h>
-#endif
 
 /*---------------------------------------------------------------------------*
     Internal State

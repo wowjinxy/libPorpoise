@@ -14,11 +14,7 @@
 #include <dolphin/gx.h>
 #include <string.h>
 #include <stdlib.h>
-#ifdef LIBPORPOISE_BUILD_WIN64
-#include <SDL.h>  /* For SDL_GL_SwapWindow */
-#else
 #include <SDL2/SDL.h>
-#endif
 #include "../gfx/render.hpp"
 
 #ifdef __cplusplus

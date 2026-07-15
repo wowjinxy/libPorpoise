@@ -4,7 +4,7 @@
 
 #include <dolphin/types.h>
 #include <dolphin/vi.h>
-#include <SDL.h>
+#include <SDL2/SDL.h>
 #include "glad/gl.h"
 
 #include <stdint.h>

@@ -59,11 +59,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#ifdef LIBPORPOISE_BUILD_WIN64
-#include <SDL.h>
-#else
 #include <SDL2/SDL.h>
-#endif
 
 /*---------------------------------------------------------------------------*
     Configuration Structure
