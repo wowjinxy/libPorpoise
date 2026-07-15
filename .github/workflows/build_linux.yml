@@ -24,5 +24,8 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
 
+      - name: Create build container image
+        run: ./drun.sh echo done
+
       - name: Build (Linux)
         run: ./drun.sh ./standalone/scripts/ci_build_linux.sh
