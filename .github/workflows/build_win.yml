@@ -1,0 +1,31 @@
+name: build_win
+
+on:
+  push:
+    branches: [ master ]
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+env:
+  GITHUB_ACTIONS: "true"
+
+jobs:
+  build_win:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - name: Install MSys2
+        run: .\Install_MSys2.ps1
+        shell: powershell
+
+      - name: Build (win64)
+        run: .\Launch_Msys2.ps1 "./standalone/scripts/ci_build_win.sh"
+        shell: powershell

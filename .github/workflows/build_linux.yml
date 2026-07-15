@@ -1,4 +1,4 @@
-name: build
+name: build_linux
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build_linux:
     permissions:
       contents: write
     runs-on: ubuntu-24.04
