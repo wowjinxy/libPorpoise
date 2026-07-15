@@ -10,14 +10,12 @@ extern "C" {
 #include <dolphin/gx/GXCull.h>
 #include <dolphin/gx/GXDispList.h>
 #include <dolphin/gx/GXDraw.h>
-#include <dolphin/gx/GXExtra.h>
 #include <dolphin/gx/GXFifo.h>
 #include <dolphin/gx/GXFrameBuffer.h>
 #include <dolphin/gx/GXGeometry.h>
 #include <dolphin/gx/GXGet.h>
 #include <dolphin/gx/GXLighting.h>
 #include <dolphin/gx/GXManage.h>
-#include <dolphin/gx/GXMisc.h>
 #include <dolphin/gx/GXPerf.h>
 #include <dolphin/gx/GXPixel.h>
 #include <dolphin/gx/GXStruct.h>

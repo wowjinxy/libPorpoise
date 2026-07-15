@@ -10,17 +10,6 @@ extern "C" {
 #define GX_PROJECTION_SZ 7
 #define GX_VIEWPORT_SZ   6
 
-#ifdef TARGET_PC
-void GXSetProjection(const void* mtx, GXProjectionType type);
-void GXSetProjectionv(const f32* ptr);
-void GXLoadPosMtxImm(const void* mtx, u32 id);
-void GXLoadNrmMtxImm(const void* mtx, u32 id);
-void GXLoadNrmMtxImm3x3(const void* mtx, u32 id);
-void GXLoadTexMtxImm(const void* mtx, u32 id, GXTexMtxType type);
-void GXLoadPosMtxIndx(u16 index, u32 id);
-void GXLoadNrmMtxIndx3x3(u16 index, u32 id);
-void GXLoadTexMtxIndx(u16 index, u32 id, GXTexMtxType type);
-#else
 void GXSetProjection(f32 mtx[4][4], GXProjectionType type);
 void GXSetProjectionv(const f32* ptr);
 void GXLoadPosMtxImm(f32 mtx[3][4], u32 id);
@@ -30,7 +19,6 @@ void GXLoadTexMtxImm(f32 mtx[][4], u32 id, GXTexMtxType type);
 void GXLoadPosMtxIndx(u16 index, u32 id);
 void GXLoadNrmMtxIndx3x3(u16 index, u32 id);
 void GXLoadTexMtxIndx(u16 index, u32 id, GXTexMtxType type);
-#endif
 void GXSetViewport(f32 left, f32 top, f32 wd, f32 ht, f32 nearz, f32 farz);
 void GXSetViewportv(const f32* vp);
 void GXGetViewportv(f32* vp);
