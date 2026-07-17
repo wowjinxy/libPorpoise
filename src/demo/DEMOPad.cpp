@@ -4,7 +4,6 @@
   
   Controller input handling - forwards to libPorpoise PAD functions.
   
-  Based on Nintendo's Revolution SDK demo library.
  *---------------------------------------------------------------------------*/
 
 #include <dolphin/demo.h>

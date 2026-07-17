@@ -1,246 +1,220 @@
-/*---------------------------------------------------------------------------*
-  OSMutex.c - Mutex and Condition Variable Implementation
-  
-  Moved from OSThread.c to match original SDK structure.
- *---------------------------------------------------------------------------*/
+#include "Dolphin/os.h"
+#include <stddef.h>
 
-#include <dolphin/os.h>
-
-static void LinkMutexToThreadUnlocked(OSMutex* mutex, OSThread* thread) {
-    if (!mutex || !thread) {
-        return;
-    }
-
-    if (mutex->link.prev || mutex->link.next || thread->queueMutex.head == mutex) {
-        return;
-    }
-
-    mutex->link.prev = thread->queueMutex.tail;
-    mutex->link.next = NULL;
-    if (thread->queueMutex.tail) {
-        thread->queueMutex.tail->link.next = mutex;
-    } else {
-        thread->queueMutex.head = mutex;
-    }
-    thread->queueMutex.tail = mutex;
+/**
+ * @TODO: Documentation
+ */
+void OSInitMutex(OSMutex* mutex)
+{
+	OSInitThreadQueue(&mutex->queue);
+	mutex->thread = NULL;
+	mutex->count  = 0;
 }
 
-static void UnlinkMutexFromThreadUnlocked(OSMutex* mutex, OSThread* thread) {
-    if (!mutex || !thread) {
-        return;
-    }
+/**
+ * @TODO: Documentation
+ */
+void OSLockMutex(OSMutex* mutex)
+{
+	BOOL enabled            = OSDisableInterrupts();
+	OSThread* currentThread = OSGetCurrentThread();
+	OSThread* ownerThread;
 
-    if (mutex->link.prev) {
-        mutex->link.prev->link.next = mutex->link.next;
-    } else if (thread->queueMutex.head == mutex) {
-        thread->queueMutex.head = mutex->link.next;
-    }
-
-    if (mutex->link.next) {
-        mutex->link.next->link.prev = mutex->link.prev;
-    } else if (thread->queueMutex.tail == mutex) {
-        thread->queueMutex.tail = mutex->link.prev;
-    }
-
-    mutex->link.prev = NULL;
-    mutex->link.next = NULL;
+	while (TRUE) {
+		ownerThread = mutex->thread;
+		if (ownerThread == 0) {
+			mutex->thread = currentThread;
+			mutex->count++;
+			AddTailMutex(&currentThread->queueMutex, mutex, link);
+			break;
+		} else if (ownerThread == currentThread) {
+			mutex->count++;
+			break;
+		} else {
+			currentThread->mutex = mutex;
+			__OSPromoteThread(mutex->thread, currentThread->priority);
+			OSSleepThread(&mutex->queue);
+			currentThread->mutex = NULL;
+		}
+	}
+	OSRestoreInterrupts(enabled);
 }
 
-/*===========================================================================*
-  MUTEX IMPLEMENTATION
- *===========================================================================*/
+/**
+ * @TODO: Documentation
+ */
+void OSUnlockMutex(OSMutex* mutex)
+{
+	BOOL enabled            = OSDisableInterrupts();
+	OSThread* currentThread = OSGetCurrentThread();
 
-void OSInitMutex(OSMutex* mutex) {
-    if (!mutex) return;
-    
-    mutex->queue.head = NULL;
-    mutex->queue.tail = NULL;
-    mutex->thread = NULL;
-    mutex->count = 0;
-    mutex->link.next = NULL;
-    mutex->link.prev = NULL;
+	if (mutex->thread == currentThread && --mutex->count == 0) {
+		RemoveItemMutex(&currentThread->queueMutex, mutex, link);
+		mutex->thread = NULL;
+		if (currentThread->priority < currentThread->base) {
+			currentThread->priority = __OSGetEffectivePriority(currentThread);
+		}
+
+		OSWakeupThread(&mutex->queue);
+	}
+	OSRestoreInterrupts(enabled);
 }
 
-void OSLockMutex(OSMutex* mutex) {
-    if (!mutex) return;
-    
-    OSThread* current = OSGetCurrentThread();
-    BOOL enabled = OSDisableInterrupts();
-    if (!current) {
-        OSRestoreInterrupts(enabled);
-        return;
-    }
-    
-    /* Recursive locking - same thread can lock multiple times */
-    if (mutex->thread == current) {
-        mutex->count++;
-        OSRestoreInterrupts(enabled);
-        return;
-    }
-    
-    /* Lock is held by another thread - wait in priority order queue */
-    while (mutex->thread != NULL) {
-        if (mutex->thread->priority > current->priority) {
-            __OSPromoteThread(mutex->thread, current->priority);
-        }
-        OSSleepThread(&mutex->queue);
-    }
-    
-    /* Acquire lock */
-    mutex->thread = current;
-    mutex->count = 1;
-    LinkMutexToThreadUnlocked(mutex, current);
-    OSRestoreInterrupts(enabled);
+/**
+ * @TODO: Documentation
+ */
+void __OSUnlockAllMutex(OSThread* thread)
+{
+	OSMutex* mutex;
+
+	while (thread->queueMutex.head) {
+		RemoveHeadMutex(&thread->queueMutex, mutex, link);
+		mutex->count  = 0;
+		mutex->thread = NULL;
+		OSWakeupThread(&mutex->queue);
+	}
 }
 
-void OSUnlockMutex(OSMutex* mutex) {
-    if (!mutex) return;
-    
-    OSThread* current = OSGetCurrentThread();
-    BOOL enabled = OSDisableInterrupts();
-    
-    /* Only owner can unlock */
-    if (mutex->thread != current) {
-        OSRestoreInterrupts(enabled);
-        return;
-    }
-    
-    /* Decrement recursion count */
-    mutex->count--;
-    if (mutex->count > 0) {
-        OSRestoreInterrupts(enabled);
-        return;  /* Still locked (recursive) */
-    }
-    
-    /* Release lock */
-    UnlinkMutexFromThreadUnlocked(mutex, current);
-    mutex->thread = NULL;
-    
-    /* Wake all waiters; scheduler/priority chooses next owner */
-    OSWakeupThread(&mutex->queue);
-    OSRestoreInterrupts(enabled);
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000BC
+ */
+BOOL OSTryLockMutex(OSMutex* mutex)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-BOOL OSTryLockMutex(OSMutex* mutex) {
-    if (!mutex) return FALSE;
-    
-    OSThread* current = OSGetCurrentThread();
-    BOOL enabled = OSDisableInterrupts();
-    if (!current) {
-        OSRestoreInterrupts(enabled);
-        return FALSE;
-    }
-    
-    /* Recursive locking */
-    if (mutex->thread == current) {
-        mutex->count++;
-        OSRestoreInterrupts(enabled);
-        return TRUE;
-    }
-    
-    /* Try to acquire - fail if held */
-    if (mutex->thread != NULL) {
-        OSRestoreInterrupts(enabled);
-        return FALSE;
-    }
-    
-    mutex->thread = current;
-    mutex->count = 1;
-    LinkMutexToThreadUnlocked(mutex, current);
-    OSRestoreInterrupts(enabled);
-    return TRUE;
+/**
+ * @TODO: Documentation
+ */
+void OSInitCond(OSCond* cond)
+{
+	OSInitThreadQueue(&cond->queue);
 }
 
-/*===========================================================================*
-  CONDITION VARIABLE IMPLEMENTATION
- *===========================================================================*/
+/**
+ * @TODO: Documentation
+ */
+void OSWaitCond(OSCond* cond, OSMutex* mutex)
+{
+	BOOL enabled            = OSDisableInterrupts();
+	OSThread* currentThread = OSGetCurrentThread();
+	s32 count;
 
-void OSInitCond(OSCond* cond) {
-    if (!cond) return;
-    cond->queue.head = NULL;
-    cond->queue.tail = NULL;
+	if (mutex->thread == currentThread) {
+		count        = mutex->count;
+		mutex->count = 0;
+		RemoveItemMutex(&currentThread->queueMutex, mutex, link);
+		mutex->thread = NULL;
+
+		if (currentThread->priority < currentThread->base) {
+			currentThread->priority = __OSGetEffectivePriority(currentThread);
+		}
+
+		OSDisableScheduler();
+		OSWakeupThread(&mutex->queue);
+		OSEnableScheduler();
+		OSSleepThread(&cond->queue);
+		OSLockMutex(mutex);
+		mutex->count = count;
+	}
+
+	OSRestoreInterrupts(enabled);
 }
 
-void OSWaitCond(OSCond* cond, OSMutex* mutex) {
-    if (!cond || !mutex) return;
-
-    OSThread* current = OSGetCurrentThread();
-    BOOL enabled = OSDisableInterrupts();
-    if (!current) {
-        OSRestoreInterrupts(enabled);
-        return;
-    }
-
-    if (mutex->thread != current || mutex->count <= 0) {
-        OSRestoreInterrupts(enabled);
-        return;
-    }
-
-    /* SDK semantics: release mutex fully regardless of recursion depth,
-     * then restore that depth after reacquiring.
-     */
-    const s32 savedCount = mutex->count;
-
-    UnlinkMutexFromThreadUnlocked(mutex, current);
-    mutex->count = 0;
-    mutex->thread = NULL;
-    OSWakeupThread(&mutex->queue);
-
-    OSSleepThread(&cond->queue);
-
-    while (mutex->thread != NULL && mutex->thread != current) {
-        OSSleepThread(&mutex->queue);
-    }
-
-    if (mutex->thread != current) {
-        mutex->thread = current;
-        LinkMutexToThreadUnlocked(mutex, current);
-    }
-    mutex->count = savedCount;
-
-    OSRestoreInterrupts(enabled);
+/**
+ * @TODO: Documentation
+ */
+void OSSignalCond(OSCond* cond)
+{
+	OSWakeupThread(&cond->queue);
 }
 
-void OSSignalCond(OSCond* cond) {
-    if (!cond) return;
-
-    /* Wake one waiting thread */
-    OSWakeupThread(&cond->queue);
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00002C
+ */
+static void IsMember(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __OSUnlockAllMutex
-  
-  Description:  Unlocks all mutexes held by a thread. Used when thread
-                terminates to clean up resources.
-  
-  Arguments:    thread - Thread whose mutexes should be unlocked
-  
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void __OSUnlockAllMutex(OSThread* thread) {
-    if (!thread) return;
-    
-    OSMutex* mutex;
-    
-    // Unlock all mutexes in the thread's queue
-    while (thread->queueMutex.head) {
-        mutex = thread->queueMutex.head;
-        
-        // Remove from thread's mutex queue
-        thread->queueMutex.head = mutex->link.next;
-        if (mutex->link.next) {
-            mutex->link.next->link.prev = NULL;
-        } else {
-            thread->queueMutex.tail = NULL;
-        }
-        
-        // Clear mutex ownership
-        mutex->count = 0;
-        mutex->thread = NULL;
-        
-        // Wake waiting threads
-        OSWakeupThread(&mutex->queue);
-    }
+/**
+ * @TODO: Documentation
+ */
+BOOL __OSCheckMutex(OSMutex* mutex)
+{
+	OSThread* thread;
+	OSThreadQueue* queue;
+	s32 priority;
+
+	priority = 0;
+	queue    = &mutex->queue;
+
+	if (queue->head != NULL && queue->head->link.prev != NULL) {
+		return 0;
+	}
+	if (queue->tail != NULL && queue->tail->link.next != NULL) {
+		return 0;
+	}
+	thread = queue->head;
+	while (thread) {
+		if (thread->link.next != NULL && (thread != thread->link.next->link.prev)) {
+			return 0;
+		}
+		if (thread->link.prev != NULL && (thread != thread->link.prev->link.next)) {
+			return 0;
+		}
+		if (thread->state != 4) {
+			return 0;
+		}
+		if (thread->priority < priority) {
+			return 0;
+		}
+		priority = thread->priority;
+		thread   = thread->link.next;
+	}
+	if (mutex->thread) {
+		if (mutex->count <= 0) {
+			return 0;
+		}
+	} else if (mutex->count != 0) {
+		return 0;
+	}
+	return 1;
 }
 
+/**
+ * @TODO: Documentation
+ */
+BOOL __OSCheckDeadLock(OSThread* thread)
+{
+	OSMutex* mutex = thread->mutex;
+
+	while (mutex && mutex->thread) {
+		if (mutex->thread == thread) {
+			return 1;
+		}
+		mutex = mutex->thread->mutex;
+	}
+	return 0;
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL __OSCheckMutexes(OSThread* thread)
+{
+	OSMutex* mutex = thread->queueMutex.head;
+
+	while (mutex) {
+		if (mutex->thread != thread) {
+			return 0;
+		}
+		if (__OSCheckMutex(mutex) == 0) {
+			return 0;
+		}
+		mutex = mutex->link.next;
+	}
+	return 1;
+}

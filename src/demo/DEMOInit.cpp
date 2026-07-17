@@ -4,7 +4,6 @@
   
   Demo initialization framework - stubs that forward to libPorpoise functions.
   
-  Based on Nintendo's Revolution SDK demo library.
  *---------------------------------------------------------------------------*/
 
 #include <dolphin/demo.h>

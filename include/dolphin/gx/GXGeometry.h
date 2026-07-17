@@ -1,34 +1,48 @@
-#ifndef DOLPHIN_GXGEOMETRY_H
-#define DOLPHIN_GXGEOMETRY_H
+#ifndef _DOLPHIN_GXGEOMETRY_H
+#define _DOLPHIN_GXGEOMETRY_H
 
-#include <dolphin/gx/GXEnum.h>
+#include <dolphin/types.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "dolphin/GX/GXEnum.h"
+#include "dolphin/GX/GXTypes.h"
 
-void GXSetVtxDesc(GXAttr attr, GXAttrType type);
-void GXSetVtxDescv(GXVtxDescList* list);
-void GXClearVtxDesc(void);
-void GXSetVtxAttrFmt(GXVtxFmt vtxfmt, GXAttr attr, GXCompCnt cnt, GXCompType type, u8 frac);
-void GXSetNumTexGens(u8 nTexGens);
-void GXBegin(GXPrimitive type, GXVtxFmt vtxfmt, u16 nverts);
-void GXSetTexCoordGen2(GXTexCoordID dst_coord, GXTexGenType func, GXTexGenSrc src_param, u32 mtx, GXBool normalize,
-                       u32 postmtx);
-void GXSetLineWidth(u8 width, GXTexOffset texOffsets);
-void GXSetPointSize(u8 pointSize, GXTexOffset texOffsets);
-void GXEnableTexOffsets(GXTexCoordID coord, GXBool line_enable, GXBool point_enable);
-void GXSetArray(GXAttr attr, const void* data, u8 stride);
-#define GXSETARRAY(attr, data, size, stride) GXSetArray((attr), (data), (stride))
-void GXInvalidateVtxCache(void);
-void GXSetVtxAttrFmtv(GXVtxFmt vtxfmt, const GXVtxAttrFmtList* list);
+BEGIN_SCOPE_EXTERN_C
 
-static inline void GXSetTexCoordGen(GXTexCoordID dst_coord, GXTexGenType func, GXTexGenSrc src_param, u32 mtx) {
-  GXSetTexCoordGen2(dst_coord, func, src_param, mtx, GX_FALSE, GX_PTIDENTITY);
-}
+//////////// GEOMETRY FUNCTIONS ////////////
+// Basic GX functions.
+extern void __GXSetDirtyState();
+extern void GXBegin(GXPrimitive type, GXVtxFmt format, u16 numVertices);
+extern void __GXSendFlushPrim();
 
-#ifdef __cplusplus
-}
-#endif
+// Attr functions.
+extern void GXSetVtxDesc(GXAttr attr, GXAttrType type);
+extern void GXClearVtxDesc();
+
+extern void GXSetVtxAttrFmt(GXVtxFmt format, GXAttr attr, GXCompCnt count, GXCompType type, u8 frac);
+extern void GXSetVtxAttrFmtv(GXVtxFmt format, GXVtxAttrFmtList* list);
+
+extern void GXSetArray(GXAttr attr, void* basePtr, u8 stride);
+extern void GXInvalidateVtxCache();
+extern void GXSetTexCoordGen2(GXTexCoordID coord, GXTexGenType genType, GXTexGenSrc srcParam, u32 mtx, GXBool doNormalise, u32 postMtx);
+extern void GXSetNumTexGens(u8 count);
+
+// Geometry functions.
+extern void GXSetLineWidth(u8 width, GXTexOffset offset);
+extern void GXSetPointSize(u8 pointSize, GXTexOffset offset);
+extern void GXEnableTexOffsets(GXTexCoordID coord, GXBool enableLine, GXBool enablePoint);
+extern void __GXSetGenMode();
+
+// Cull and manip functions.
+extern void GXSetCullMode(GXCullMode mode);
+extern void GXSetCoPlanar(GXBool doEnable);
+
+// Unused/inlined in P2.
+extern void GXGetLineWidth(u8* width, GXTexOffset* offset);
+extern void GXGetPointSize(u8* pointSize, GXTexOffset* offset);
+extern void GXGetCullMode(GXCullMode* mode);
+
+////////////////////////////////////////////
+
+END_SCOPE_EXTERN_C
 
 #endif

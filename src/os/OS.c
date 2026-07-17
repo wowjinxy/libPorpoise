@@ -1,548 +1,619 @@
-#include <dolphin/os.h>
-#include <stdio.h>
-#include <stdarg.h>
-#include <stdlib.h>
+#include "Dolphin/os.h"
+#include <dolphin/base/PPCArch.h>
+#include "Dolphin/db.h"
+#include "Dolphin/exi.h"
+#include "Dolphin/hw_regs.h"
+#include "Dolphin/si.h"
+#ifndef LIBPORPOISE_PORT
+#include "PowerPC_EABI_Support/MetroTRK/trk.h"
+#include "PowerPC_EABI_Support/Runtime/__ppc_eabi_linker.h"
+#endif
+#include <stddef.h>
 #include <string.h>
-#include <time.h>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <io.h>
-#include <fcntl.h>
-#endif
+// memory locations for important stuff
+#define OS_DBINTERFACE_ADDR     0x40
+#define OS_BI2_DEBUG_ADDRESS    0x800000F4
+#define OS_DVD_DEVICECODE       0x800030E6
+#define DEBUGFLAG_ADDR          0x800030E8
+#define OS_DEBUG_ADDRESS_2      0x800030E9
+#define DB_EXCEPTIONRET_OFFSET  0xC
+#define DB_EXCEPTIONDEST_OFFSET 0x8
 
-#if defined(_MSC_VER)
-#define OS_THREAD_LOCAL __declspec(thread)
-#elif defined(__GNUC__) || defined(__clang__)
-#define OS_THREAD_LOCAL __thread
-#else
-#define OS_THREAD_LOCAL _Thread_local
-#endif
+extern u8 __ArenaHi[];
+extern u8 __ArenaLo[];
+extern u32 __DVDLongFileNameFlag;
+extern u32 __PADSpec;
 
-static BOOL s_osInitialized = FALSE;
-static BOOL s_osReportInitialized = FALSE;
-/* Per-thread guard against recursive OSReport calls. */
-static OS_THREAD_LOCAL BOOL s_osReportInProgress = FALSE;
-#ifdef _WIN32
-static BOOL s_consoleAttached = FALSE;
-/* Optional OSReport file sink enabled via PORPOISE_OSREPORT_FILE env var. */
-static int s_osReportFileMode = -1; /* -1 unknown, 0 disabled, 1 enabled */
-static char s_osReportFilePath[1024] = {0};
+// forward declarations
+void __OSResetSWInterruptHandler(__OSInterrupt interrupt, OSContext* context);
 
-static void EnsureConsole(void) {
-    if (s_consoleAttached) {
-        return;
-    }
+// The exception table.  It points to a location in LoMem.  It is set by OSExceptionInit.
+#define OS_EXCEPTIONTABLE_ADDR 0x3000
+#define OS_DBJUMPPOINT_ADDR    0x60
 
-    if (!GetConsoleWindow()) {
-        if (!AllocConsole()) {
-            AttachConsole(ATTACH_PARENT_PROCESS);
-        }
-    }
+extern vu16 __OSDeviceCode AT_ADDRESS(OS_BASE_CACHED | OS_DVD_DEVICECODE);
 
-    FILE* out = NULL;
-    if (freopen_s(&out, "CONOUT$", "w", stdout) == 0) {
-        setvbuf(stdout, NULL, _IONBF, 0);
-    }
-    if (freopen_s(&out, "CONOUT$", "w", stderr) == 0) {
-        setvbuf(stderr, NULL, _IONBF, 0);
-    }
+// flags and system info
+static OSBootInfo* BootInfo;
+static vu32* BI2DebugFlag;
+static u32* BI2DebugFlagHolder;
+static f64 ZeroF             = 0.0;
+static BOOL AreWeInitialized = FALSE;
+static __OSExceptionHandler* OSExceptionTable;
+OSTime __OSStartTime;
+BOOL __OSInIPL;
+void* __OSSavedRegionStart;
+void* __OSSavedRegionEnd;
 
-    s_consoleAttached = TRUE;
-}
+// functions
+static void OSExceptionInit(void);
+static void OSDefaultExceptionHandler(__OSException exception, OSContext* context);
 
-static void WriteOSReportToFile(const char* text, size_t len) {
-    if (!text || len == 0) {
-        return;
-    }
-
-    if (s_osReportFileMode < 0) {
-        DWORD got = GetEnvironmentVariableA("PORPOISE_OSREPORT_FILE",
-                                            s_osReportFilePath,
-                                            (DWORD)sizeof(s_osReportFilePath));
-        if (got == 0 || got >= sizeof(s_osReportFilePath)) {
-            /* Default log path for local debugging when env var is not set. */
-            strncpy_s(s_osReportFilePath,
-                      sizeof(s_osReportFilePath),
-                      "osreport_runtime.log",
-                      _TRUNCATE);
-            s_osReportFileMode = 1;
-        } else {
-            s_osReportFileMode = 1;
-        }
-    }
-
-    if (s_osReportFileMode != 1) {
-        return;
-    }
-
-    FILE* f = NULL;
-    if (fopen_s(&f, s_osReportFilePath, "ab") != 0 || !f) {
-        return;
-    }
-
-    fwrite(text, 1, len, f);
-    fclose(f);
-}
-#endif
-
-/* Arena management variables
- * On GC/Wii, "arenas" define ranges of memory available for allocation
- * MEM1 = 24MB main RAM, MEM2 = 64MB external RAM (Wii only)
- * On PC, we don't pre-allocate arenas - games can use malloc directly
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00000C (Matching by size)
  */
-static void* s_arenaHi = NULL;
-static void* s_arenaLo = NULL;
-static void* s_mem1ArenaHi = NULL;
-static void* s_mem1ArenaLo = NULL;
-static void* s_mem2ArenaHi = NULL;
-static void* s_mem2ArenaLo = NULL;
-
-static u32 NormalizeArenaAlign(u32 align) {
-    return (align == 0) ? 4u : align;
+u32 __OSIsDebuggerPresent(void)
+{
+	return *(u32*)OSPhysicalToCached(OS_DBINTERFACE_ADDR);
 }
 
-static uintptr_t AlignUpAddress(uintptr_t value, u32 align) {
-    uintptr_t a = (uintptr_t)align;
-    uintptr_t rem = value % a;
-    if (rem == 0) {
-        return value;
-    }
-    return value + (a - rem);
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000084
+ */
+static ASM void __OSInitFPRs(void) {
+#ifdef __MWERKS__ // clang-format off
+    nofralloc
+    lfd  fp0, ZeroF
+    fmr  fp1, fp0
+    fmr  fp2, fp0
+    fmr  fp3, fp0
+    fmr  fp4, fp0
+    fmr  fp5, fp0
+    fmr  fp6, fp0
+    fmr  fp7, fp0
+    fmr  fp8, fp0
+    fmr  fp9, fp0
+    fmr  fp10, fp0
+    fmr  fp11, fp0
+    fmr  fp12, fp0
+    fmr  fp13, fp0
+    fmr  fp14, fp0
+    fmr  fp15, fp0
+    fmr  fp16, fp0
+    fmr  fp17, fp0
+    fmr  fp18, fp0
+    fmr  fp19, fp0
+    fmr  fp20, fp0
+    fmr  fp21, fp0
+    fmr  fp22, fp0
+    fmr  fp23, fp0
+    fmr  fp24, fp0
+    fmr  fp25, fp0
+    fmr  fp26, fp0
+    fmr  fp27, fp0
+    fmr  fp28, fp0
+    fmr  fp29, fp0
+    fmr  fp30, fp0
+    fmr  fp31, fp0
+    blr
+#endif // clang-format on
 }
 
-static uintptr_t AlignDownAddress(uintptr_t value, u32 align) {
-    uintptr_t a = (uintptr_t)align;
-    return value - (value % a);
+/**
+ * @TODO: Documentation
+ */
+u32 OSGetConsoleType(void)
+{
+	if (BootInfo == NULL || BootInfo->consoleType == 0) {
+		return OS_CONSOLE_ARTHUR; // default console type
+	}
+	return BootInfo->consoleType;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSInit
+#if OS_BUILD_VERSION >= 20011002L
 
-  Description:  Initializes the operating system. This is the first OS
-                function that should be called. On the original hardware,
-                this sets up exception handlers, interrupts, caches, and
-                various hardware subsystems.
-                
-                On PC, we simulate the memory layout and initialize our
-                platform-specific implementations of threading, timing, etc.
+void ClearArena()
+{
+	void *start, *end;
+	if ((u32)(OSGetResetCode() + 0x80000000) != 0U) {
+		memset(OSGetArenaLo(), 0U, (char*)OSGetArenaHi() - (char*)OSGetArenaLo());
+		return;
+	}
+	start = OS_BOOT_REGION_START;
+	end   = OS_BOOT_REGION_END;
+	if (OS_BOOT_REGION_START == NULL) {
+		memset(OSGetArenaLo(), 0U, (char*)OSGetArenaHi() - (char*)OSGetArenaLo());
+		return;
+	}
 
-  Arguments:    None.
-
-  Returns:      None.
- *---------------------------------------------------------------------------*/
-extern void __OSThreadInit(void);
-
-void OSInit(void) {
-    if (s_osInitialized) {
-        return;
-    }
-    
-    s_osInitialized = TRUE;
-
-#ifdef _WIN32
-    EnsureConsole();
+	if (OSGetArenaLo() < start) {
+		if (OSGetArenaHi() <= start) {
+			memset(OSGetArenaLo(), 0U, (char*)OSGetArenaHi() - (char*)OSGetArenaLo());
+			return;
+		}
+		memset(OSGetArenaLo(), 0U, (char*)start - (char*)OSGetArenaLo());
+		if (OSGetArenaHi() > end) {
+			memset(end, 0, (char*)OSGetArenaHi() - (char*)end);
+		}
+	}
+}
 #endif
-    
-    __OSThreadInit();
-    
-    // On PC, we don't pre-allocate memory arenas like the original hardware
-    // Games can use malloc directly, or call OSInitAlloc() with their own ranges
-    // Arena pointers are initialized to NULL - games set them if needed
-    
-    s_arenaLo = NULL;
-    s_arenaHi = NULL;
-    s_mem1ArenaLo = NULL;
-    s_mem1ArenaHi = NULL;
-    s_mem2ArenaLo = NULL;
-    s_mem2ArenaHi = NULL;
-    
-    // Report initialization
-    OSReport("==================================\n");
-    OSReport("libPorpoise v0.1.0\n");
-    OSReport("GC/Wii SDK PC Port\n");
-    OSReport("==================================\n");
-    OSReport("Initialized: %s %s\n", __DATE__, __TIME__);
-    OSReport("Memory: Using standard malloc/free (no pre-allocated arenas)\n");
-    OSReport("==================================\n");
-}
+/**
+ * @TODO: Documentation
+ */
+void OSInit(void)
+{
+	/*
+	Initializes the Dolphin operating system.
+	    - most of the main operations get farmed out to other functions
+	    - loading debug info and setting up heap bounds largely happen here
+	    - a lot of OS reporting also gets controlled here
+	*/
+	// pretty sure this is the min(/max) amount of pointers etc for the stack to match
+	BI2Debug* DebugInfo;
+	void* debugArenaLo;
+	u32 inputConsoleType;
+	u32 tdev;
 
-/*---------------------------------------------------------------------------*
-  Name:         OSGetConsoleType
+	// check if we've already done all this or not
+	if (!AreWeInitialized) {     // fantastic name
+		AreWeInitialized = TRUE; // flag to make sure we don't have to do this again
 
-  Description:  Returns the console type identifier. On original hardware,
-                this returns values like OS_CONSOLE_RVL_RETAIL1 (retail Wii),
-                OS_CONSOLE_RVL_NDEV2_0 (dev kit), etc.
-                
-                On PC, we return a custom identifier to indicate this is a
-                PC port. Games may check this value to enable/disable features
-                or adjust behavior.
+		// SYSTEM //
+#if OS_BUILD_VERSION >= 20011002L
+		__OSStartTime = __OSGetSystemTime();
+#endif
 
-  Arguments:    None.
+		OSDisableInterrupts();
 
-  Returns:      Console type identifier. 0x10000000 = PC port
- *---------------------------------------------------------------------------*/
-#define OS_CONSOLE_PC_PORT 0x10000000
+		// DEBUG //
+		// load some DVD stuff
+		BI2DebugFlag = 0;                           // debug flag from the DVD BI2 header
+		BootInfo     = (OSBootInfo*)OS_BASE_CACHED; // set pointer to BootInfo
 
-u32 OSGetConsoleType(void) {
-    return OS_CONSOLE_PC_PORT;
-}
+		__DVDLongFileNameFlag = FALSE;
 
-/*---------------------------------------------------------------------------*
-  Name:         OSReport
+		// time to grab a bunch of debug info from the DVD
+		// the address for where the BI2 debug info is, is stored at OS_BI2_DEBUG_ADDRESS
+		DebugInfo = (BI2Debug*)*((u32*)OS_BI2_DEBUG_ADDRESS);
 
-  Description:  Debug output function similar to printf. On retail hardware
-                this typically does nothing, but on dev kits it outputs to
-                the debugger or USB Gecko device.
-                
-                On PC, we simply output to stdout. This is used extensively
-                by games for debug logging.
+		// if the debug info address exists, grab some debug info
+#if OS_BUILD_VERSION >= 20011002L
+		if (DebugInfo != NULL) {
+			BI2DebugFlag               = &DebugInfo->debugFlag;     // debug flag from DVD BI2
+			__PADSpec                  = (u32)DebugInfo->padSpec;   // some other info from DVD BI2
+			*((u8*)DEBUGFLAG_ADDR)     = (u8)*BI2DebugFlag;         // store flag in mem
+			*((u8*)OS_DEBUG_ADDRESS_2) = (u8)__PADSpec;             // store other info in mem
+		} else if (BootInfo->arenaHi) {                             // if the top of the heap is already set
+			BI2DebugFlagHolder = (u32*)*((u8*)DEBUGFLAG_ADDR);      // grab whatever's stored at 0x800030E8
+			BI2DebugFlag       = (u32*)&BI2DebugFlagHolder;         // flag is then address of flag holder
+			__PADSpec          = (u32) * ((u8*)OS_DEBUG_ADDRESS_2); // pad spec is whatever's at 0x800030E9
+		}
 
-  Arguments:    fmt  - printf-style format string
-                ...  - variable arguments
-
-  Returns:      None.
- *---------------------------------------------------------------------------*/
-void OSReport(const char* fmt, ...) {
-    if (s_osReportInProgress) {
-        /* Prevent infinite recursion if OSReport is triggered while already running */
-#ifdef _WIN32
-        OutputDebugStringA("[OSReport] Recursion detected!\n");
+		__DVDLongFileNameFlag = TRUE;
 #else
-        fputs("[OSReport] Recursion detected!\n", stderr);
-        fflush(stderr);
+		if (DebugInfo != NULL) {
+			BI2DebugFlag          = &DebugInfo->debugFlag;          // debug flag from DVD BI2
+			__DVDLongFileNameFlag = DebugInfo->dvdLongFileNameFlag; // we made it through debug!
+			__PADSpec             = (u32)DebugInfo->padSpec;        // some other info from DVD BI2
+		}
 #endif
-        return;
-    }
+		// HEAP //
+		// set up bottom of heap (ArenaLo)
+		// grab address from BootInfo if it exists, otherwise use default __ArenaLo
+		OSSetArenaLo((BootInfo->arenaLo == NULL) ? (void*)(__ArenaLo) : BootInfo->arenaLo);
 
-    if (!fmt) {
-#ifdef _WIN32
-        OutputDebugStringA("[OSReport] NULL format string\n");
-#else
-        fputs("[OSReport] NULL format string\n", stderr);
-        fflush(stderr);
+		// if the input arenaLo is null, and debug flag location exists (and flag is < 2),
+		//     set arenaLo to just past the end of the db stack
+		if ((BootInfo->arenaLo == NULL) && (BI2DebugFlag != 0) && (*BI2DebugFlag < 2)) {
+			#ifndef LIBPORPOISE_PORT
+			//TODO
+			debugArenaLo = (void*)_stack_addr;
+			#endif
+			OSSetArenaLo((void*)ALIGN_NEXT((u32)debugArenaLo, 32));
+		}
+
+		// set up top of heap (ArenaHi)
+		// grab address from BootInfo if it exists, otherwise use default __ArenaHi
+		OSSetArenaHi((BootInfo->arenaHi == NULL) ? __ArenaHi : BootInfo->arenaHi);
+
+		// OS INIT AND REPORT //
+		// initialise a whole bunch of OS stuff
+		OSExceptionInit();
+		__OSInitSystemCall();
+#if OS_BUILD_VERSION >= 20011002L
+		OSInitAlarm();
 #endif
-        return;
-    }
-
-    s_osReportInProgress = TRUE;
-
-    if (!s_osReportInitialized) {
-        s_osReportInitialized = TRUE;
-    }
-
-    char buffer[2048];
-    size_t offset = 0;
-
-    /* Optional timestamp for easier debugging */
-    if (s_osInitialized) {
-        time_t now = time(NULL);
-        if (now != (time_t)-1) {
-            struct tm* tm_info = localtime(&now);
-            if (tm_info) {
-                offset = (size_t)snprintf(buffer, sizeof(buffer), "[%02d:%02d:%02d] ",
-                                          tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec);
-                if (offset >= sizeof(buffer)) {
-                    offset = sizeof(buffer) - 1;
-                }
-            }
-        }
-    }
-
-    va_list args;
-    va_start(args, fmt);
-    int written = vsnprintf(buffer + offset, sizeof(buffer) - offset, fmt, args);
-    va_end(args);
-
-    if (written < 0) {
-#ifdef _WIN32
-        OutputDebugStringA("[OSReport] Formatting error\n");
-#else
-        fputs("[OSReport] Formatting error\n", stderr);
-        fflush(stderr);
+		__OSModuleInit();
+		__OSInterruptInit();
+		__OSSetInterruptHandler(__OS_INTERRUPT_PI_RSW, __OSResetSWInterruptHandler);
+		__OSContextInit();
+		__OSCacheInit();
+		EXIInit();
+		SIInit();
+		__OSInitSram();
+		__OSThreadInit();
+		__OSInitAudioSystem();
+#if OS_BUILD_VERSION >= 20011002L
+		PPCMthid2(PPCMfhid2() & ~HID2_WPE);
 #endif
-        s_osReportInProgress = FALSE;
-        return;
-    }
-
-    size_t totalLen = offset + (size_t)written;
-    if (totalLen >= sizeof(buffer)) {
-        totalLen = sizeof(buffer) - 1;
-    }
-
-#ifdef _WIN32
-    buffer[totalLen] = '\0';
-    /* Use Visual Studio debug output only - avoids console deadlock issues */
-    OutputDebugStringA(buffer);
-    WriteOSReportToFile(buffer, totalLen);
-#else
-    fwrite(buffer, 1, totalLen, stdout);
-    fflush(stdout);
+		if ((BootInfo->consoleType & OS_CONSOLE_DEVELOPMENT) != 0) {
+			BootInfo->consoleType = OS_CONSOLE_DEVHW1;
+		} else {
+			BootInfo->consoleType = OS_CONSOLE_RETAIL1;
+		}
+		BootInfo->consoleType += (__PIRegs[11] & 0xF0000000) >> 28;
+#if OS_BUILD_VERSION >= 20011002L
+#if OS_BUILD_VERSION >= 20011217L
+		if (__OSInIPL == FALSE)
 #endif
+			__OSInitMemoryProtection();
+#endif
+		// begin OS reporting
+		OSReport("\nDolphin OS $Revision: " TO_STRING(OS_BUILD_REVISION) " $.\n");
+		OSReport("Kernel built : %s %s\n", OS_BUILD_DATE, OS_BUILD_TIME);
+		OSReport("Console Type : ");
+		if (BootInfo == NULL || (inputConsoleType = BootInfo->consoleType) == 0) {
+			inputConsoleType = OS_CONSOLE_ARTHUR; // default console type
+		} else {
+			inputConsoleType = BootInfo->consoleType;
+		}
 
-    s_osReportInProgress = FALSE;
+		// work out what console type this corresponds to and report it
+		inputConsoleType = OSGetConsoleType();
+		if ((inputConsoleType & 0x10000000) == OS_CONSOLE_RETAIL) { // check "first" byte
+			OSReport("Retail %d\n", inputConsoleType);
+		} else {
+			switch (inputConsoleType) { // if "first" byte is 2, check "the rest"
+			case OS_CONSOLE_EMULATOR:
+			{
+				OSReport("Mac Emulator\n");
+				break;
+			}
+			case OS_CONSOLE_PC_EMULATOR:
+			{
+				OSReport("PC Emulator\n");
+				break;
+			}
+			case OS_CONSOLE_ARTHUR:
+			{
+				OSReport("EPPC Arthur\n");
+				break;
+			}
+			case OS_CONSOLE_MINNOW:
+			{
+				OSReport("EPPC Minnow\n");
+				break;
+			}
+			default: // if none of the above, just report the info we have
+			{
+				tdev = (u32)inputConsoleType - 0x10000000;
+				OSReport("Development HW%d\n", tdev - 3);
+				break;
+			}
+			}
+		}
+
+		// report memory size
+		OSReport("Memory %d MB\n", (u32)BootInfo->memorySize >> 0x14U);
+		// report heap bounds
+		OSReport("Arena : 0x%x - 0x%x\n", OSGetArenaLo(), OSGetArenaHi());
+
+		// if location of debug flag exists, and flag is >= 2, enable MetroTRKInterrupts
+		if (BI2DebugFlag && ((*BI2DebugFlag) >= 2)) {
+#ifdef __MWERKS__
+			EnableMetroTRKInterrupts();
+#endif
+		}
+
+// free up memory and re-enable things
+#if OS_BUILD_VERSION >= 20011002L
+		ClearArena();
+#endif
+		OSEnableInterrupts();
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSPanic
+static u32 __OSExceptionLocations[] = {
+	0x00000100, // 0  System reset
+	0x00000200, // 1  Machine check
+	0x00000300, // 2  DSI - seg fault or DABR
+	0x00000400, // 3  ISI
+	0x00000500, // 4  External interrupt
+	0x00000600, // 5  Alignment
+	0x00000700, // 6  Program
+	0x00000800, // 7  FP Unavailable
+	0x00000900, // 8  Decrementer
+	0x00000C00, // 9  System call
+	0x00000D00, // 10 Trace
+	0x00000F00, // 11 Performance monitor
+	0x00001300, // 12 Instruction address breakpoint.
+	0x00001400, // 13 System management interrupt
+	0x00001700  // 14 Thermal interrupt
+};
 
-  Description:  Fatal error handler. This is called when the game encounters
-                an unrecoverable error. On original hardware, this displays
-                an error screen and halts execution.
-                
-                On PC, we print the error and abort the program.
+// dummy entry points to the OS Exception vector
+void __OSEVStart(void);
+void __OSEVEnd(void);
+void __OSEVSetNumber(void);
+void __OSExceptionVector(void);
 
-  Arguments:    file - Source file where panic occurred
-                line - Line number where panic occurred  
-                fmt  - printf-style format string
-                ...  - variable arguments
+void __DBVECTOR(void);
+void __OSDBINTSTART(void);
+void __OSDBINTEND(void);
+void __OSDBJUMPSTART(void);
+void __OSDBJUMPEND(void);
 
-  Returns:      Does not return (aborts program).
- *---------------------------------------------------------------------------*/
-void OSPanic(const char* file, int line, const char* fmt, ...) {
-    va_list args;
-    char buf[256];
-    int is_graceful = 0;
+#define NOP 0x60000000
 
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
+/**
+ * @TODO: Documentation
+ */
+static void OSExceptionInit(void)
+{
+	__OSException exception;
+	void* destAddr;
 
-    /* Treat "End of test/demo/program" as normal shutdown - exit cleanly */
-    if (strstr(buf, "End of test") || strstr(buf, "End of demo") ||
-        strstr(buf, "End of program") || strstr(buf, "End of demo\n")) {
-        is_graceful = 1;
-    }
+	// These two vars help us change the exception number embedded in the exception handler code.
+	u32* opCodeAddr;
+	u32 oldOpCode;
 
-    fprintf(stderr, "========================================\n");
-    fprintf(stderr, "%s\n", is_graceful ? "         Demo Ended" : "         PANIC - FATAL ERROR");
-    fprintf(stderr, "========================================\n");
-    fprintf(stderr, "Location: %s:%d\n", file, line);
-    fprintf(stderr, "Message:  %s\n", buf);
-    fprintf(stderr, "========================================\n");
-    fflush(stderr);
+	// Address range of the actual code to be copied.
+	u8* handlerStart;
+	u32 handlerSize;
 
-    if (is_graceful) {
-        exit(0);
-    }
-    abort();
+	// Install the first level exception vector.
+	opCodeAddr   = (u32*)__OSEVSetNumber;
+	oldOpCode    = *opCodeAddr;
+	handlerStart = (u8*)__OSEVStart;
+	handlerSize  = (u32)((u8*)__OSEVEnd - (u8*)__OSEVStart);
+
+	// Install the DB integrator, only if we are the first OSInit to be run
+	destAddr = (void*)OSPhysicalToCached(OS_DBJUMPPOINT_ADDR);
+	if (*(u32*)destAddr == 0) // Lomem should be zero cleared only once by BS2
+	{
+		DBPrintf("Installing OSDBIntegrator\n");
+		memcpy(destAddr, (void*)__OSDBINTSTART, (u32)__OSDBINTEND - (u32)__OSDBINTSTART);
+		DCFlushRangeNoSync(destAddr, (u32)__OSDBINTEND - (u32)__OSDBINTSTART);
+		#ifndef LIBPORPOISE_PORT
+		__mwerks_sync();
+		#endif
+		ICInvalidateRange(destAddr, (u32)__OSDBINTEND - (u32)__OSDBINTSTART);
+	}
+
+	// Copy the right vector into the table
+	for (exception = 0; exception < __OS_EXCEPTION_MAX; exception++) {
+		if (BI2DebugFlag && (*BI2DebugFlag >= 2) && __DBIsExceptionMarked(exception)) {
+			// this DBPrintf is suspicious.
+			DBPrintf(">>> OSINIT: exception %d commandeered by TRK\n", exception);
+			continue;
+		}
+
+		// Modify the copy of code in text before transferring to the exception table.
+		*opCodeAddr = oldOpCode | exception;
+
+		// Modify opcodes at __DBVECTOR if necessary
+		if (__DBIsExceptionMarked(exception)) {
+			DBPrintf(">>> OSINIT: exception %d vectored to debugger\n", exception);
+			memcpy((void*)__DBVECTOR, (void*)__OSDBJUMPSTART, (u32)__OSDBJUMPEND - (u32)__OSDBJUMPSTART);
+		} else {
+			// make sure the opcodes are still nop
+			u32* ops = (u32*)__DBVECTOR;
+			int cb;
+
+			for (cb = 0; cb < (u32)__OSDBJUMPEND - (u32)__OSDBJUMPSTART; cb += sizeof(u32)) {
+				*ops++ = NOP;
+			}
+		}
+
+		// Install the modified handler.
+		destAddr = (void*)OSPhysicalToCached(__OSExceptionLocations[(u32)exception]);
+		memcpy(destAddr, handlerStart, handlerSize);
+		DCFlushRangeNoSync(destAddr, handlerSize);
+		#ifndef LIBPORPOISE_PORT
+		__mwerks_sync();
+		#endif
+		ICInvalidateRange(destAddr, handlerSize);
+	}
+
+	// initialize pointer to exception table
+	OSExceptionTable = OSPhysicalToCached(OS_EXCEPTIONTABLE_ADDR);
+
+	// install default exception handlers
+	for (exception = 0; exception < __OS_EXCEPTION_MAX; exception++) {
+		__OSSetExceptionHandler(exception, OSDefaultExceptionHandler);
+	}
+
+	// restore the old opcode, so that we can re-start an application without downloading the text segments
+	*opCodeAddr = oldOpCode;
+
+	DBPrintf("Exceptions initialized...\n");
 }
 
-/*---------------------------------------------------------------------------*
-  Arena Management Functions
-  
-  These functions manage memory arenas - contiguous ranges of memory that
-  games can subdivide and allocate from. The original hardware has:
-  - MEM1: 24MB main RAM (NAPA)
-  - MEM2: 64MB external RAM (GDDR3, Wii only)
-  
-  Games typically get the arena bounds and set up their own allocators
-  within those ranges. We simulate this by allocating large blocks from
-  the system heap.
- *---------------------------------------------------------------------------*/
-
-/* Default arena */
-void* OSGetArenaHi(void) { 
-    return s_arenaHi; 
-}
-void* OSGetArenaLo(void) { 
-    return s_arenaLo; 
-}
-void  OSSetArenaHi(void* addr) { 
-    s_arenaHi = addr; 
-}
-void  OSSetArenaLo(void* addr) { 
-    s_arenaLo = addr; 
+/**
+ * @TODO: Documentation
+ */
+static ASM void __OSDBIntegrator(void)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+entry __OSDBINTSTART
+	li     r5, OS_DBINTERFACE_ADDR
+	mflr   r3
+	stw    r3, DB_EXCEPTIONRET_OFFSET (r5)
+	lwz    r3, DB_EXCEPTIONDEST_OFFSET (r5)
+	oris   r3, r3, OS_BASE_CACHED @h
+	mtlr   r3
+	li     r3, MSR_IR | MSR_DR  // turn on memory addressing
+	mtmsr  r3
+	blr
+entry __OSDBINTEND
+#endif // clang-format on
 }
 
-void* OSAllocFromArenaLo(u32 size, u32 align) {
-    u32 normalizedAlign = NormalizeArenaAlign(align);
-
-    if (!s_arenaLo || !s_arenaHi) {
-        return NULL;
-    }
-
-    uintptr_t lo = (uintptr_t)s_arenaLo;
-    uintptr_t hi = (uintptr_t)s_arenaHi;
-    if (lo > hi) {
-        return NULL;
-    }
-
-    uintptr_t start = AlignUpAddress(lo, normalizedAlign);
-    if (start < lo) {
-        return NULL;
-    }
-
-    if ((uintptr_t)size > (hi - start)) {
-        return NULL;
-    }
-
-    uintptr_t newLo = start + (uintptr_t)size;
-    if (newLo < start || newLo > hi) {
-        return NULL;
-    }
-
-    s_arenaLo = (void*)newLo;
-    return (void*)start;
+/**
+ * @TODO: Documentation
+ */
+static ASM void __OSDBJump(void) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+entry __OSDBJUMPSTART
+	bla  OS_DBJUMPPOINT_ADDR
+entry __OSDBJUMPEND
+#endif // clang-format on
 }
 
-void* OSAllocFromArenaHi(u32 size, u32 align) {
-    u32 normalizedAlign = NormalizeArenaAlign(align);
-
-    if (!s_arenaLo || !s_arenaHi) {
-        return NULL;
-    }
-
-    uintptr_t lo = (uintptr_t)s_arenaLo;
-    uintptr_t hi = (uintptr_t)s_arenaHi;
-    if (lo > hi || (uintptr_t)size > (hi - lo)) {
-        return NULL;
-    }
-
-    uintptr_t candidate = hi - (uintptr_t)size;
-    uintptr_t newHi = AlignDownAddress(candidate, normalizedAlign);
-    if (newHi > hi || newHi < lo) {
-        return NULL;
-    }
-
-    s_arenaHi = (void*)newHi;
-    return (void*)newHi;
+/**
+ * @TODO: Documentation
+ */
+__OSExceptionHandler __OSSetExceptionHandler(__OSException exception, __OSExceptionHandler handler)
+{
+	__OSExceptionHandler oldHandler;
+	oldHandler                  = OSExceptionTable[exception];
+	OSExceptionTable[exception] = handler;
+	return oldHandler;
 }
 
-/* MEM1 arena (24MB main RAM) - stubs for compatibility */
-void* OSGetMEM1ArenaHi(void) { return s_mem1ArenaHi; }
-void* OSGetMEM1ArenaLo(void) { return s_mem1ArenaLo; }
-void  OSSetMEM1ArenaHi(void* addr) { s_mem1ArenaHi = addr; }
-void  OSSetMEM1ArenaLo(void* addr) { s_mem1ArenaLo = addr; }
-
-/* MEM2 arena (64MB external RAM, Wii only) - stubs for compatibility */
-void* OSGetMEM2ArenaHi(void) { return s_mem2ArenaHi; }
-void* OSGetMEM2ArenaLo(void) { return s_mem2ArenaLo; }
-void  OSSetMEM2ArenaHi(void* addr) { s_mem2ArenaHi = addr; }
-void  OSSetMEM2ArenaLo(void* addr) { s_mem2ArenaLo = addr; }
-
-/*---------------------------------------------------------------------------*
-  Name:         __OSGetDIConfig
-
-  Description:  Get DVD Interface (DI) configuration. Used by DVD module
-                to determine disc drive capabilities and settings.
-                
-                On GC/Wii: Reads DI configuration register
-                On PC: Returns fake config (no DVD hardware)
-
-  Arguments:    None
-
-  Returns:      DI configuration value (always 0xFF on PC = no hardware)
- *---------------------------------------------------------------------------*/
-u8 __OSGetDIConfig(void) {
-    /* On PC, there's no DVD interface hardware.
-     * Return 0xFF to indicate no DI hardware present.
-     * 
-     * On original hardware, this returns:
-     * - Bit 7: 1 = DI present
-     * - Bits 6-0: Configuration flags
-     */
-    return 0xFF;
+/**
+ * @TODO: Documentation
+ */
+__OSExceptionHandler __OSGetExceptionHandler(__OSException exception)
+{
+	return OSExceptionTable[exception];
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __OSPSInit
+/**
+ * @TODO: Documentation
+ */
+static ASM void OSExceptionVector(void)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
 
-  Description:  Initialize processor state. Sets up PowerPC-specific
-                processor features like HID registers, exception vectors, etc.
-                
-                On GC/Wii: Configures HID0/HID2, sets up BAT registers, etc.
-                On PC: No-op stub (no PowerPC processor state to initialize)
+entry __OSEVStart
+	// Save r4 into SPRG0
+	mtsprg   0, r4
 
-  Arguments:    None
+	// Load current context physical address into r4
+	lwz      r4, OS_CURRENTCONTEXT_PADDR
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void __OSPSInit(void) {
-    /* On PC, there's no PowerPC processor state to initialize.
-     * 
-     * On original hardware, this function:
-     * - Sets up HID0 (Hardware Implementation Dependent register 0)
-     * - Enables instruction/data caches
-     * - Configures write gathering, speculative loading
-     * - Sets up BAT (Block Address Translation) registers
-     * - Enables/disables various CPU features
-     * 
-     * These are all PowerPC-specific and don't apply to x86/x64.
-     */
+	// Save r3 - r5 into the current context
+	stw      r3, OSContext.gpr[3] (r4)
+	mfsprg   r3, 0
+	stw      r3, OSContext.gpr[4] (r4)
+	stw      r5, OSContext.gpr[5] (r4)
+
+	lhz      r3, OSContext.state (r4)
+	ori      r3, r3, OS_CONTEXT_STATE_EXC
+	sth      r3, OSContext.state (r4)
+
+	// Save misc registers
+	mfcr     r3
+	stw      r3, OSContext.cr (r4)
+	mflr     r3
+	stw      r3, OSContext.lr (r4)
+	mfctr    r3
+	stw      r3, OSContext.ctr (r4)
+	mfxer    r3
+	stw      r3, OSContext.xer (r4)
+	mfsrr0   r3
+	stw      r3, OSContext.srr0 (r4)
+	mfsrr1   r3
+	stw      r3, OSContext.srr1 (r4)
+	mr       r5, r3
+
+	// This instruction may be overwritten by OSExceptionInit
+entry __DBVECTOR
+	nop
+
+	// Set SRR1[IR|DR] to turn on address translation at the next RFI
+	mfmsr    r3
+	ori      r3, r3, MSR_IR | MSR_DR
+	mtsrr1   r3
+
+	// This lets us change the exception number based on the exception we're installing.
+entry __OSEVSetNumber
+	li       r3, 0x0000
+
+	// Load current context virtual address into r4
+	lwz      r4, 0xD4
+
+	// Check non-recoverable interrupt
+	rlwinm.  r5, r5, 0, 30, 30  // MSR_RI
+	bne      recoverable
+	lis      r5,     OSDefaultExceptionHandler @ha
+	addi     r5, r5, OSDefaultExceptionHandler @l
+	mtsrr0   r5
+	rfi
+	// NOT REACHED HERE
+
+recoverable:
+	// Locate exception handler.
+	rlwinm   r5, r3, 2, 22, 29               // r5 contains exception*4
+	lwz      r5, OS_EXCEPTIONTABLE_ADDR (r5)
+	mtsrr0   r5
+
+	// Final state
+	// r3 - exception number
+	// r4 - pointer to context
+	// r5 - garbage
+	// srr0 - exception handler
+	// srr1 - address translation enabled, not yet recoverable
+
+	rfi
+	// NOT REACHED HERE
+	// The handler will restore state
+
+entry __OSEVEnd
+	nop
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __OSCacheInit
+/**
+ * @TODO: Documentation
+ */
+static ASM void OSDefaultExceptionHandler(register __OSException exception, register OSContext* context)
+{
+#pragma unused(exception)
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	OS_EXCEPTION_SAVE_GPRS(context)
+	// Load DSISR and DAR
+	mfdsisr  r5
+	mfdar    r6
 
-  Description:  Initialize the cache subsystem. Sets up L1/L2 cache
-                parameters and locking.
-                
-                On GC/Wii: Configures L1 instruction/data cache (32KB each)
-                           and L2 cache (256KB)
-                On PC: No-op stub (cache already initialized in OSInit)
-
-  Arguments:    None
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void __OSCacheInit(void) {
-    /* Cache subsystem already initialized in OSInit().
-     * 
-     * On original hardware, this function:
-     * - Invalidates all cache lines
-     * - Sets up cache locking registers
-     * - Configures L2 cache mode (data only, instruction+data, etc.)
-     * 
-     * On PC, our cache emulation (if enabled) is set up in OSInit()
-     * via GeckoMemoryInit(). This stub exists for API compatibility.
-     */
+	b        __OSUnhandledException
+	// NOT REACHED HERE
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSRegisterVersion
-
-  Description:  Register a library version string. Used by SDK modules to
-                log their version at initialization for debugging.
-                
-                On GC/Wii: Stores version strings in internal list
-                On PC: Just logs to console
-
-  Arguments:    id  Version string (usually from DOLPHIN_LIB_VERSION macro)
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSRegisterVersion(const char* id) {
-    if (id) {
-        OSReport("Library version registered: %s\n", id);
-    }
+/**
+ * @TODO: Documentation
+ */
+void __OSPSInit(void)
+{
+	PPCMthid2(PPCMfhid2() | (HID2_LSQE | HID2_PSE));
+	ICFlashInvalidate();
+	#ifndef LIBPORPOISE_PORT
+	__mwerks_sync();
+	#endif
+#ifdef __MWERKS__
+	asm {
+		li     r3, 0
+		mtspr  SPR_GQR0, r3
+	}
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSFatal
+#define DI_CONFIG_CONFIG_MASK 0xFF
 
-  Description:  Display fatal error message and halt. Similar to OSPanic but
-                with on-screen display capability.
-                
-                On GC/Wii: Renders error screen with colored background
-                On PC: Logs error and calls OSPanic
-
-  Arguments:    textColor   Foreground color (unused on PC)
-                bgColor     Background color (unused on PC)
-                msg         Error message
-
-  Returns:      Does not return
- *---------------------------------------------------------------------------*/
-void OSFatal(u32 textColor, u32 bgColor, const char* msg) {
-    (void)textColor;
-    (void)bgColor;
-    
-    OSReport("==================================================\n");
-    OSReport("FATAL ERROR\n");
-    OSReport("==================================================\n");
-    OSReport("%s\n", msg);
-    OSReport("==================================================\n");
-    
-    OSPanic(__FILE__, __LINE__, "OSFatal: %s", msg);
+/**
+ * @TODO: Documentation
+ */
+u32 __OSGetDIConfig(void)
+{
+	return (__DIRegs[DI_CONFIG] & DI_CONFIG_CONFIG_MASK);
 }

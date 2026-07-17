@@ -1,113 +1,142 @@
-/*---------------------------------------------------------------------------*
-  CARDCreate.c - File Creation Operations
- *---------------------------------------------------------------------------*/
-
-#include <dolphin/card.h>
-#include <dolphin/card_internal.h>
-#include <dolphin/os.h>
-#include <dolphin/porpoise/Guard.h>
-#include <stdio.h>
+#include "Dolphin/card.h"
+#include <stddef.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <stdlib.h>
 
-#ifdef _WIN32
-#define stat _stat
+/**
+ * @TODO: Documentation
+ */
+static void CreateCallbackFat(s32 channel, s32 result)
+{
+	CARDControl* card;
+	CARDDirectoryBlock* dir;
+	CARDDir* ent;
+	CARDCallback callback;
+
+	card              = &__CARDBlock[channel];
+	callback          = card->apiCallback;
+	card->apiCallback = NULL;
+	if (result < CARD_RESULT_READY) {
+		goto error;
+	}
+
+	dir = __CARDGetDirBlock(card);
+	ent = &dir->entries[card->freeNo];
+#if OS_BUILD_VERSION >= 20011112L
+	memcpy(ent->gameName, card->diskID->gameName, sizeof(ent->gameName));
+	memcpy(ent->company, card->diskID->company, sizeof(ent->company));
+#else
+	memcpy(ent->gameName, __CARDDiskID->gameName, sizeof(ent->gameName));
+	memcpy(ent->company, __CARDDiskID->company, sizeof(ent->company));
 #endif
+	ent->permission = CARD_ATTR_PUBLIC;
+	ent->copyTimes  = 0;
+	ent->startBlock = card->startBlock;
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDCreateAsync
+	ent->bannerFormat = CARD_STAT_BANNER_NONE;
+	ent->iconAddr     = 0xFFFFFFFF;
+	ent->iconFormat   = CARD_STAT_ICON_NONE;
+	ent->iconSpeed    = CARD_STAT_SPEED_END;
+	ent->commentAddr  = 0xFFFFFFFF;
 
-  Description:  Create new file (asynchronous).
+	CARDSetIconSpeed(ent, 0, CARD_STAT_SPEED_FAST);
 
-  Arguments:    chan      Card channel
-                fileName  Filename
-                size      File size
-                fileInfo  File info structure
-                callback  Completion callback
+	card->fileInfo->offset = 0;
+	card->fileInfo->iBlock = ent->startBlock;
 
-  Returns:      CARD_RESULT_READY on success
- *---------------------------------------------------------------------------*/
-s32 CARDCreateAsync(s32 chan, const char* fileName, u32 size,
-                    CARDFileInfo* fileInfo, CARDCallback callback) {
-    PP_GUARD_RET(chan >= 0 && chan < CARD_MAX_CHAN, CARD_RESULT_FATAL_ERROR, "invalid channel");
-    PP_GUARD_PTR_RET(fileName, CARD_RESULT_FATAL_ERROR);
-    PP_GUARD_PTR_RET(fileInfo, CARD_RESULT_FATAL_ERROR);
-    
-    if (!__CARDCards[chan].mounted) {
-        return CARD_RESULT_NOCARD;
-    }
-    
-    if (strlen(fileName) >= CARD_FILENAME_MAX) {
-        return CARD_RESULT_NAMETOOLONG;
-    }
-    
-    char path[512];
-    __CARDBuildFilePath(chan, fileName, path, sizeof(path));
-    
-    struct stat st;
-    if (stat(path, &st) == 0) {
-        return CARD_RESULT_EXIST;
-    }
-    
-    FILE* file = fopen(path, "wb");
-    if (!file) {
-        OSReport("CARD: Failed to create '%s'\n", path);
-        return CARD_RESULT_IOERROR;
-    }
-    
-    if (size > 0) {
-        fseek(file, size - 1, SEEK_SET);
-        fputc(0, file);
-    }
-    
-    fclose(file);
-    
-    // Find free file slot and store filename
-    s32 fileNo = -1;
-    for (int i = 0; i < 127; i++) {
-        if (__CARDCards[chan].openFiles[i][0] == '\0') {
-            fileNo = i;
-            break;
-        }
-    }
-    
-    if (fileNo < 0) {
-        return CARD_RESULT_LIMIT;
-    }
-    
-    // Store filename for read/write operations
-    strncpy(__CARDCards[chan].openFiles[fileNo], fileName, CARD_FILENAME_MAX - 1);
-    __CARDCards[chan].openFiles[fileNo][CARD_FILENAME_MAX - 1] = '\0';
-    
-    fileInfo->chan = chan;
-    fileInfo->fileNo = fileNo;
-    fileInfo->offset = 0;
-    fileInfo->length = size;
-    fileInfo->iBlock = 0;
-    
-    OSReport("CARD: Created '%s' (%u bytes) [fileNo=%d]\n", fileName, size, fileNo);
-    
-    if (callback) {
-        callback(chan, CARD_RESULT_READY);
-    }
-    
-    return CARD_RESULT_READY;
+	ent->time = (u32)OSTicksToSeconds(OSGetTime());
+	result    = __CARDUpdateDir(channel, callback);
+	if (result < CARD_RESULT_READY) {
+		goto error;
+	}
+	return;
+
+error:
+	__CARDPutControlBlock(card, result);
+	if (callback) {
+		callback(channel, result);
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDCreate
+/**
+ * @TODO: Documentation
+ */
+s32 CARDCreateAsync(s32 channel, const char* fileName, u32 size, CARDFileInfo* fileInfo, CARDCallback callback)
+{
+	CARDControl* card;
+	CARDDirectoryBlock* dir;
+	CARDDir* ent;
+	s32 result;
+	u16 fileNo;
+	u16 freeNo;
+	CARDFatBlock* fat;
 
-  Description:  Create new file (synchronous).
+	if (strlen(fileName) > (u32)CARD_FILENAME_MAX) {
+		return CARD_RESULT_NAMETOOLONG;
+	}
 
-  Arguments:    chan      Card channel
-                fileName  Filename
-                size      File size
-                fileInfo  File info structure
+	result = __CARDGetControlBlock(channel, &card);
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
 
-  Returns:      CARD_RESULT_READY on success
- *---------------------------------------------------------------------------*/
-s32 CARDCreate(s32 chan, const char* fileName, u32 size, CARDFileInfo* fileInfo) {
-    return CARDCreateAsync(chan, fileName, size, fileInfo, NULL);
+	if (size <= 0 || (size % card->sectorSize) != 0) {
+		return CARD_RESULT_FATAL_ERROR;
+	}
+
+	freeNo = (u16)-1;
+	dir    = __CARDGetDirBlock(card);
+	for (fileNo = 0; fileNo < CARD_MAX_FILE; fileNo++) {
+		ent = &dir->entries[fileNo];
+		if (ent->gameName[0] == 0xff) {
+			if (freeNo == (u16)-1) {
+				freeNo = fileNo;
+			}
+		}
+#if OS_BUILD_VERSION >= 20011112L
+		else if (memcmp(ent->gameName, card->diskID->gameName, sizeof(ent->gameName)) == 0
+		         && memcmp(ent->company, card->diskID->company, sizeof(ent->company)) == 0 && __CARDCompareFileName(ent, fileName))
+#else
+		else if (memcmp(ent->gameName, __CARDDiskID->gameName, sizeof(ent->gameName)) == 0
+		         && memcmp(ent->company, __CARDDiskID->company, sizeof(ent->company)) == 0 && __CARDCompareFileName(ent, fileName))
+#endif
+		{
+			return __CARDPutControlBlock(card, CARD_RESULT_EXIST);
+		}
+	}
+	if (freeNo == (u16)-1) {
+		return __CARDPutControlBlock(card, CARD_RESULT_NOENT);
+	}
+
+	fat = __CARDGetFatBlock(card);
+	if (card->sectorSize * fat->freeBlocks < size) {
+		return __CARDPutControlBlock(card, CARD_RESULT_INSSPACE);
+	}
+
+	card->apiCallback = callback ? callback : __CARDDefaultApiCallback;
+	card->freeNo      = freeNo;
+	ent               = &dir->entries[freeNo];
+	ent->length       = (u16)(size / card->sectorSize);
+	strncpy((char*)ent->fileName, fileName, CARD_FILENAME_MAX);
+
+	card->fileInfo   = fileInfo;
+	fileInfo->chan   = channel;
+	fileInfo->fileNo = freeNo;
+
+	result = __CARDAllocBlock(channel, size / card->sectorSize, CreateCallbackFat);
+	if (result < CARD_RESULT_READY) {
+		return __CARDPutControlBlock(card, result);
+	}
+	return result;
 }
 
+/**
+ * @TODO: Documentation
+ */
+s32 CARDCreate(s32 channel, const char* fileName, u32 size, CARDFileInfo* fileInfo)
+{
+	s32 result = CARDCreateAsync(channel, fileName, size, fileInfo, __CARDSyncCallback);
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
+	return __CARDSync(channel);
+}

@@ -1,1057 +1,1182 @@
-/*---------------------------------------------------------------------------*
-  VI.c - Video Interface
-  
-  ARCHITECTURAL DIFFERENCES: GC/Wii vs PC
-  ========================================
-  
-  On GC/Wii (VI Hardware):
-  ------------------------
-  - Dedicated video hardware (VI registers)
-  - Manages CRT/LCD display output
-  - Frame buffer in main RAM (XFB - External Frame Buffer)
-  - Hardware scans XFB and outputs to TV
-  - Generates VBlank interrupts at 60Hz (NTSC) or 50Hz (PAL)
-  - Configurable video modes (NTSC, PAL, progressive, interlaced)
-  - Hardware handles field rendering for interlaced
-  - VI registers control: position, size, format, filters
-  
-  On PC (SDL2 + OpenGL):
-  ----------------------
-  - SDL2 creates window and OpenGL context
-  - Frame buffers provided by GX module (OpenGL textures/FBOs)
-  - VSync via SDL_GL_SetSwapInterval
-  - Window can be resized, fullscreen toggled
-  - Display refresh rate queried from SDL
-  - OpenGL handles buffer swapping
-  - VBlank timing from SDL or manual timing
-  
-  WHY SDL2 + OpenGL:
-  - SDL2 provides cross-platform window/input/timing
-  - OpenGL for hardware-accelerated rendering (GX will use this)
-  - Industry standard, widely supported
-  - Easy to initialize and use
-  
-  WHAT WE PRESERVE:
-  - Same API (VIInit, VIWaitForRetrace, VISetNextFrameBuffer, etc.)
-  - Retrace callback concept (60Hz timing)
-  - Frame buffer pointers (GX renders to them)
-  - Black screen control
-  
-  WHAT'S DIFFERENT:
-  - Creates actual window (640x480 default, resizable)
-  - OpenGL context for GX rendering
-  - VSync controlled via SDL
-  - Retrace callbacks called from VBlank timing thread
-  - Window can be closed by user (game should handle)
- *---------------------------------------------------------------------------*/
+#include "Dolphin/vi.h"
+#include "Dolphin/gx.h"
+#include "Dolphin/hw_regs.h"
+#include "Dolphin/os.h"
+#include "Dolphin/si.h"
+#include <stddef.h>
 
-#include <dolphin/vi.h>
-#include <dolphin/VIConfig.h>
-#include <dolphin/os.h>
-#include <dolphin/os/OSAlarm.h>
-#include <dolphin/porpoise/Guard.h>
-#include <SDL2/SDL.h>
-#include <simulator/glad/glad.h>
-#include <string.h>
-#include <stdlib.h>
+// Useful macros.
+#define CLAMP(x, l, h)    (((x) > (h)) ? (h) : (((x) < (l)) ? (l) : (x)))
+#define MIN(a, b)         (((a) < (b)) ? (a) : (b))
+#define MAX(a, b)         (((a) > (b)) ? (a) : (b))
+#define IS_LOWER_16MB(x)  ((x) < 16 * 1024 * 1024)
+#define ToPhysical(fb)    (u32)(((u32)(fb)) & 0x3FFFFFFF)
+#define ONES(x)           ((1 << (x)) - 1)
+#define VI_BITMASK(index) (1ull << (63 - (index)))
 
-// ACPC GX backend helper to switch from shader pipeline to fixed-function blit.
-extern void pc_gx_prepare_for_present(void);
+static vu32 retraceCount;
+#if defined(VERSION_GPIE01_00) || defined(VERSION_GPIJ01_01)
+static vu32 changeMode; // This exists up here for some reason.
+#endif
+static u32 flushFlag;
+static OSThreadQueue retraceQueue;
+static VIRetraceCallback PreCB;
+static VIRetraceCallback PostCB;
+static u32 encoderType;
 
-/*---------------------------------------------------------------------------*
-    Internal State
- *---------------------------------------------------------------------------*/
+static s16 displayOffsetH;
+static s16 displayOffsetV;
 
-static BOOL s_initialized = FALSE;
-static BOOL s_black = TRUE;              // Start with black screen
-static void* s_currentFB = NULL;         // Current frame buffer
-static void* s_nextFB = NULL;            // Next frame buffer
-static void* s_nextRightFB = NULL;       // Right eye FB (for 3D)
-static BOOL s_3dMode = FALSE;            // 3D mode enabled
+#if defined(VERSION_GPIE01_00) || defined(VERSION_GPIJ01_01)
+static vu64 changed;
+#else
+static vu32 changeMode;
+static vu64 changed;
+static vu32 shdwChangeMode;
+#endif
+static vu64 shdwChanged;
 
-// Shadow/pending state. Per SDK docs, VI changes are latched by VIFlush and
-// applied from the next field.
-static BOOL s_pendingBlack = TRUE;
-static BOOL s_pendingBlackDirty = FALSE;
-static void* s_pendingNextFB = NULL;
-static BOOL s_pendingNextFBDirty = FALSE;
-static int s_pendingXfbWidth = 640;
-static int s_pendingXfbHeight = 480;
-static VITVMode s_pendingTvMode = VI_TVMODE_NTSC_INT;
-static u32 s_pendingTvFormat = VI_NTSC;
-static u32 s_pendingScanMode = VI_INTERLACE;
-static BOOL s_pendingModeDirty = FALSE;
-static struct {
-    u16 xOrg;
-    u16 yOrg;
-    u16 width;
-    u16 height;
-} s_pendingPan = {0, 0, 640, 480};
-static BOOL s_pendingPanDirty = FALSE;
-static BOOL s_flushPending = FALSE;
+static u32 FBSet;
 
-// SDL2 Window and OpenGL context
-static SDL_Window* s_window = NULL;
-static SDL_GLContext s_glContext = NULL;
-static int s_windowWidth = 640;
-static int s_windowHeight = 480;
-static int s_xfbWidth = 640;
-static int s_xfbHeight = 480;
-static GLuint s_xfbTexture = 0;
+static vu16 regs[59];
+static vu16 shdwRegs[59];
 
-// Configuration
-static VIConfig s_config;
+static VIPositionInfo HorVer;
 
-// Video timing
-static u32 s_retraceCount = 0;           // Number of VBlanks since init
-static VITVMode s_tvMode = VI_TVMODE_NTSC_INT;
-static u32 s_tvFormat = VI_NTSC;
-static u32 s_scanMode = VI_INTERLACE;
+#if OS_BUILD_VERSION >= 20011002L
+static VITimingInfo* CurrTiming;
+static s32 CurrTvMode;
+#endif
 
-// Callbacks
-static VIRetraceCallback s_preRetraceCallback = NULL;
-static VIRetraceCallback s_postRetraceCallback = NULL;
+// clang-format off
+static VITimingInfo timing[] = {
+	{ // NTSC INT
+		6, 240, 24, 25, 3, 2, 12, 13, 12, 13, 520, 519, 520, 519, 525, 429, 64, 71, 105, 162, 373, 122, 412,
+	},
+	{ // NTSC DS
+		6, 240, 24, 24, 4, 4, 12, 12, 12, 12, 520, 520, 520, 520, 526, 429, 64, 71, 105, 162, 373, 122, 412,
+	},
+	{ // PAL INT
+		5, 287, 35, 36, 1, 0, 13, 12, 11, 10, 619, 618, 617, 620, 625, 432, 64, 75, 106, 172, 380, 133, 420,
+	},
+	{ // PAL DS
+#if OS_BUILD_VERSION >= 20011217L
+		5, 287, 33, 33, 2, 2, 13, 11, 13, 11, 619, 621, 619, 621, 624, 432, 64, 75, 106, 172, 380, 133, 420,
+#else
+		5, 287, 35, 35, 2, 2, 13, 11, 13, 11, 619, 621, 619, 621, 626, 432, 64, 75, 106, 172, 380, 133, 420,
+#endif
+	},
+	{ // MPAL INT
+		6, 240, 24, 25, 3, 2, 16, 15, 14, 13, 518, 517, 516, 519, 525, 429, 64, 78, 112, 162, 373, 122, 412,
+	},
+	{ // MPAL DS
+		6, 240, 24, 24, 4, 4, 16, 14, 16, 14, 518, 520, 518, 520, 526, 429, 64, 78, 112, 162, 373, 122, 412,
+	},
+	{ // NTSC PRO
+		12, 480, 48, 48, 6, 6, 24, 24, 24, 24, 1038, 1038, 1038, 1038, 1050, 429, 64, 71, 105, 162, 373, 122, 412,
+	},
+#if OS_BUILD_VERSION >= 20011112L
+	{ // NTSC 3D
+		12, 480, 44, 44, 10, 10, 24, 24, 24, 24, 1038, 1038, 1038, 1038, 1050, 429, 64, 71, 105, 168, 379, 122, 412,
+	},
+#endif
+};
+// clang-format on
 
-// VI register state (inspired by PPCArthur __VIEmuRegs)
-// Track VI hardware register state for better compatibility
-typedef struct {
-    u16 dsp_cfg;        // VI_DSP_CFG - Display configuration
-    u16 dsp_pos_u;      // VI_DSP_POS_U - Display position upper
-    u16 dsp_pos_l;      // VI_DSP_POS_L - Display position lower
-    u16 dsp_int0_u;     // VI_DSP_INT0_U - Interrupt 0 upper
-    u16 dsp_int0_l;     // VI_DSP_INT0_L - Interrupt 0 lower
-    u16 dsp_int1_u;     // VI_DSP_INT1_U - Interrupt 1 upper
-    u16 dsp_int1_l;     // VI_DSP_INT1_L - Interrupt 1 lower
-    u16 dsp_int2_u;     // VI_DSP_INT2_U - Interrupt 2 upper
-    u16 dsp_int2_l;     // VI_DSP_INT2_L - Interrupt 2 lower
-    u16 dsp_int3_u;     // VI_DSP_INT3_U - Interrupt 3 upper
-    u16 dsp_int3_l;     // VI_DSP_INT3_L - Interrupt 3 lower
-} VIRegisterState;
+static u16 taps[25] = { 496, 476, 430, 372, 297, 219, 142, 70, 12, 226, 203, 192, 196, 207, 222, 236, 252, 8, 15, 19, 19, 15, 12, 8, 1 };
 
-static VIRegisterState s_viRegs = {0};
+// forward declaring statics
+static u32 getCurrentFieldEvenOdd();
 
-// PI interrupt status (like PPCArthur __PIEmuRegs[PI_REG_INTSR])
-// Track which interrupts are pending
-static u32 s_piIntsr = 0;  // PI interrupt status register
-
-// Timing alarm for VBlank simulation (like PPCArthur RetraceEmulator)
-// Use OSAlarm instead of thread for more accurate timing
-static OSAlarm s_retraceAlarm = {0};
-static OSTime s_frameStart = 0;  // Frame start time for position calculation
-static u32 s_field = 0;          // Current field (0=below, 1=above) for interlaced
-static BOOL s_closeRequested = FALSE;
-
-static void ProcessWindowEvents(void) {
-    if (!s_initialized || !s_window) {
-        return;
-    }
-
-    SDL_PumpEvents();
-    SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_QUIT) {
-            OSReport("VI: Window close requested (SDL_QUIT)\n");
-            s_closeRequested = TRUE;
-        } else if (event.type == SDL_WINDOWEVENT) {
-            switch (event.window.event) {
-                case SDL_WINDOWEVENT_CLOSE:
-                    OSReport("VI: Window close requested (SDL_WINDOWEVENT_CLOSE)\n");
-                    s_closeRequested = TRUE;
-                    break;
-                case SDL_WINDOWEVENT_RESIZED:
-                    s_windowWidth = event.window.data1;
-                    s_windowHeight = event.window.data2;
-                    OSReport("VI: Window resized to %dx%d\n", s_windowWidth, s_windowHeight);
-                    break;
-                case SDL_WINDOWEVENT_SHOWN:
-                    OSReport("VI: Window shown\n");
-                    break;
-                case SDL_WINDOWEVENT_HIDDEN:
-                    OSReport("VI: Window hidden\n");
-                    break;
-                default:
-                    break;
-            }
-        }
-    }
-
-    // Match normal app behavior: closing the window terminates the process.
-    if (s_closeRequested) {
-        OSShutdownSystem();
-    }
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008
+ */
+s32 getEncoderType(void)
+{
+	return 1;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         RetraceEmulator
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00005C (Matching by size)
+ */
+static int cntlzd(u64 bit)
+{
+	u32 hi, lo;
+	int value;
 
-  Description:  Alarm handler for fake 60Hz VBlank interrupt simulation.
-                Inspired by PPCArthur's RetraceEmulator().
-                Called by OSAlarm at display refresh rate.
+	hi    = (u32)(bit >> 32);
+	lo    = (u32)(bit & 0xFFFFFFFF);
+	#ifndef LIBPORPOISE_PORT
+	value = __mwerks_cntlzw(hi);
+	#endif
 
-  Arguments:    alarm   60Hz timer alarm
-                context Current context
+	if (value < 32) {
+		return value;
+	}
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-static void RetraceEmulator(OSAlarm* alarm, OSContext* context) {
-    (void)alarm;
-    (void)context;
-
-    if (s_flushPending) {
-        if (s_pendingModeDirty) {
-            s_tvMode = s_pendingTvMode;
-            s_tvFormat = s_pendingTvFormat;
-            s_scanMode = s_pendingScanMode;
-            s_xfbWidth = s_pendingXfbWidth;
-            s_xfbHeight = s_pendingXfbHeight;
-            s_pendingModeDirty = FALSE;
-        }
-
-        // Pan settings are tracked for API compatibility but not used by the
-        // PC presenter yet.
-        s_pendingPanDirty = FALSE;
-
-        if (s_pendingBlackDirty) {
-            s_black = s_pendingBlack;
-            s_pendingBlackDirty = FALSE;
-        }
-        if (s_pendingNextFBDirty) {
-            s_nextFB = s_pendingNextFB;
-            s_pendingNextFBDirty = FALSE;
-        }
-
-        s_flushPending = FALSE;
-    }
-    
-    // Toggle field for interlaced mode (like PPCArthur)
-    s_field ^= 1;
-    
-    // Set interrupt status based on field
-    // On original hardware, VI generates interrupts at field boundaries
-    if (s_field == 0) {
-        // Field below - set INT0
-        s_viRegs.dsp_int0_u |= 0x0001;  // INT0_MASK
-        s_piIntsr |= 0x0001;  // PI_INTSR_REG_VIINT_MASK
-    } else {
-        // Field above - set INT1 (for next field)
-        s_viRegs.dsp_int1_u |= 0x0001;  // INT1_MASK
-        s_piIntsr |= 0x0001;  // PI_INTSR_REG_VIINT_MASK
-        
-        // Store frame start time for position calculation
-        s_frameStart = OSGetTime();
-    }
-    
-    // Pre-retrace callback (if enabled)
-    if (s_config.enableCallbacks && s_preRetraceCallback) {
-        s_preRetraceCallback(s_retraceCount);
-    }
-    
-    // Swap buffers (simulate VI hardware updating current FB)
-    if (s_nextFB) {
-        s_currentFB = s_nextFB;
-    }
-    
-    // Increment retrace count
-    s_retraceCount++;
-    
-    // Post-retrace callback (if enabled)
-    if (s_config.enableCallbacks && s_postRetraceCallback) {
-        s_postRetraceCallback(s_retraceCount);
-    }
-    
-    // Note: On original hardware, this would trigger __OSDispatchInterrupt()
-    // On PC, we just call callbacks directly
+	#ifdef LIBPORPOISE_PORT
+	return 0;
+	#else
+	return (32 + __mwerks_cntlzw(lo));
+	#endif
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         InitVIRetrace
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000108
+ */
+static BOOL VISetRegs(void)
+{
+	int regIndex;
 
-  Description:  Initialize 60Hz timer interrupt simulation.
-                Inspired by PPCArthur's InitVIRetrace().
+#if defined(VERSION_GPIE01_00) || defined(VERSION_GPIJ01_01)
+	if (!((changeMode == 1) && (getCurrentFieldEvenOdd() == 0)))
+#else
+	if (!((shdwChangeMode == 1) && (getCurrentFieldEvenOdd() == 0)))
+#endif
+	{
+		while (shdwChanged) {
+			regIndex           = cntlzd(shdwChanged);
+			__VIRegs[regIndex] = shdwRegs[regIndex];
+			shdwChanged &= ~(VI_BITMASK(regIndex));
+		}
 
-  Arguments:    None
+#if defined(VERSION_GPIE01_00) || defined(VERSION_GPIJ01_01)
+		changeMode = 0;
+#else
+		shdwChangeMode = 0;
+#endif
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-static void InitVIRetrace(void) {
-    // Initialize alarm structure (must call before OSSetPeriodicAlarm)
-    OSCreateAlarm(&s_retraceAlarm);
-    
-    // Calculate frame time based on TV mode
-    OSTime frameTime;
-    if (s_config.tvMode == 1) {
-        frameTime = OSMicrosecondsToTicks(1000000 / 50);  // PAL: 50Hz (20ms)
-    } else if (s_config.fpsCap > 0 && s_config.vsync == 0) {
-        frameTime = OSMicrosecondsToTicks(1000000 / s_config.fpsCap);
-    } else {
-        frameTime = OSMicrosecondsToTicks(1000000 / 60);  // NTSC: 60Hz (16.67ms)
-    }
-    
-    // Set up periodic alarm for VBlank simulation
-    // Like PPCArthur: OSSetPeriodicAlarm(&alarm, OSGetTime(), frameTime, RetraceEmulator)
-    OSSetPeriodicAlarm(&s_retraceAlarm, OSGetTime(), frameTime, RetraceEmulator);
-    s_frameStart = OSGetTime();
-    
-    OSReport("VI: Retrace alarm initialized (%s Hz)\n", 
-             s_config.tvMode == 1 ? "50" : "60");
+#if OS_BUILD_VERSION >= 20011002L
+		CurrTiming = HorVer.timing;
+#endif
+#if OS_BUILD_VERSION >= 20011112L
+		CurrTvMode = HorVer.tv;
+#endif
+
+		return TRUE;
+	}
+	return FALSE;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIInit
+/**
+ * @TODO: Documentation
+ */
+static void __VIRetraceHandler(__OSInterrupt interrupt, OSContext* context)
+{
+	OSContext exceptionContext;
+	u16 viReg;
+	u32 inter = 0;
 
-  Description:  Initialize the Video Interface.
-                
-                On GC/Wii: Configures VI hardware, sets up interrupts
-                On PC: Sets up retrace simulation thread
+	viReg = __VIRegs[VI_DISP_INT_0];
+	if (viReg & 0x8000) {
+		__VIRegs[VI_DISP_INT_0] = (u16)(viReg & ~0x8000);
+		inter |= 1;
+	}
 
-  Arguments:    None
+	viReg = __VIRegs[VI_DISP_INT_1];
+	if (viReg & 0x8000) {
+		__VIRegs[VI_DISP_INT_1] = (u16)(viReg & ~0x8000);
+		inter |= 2;
+	}
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VIInit(void) {
-    if (s_initialized) {
-        return;
-    }
-    
-    OSReport("VI: Initializing video interface...\n");
-    
-    // Load configuration from vi_config.ini
-    VILoadConfig(&s_config);
-    
-    // Apply config values
-    s_windowWidth = s_config.windowWidth;
-    s_windowHeight = s_config.windowHeight;
-    s_xfbWidth = 640;
-    s_xfbHeight = 480;
-    s_xfbTexture = 0;
-    
-    // Ensure SDL is initialized (required before subsystems)
-    // SDL_InitSubSystem can work without SDL_Init, but it's safer to init first
-    if (!SDL_WasInit(SDL_INIT_VIDEO)) {
-        if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-            OSReport("VI: ERROR - Failed to initialize SDL: %s\n", SDL_GetError());
-            OSPanic(__FILE__, __LINE__, "VI: SDL initialization failed");
-            return;
-        }
-        OSReport("VI: SDL initialized\n");
-    } else {
-        // SDL already initialized, just ensure VIDEO subsystem is active
-        if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
-            OSReport("VI: ERROR - Failed to initialize SDL video subsystem: %s\n", SDL_GetError());
-            OSPanic(__FILE__, __LINE__, "VI: SDL video subsystem initialization failed");
-            return;
-        }
-    }
-    
-    // Set OpenGL attributes from config
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, s_config.openglMajor);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, s_config.openglMinor);
-    // Use compatibility profile to support fixed-function pipeline (glMatrixMode, glVertexPointer, etc.)
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    
-    // Set MSAA if requested
-    if (s_config.msaaSamples > 0) {
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, s_config.msaaSamples);
-    }
-    
-    // Determine window flags
-    u32 windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN;
-    
-    if (s_config.fullscreen) {
-        windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-    } else {
-        windowFlags |= SDL_WINDOW_RESIZABLE;
-        if (s_config.maximized) {
-            windowFlags |= SDL_WINDOW_MAXIMIZED;
-        }
-    }
-    
-    // Create window
-    OSReport("VI: Creating SDL window (%dx%d)...\n", s_windowWidth, s_windowHeight);
-    s_window = SDL_CreateWindow(
-        s_config.windowTitle,
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
-        s_windowWidth,
-        s_windowHeight,
-        windowFlags
-    );
-    
-    if (!s_window) {
-        OSReport("VI: ERROR - Failed to create window: %s\n", SDL_GetError());
-        OSPanic(__FILE__, __LINE__, "VI: Window creation failed - %s", SDL_GetError());
-        SDL_QuitSubSystem(SDL_INIT_VIDEO);
-        return;
-    }
-    
-    OSReport("VI: Window created successfully\n");
-    
-    // Explicitly show the window (though SDL_WINDOW_SHOWN should do this)
-    SDL_ShowWindow(s_window);
-    
-    // Restore window if it's minimized
-    SDL_RestoreWindow(s_window);
-    
-    // Raise window to front
-    SDL_RaiseWindow(s_window);
-    
-    // Process one event to ensure window appears
-    SDL_Event event;
-    SDL_PumpEvents();
-    
-    // Create OpenGL context
-    OSReport("VI: Creating OpenGL context...\n");
-    s_glContext = SDL_GL_CreateContext(s_window);
-    if (!s_glContext) {
-        OSReport("VI: ERROR - Failed to create OpenGL context: %s\n", SDL_GetError());
-        OSReport("VI: Make sure you have a graphics driver installed\n");
-        OSPanic(__FILE__, __LINE__, "VI: OpenGL context creation failed - %s", SDL_GetError());
-        SDL_DestroyWindow(s_window);
-        s_window = NULL;
-        SDL_QuitSubSystem(SDL_INIT_VIDEO);
-        return;
-    }
-    
-    OSReport("VI: OpenGL context created successfully\n");
-    
-    
-    // Set VSync from config
-    if (SDL_GL_SetSwapInterval(s_config.vsync) < 0) {
-        OSReport("VI: Warning: Failed to set VSync mode %d\n", s_config.vsync);
-        // Try fallback to VSync on
-        SDL_GL_SetSwapInterval(1);
-    }
-    
-    OSReport("VI: SDL2 window created (%dx%d) %s\n", 
-             s_windowWidth, s_windowHeight,
-             s_config.fullscreen ? "fullscreen" : "windowed");
-    OSReport("VI: OpenGL %d.%d context created\n", 
-             s_config.openglMajor, s_config.openglMinor);
-    OSReport("VI: VSync: %s\n", 
-             s_config.vsync == 1 ? "On" : (s_config.vsync == -1 ? "Adaptive" : "Off"));
-    
-    // Initialize state
-    s_black = TRUE;
-    s_currentFB = NULL;
-    s_nextFB = NULL;
-    s_nextRightFB = NULL;
-    s_3dMode = FALSE;
-    s_retraceCount = 0;
-    // Preserve mode selected by __VIInit (if used) and derive format fields.
-    s_tvFormat = ((u32)s_tvMode >> 2) & 0xF;
-    s_scanMode = ((u32)s_tvMode) & 0x3;
-    s_preRetraceCallback = NULL;
-    s_postRetraceCallback = NULL;
+	viReg = __VIRegs[VI_DISP_INT_2];
+	if (viReg & 0x8000) {
+		__VIRegs[VI_DISP_INT_2] = (u16)(viReg & ~0x8000);
+		inter |= 4;
+	}
 
-    s_pendingBlack = s_black;
-    s_pendingBlackDirty = FALSE;
-    s_pendingNextFB = s_nextFB;
-    s_pendingNextFBDirty = FALSE;
-    s_pendingXfbWidth = s_xfbWidth;
-    s_pendingXfbHeight = s_xfbHeight;
-    s_pendingTvMode = s_tvMode;
-    s_pendingTvFormat = s_tvFormat;
-    s_pendingScanMode = s_scanMode;
-    s_pendingModeDirty = FALSE;
-    s_pendingPan.xOrg = 0;
-    s_pendingPan.yOrg = 0;
-    s_pendingPan.width = (u16)s_xfbWidth;
-    s_pendingPan.height = (u16)s_xfbHeight;
-    s_pendingPanDirty = FALSE;
-    s_flushPending = FALSE;
-    
-    // Initialize VI register state (like PPCArthur)
-    memset(&s_viRegs, 0, sizeof(s_viRegs));
-    s_piIntsr = 0;
-    s_field = 0;
-    s_frameStart = 0;
-    
-    // Initialize retrace alarm (like PPCArthur InitVIRetrace)
-    // Check if VI is enabled (DSP_CFG_ENB bit)
-    // On original hardware, retrace timer only starts when VI is enabled
-    InitVIRetrace();
-    
-    s_initialized = TRUE;
-    OSReport("VI: Video interface initialized\n");
-    OSReport("VI: TV Mode: NTSC 60Hz\n");
-    OSReport("VI: Window ready for rendering\n");
+	viReg = __VIRegs[VI_DISP_INT_3];
+	if (viReg & 0x8000) {
+		__VIRegs[VI_DISP_INT_3] = (u16)(viReg & ~0x8000);
+		inter |= 8;
+	}
+
+	if ((inter & 4) || (inter & 8)) {
+		OSSetCurrentContext(context);
+		return;
+	}
+
+	retraceCount++;
+
+	OSClearContext(&exceptionContext);
+	OSSetCurrentContext(&exceptionContext);
+	if (PreCB) {
+		(*PreCB)(retraceCount);
+	}
+
+	if (flushFlag) {
+		if (VISetRegs()) {
+			flushFlag = 0;
+
+#if OS_BUILD_VERSION >= 20011217L
+			SIRefreshSamplingRate();
+#elif OS_BUILD_VERSION >= 20011002L
+			__PADRefreshSamplingRate();
+#endif
+		}
+	}
+
+	if (PostCB) {
+		OSClearContext(&exceptionContext);
+		(*PostCB)(retraceCount);
+	}
+
+	OSWakeupThread(&retraceQueue);
+	OSClearContext(&exceptionContext);
+	OSSetCurrentContext(context);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __VIInit
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000044 (Matching by size)
+ */
+VIRetraceCallback VISetPreRetraceCallback(VIRetraceCallback callback)
+{
+	BOOL interrupt;
+	VIRetraceCallback oldCallback;
 
-  Description:  Internal VI initialization with specific mode.
+	oldCallback = PreCB;
 
-  Arguments:    mode  TV mode to use
+	interrupt = OSDisableInterrupts();
+	PreCB     = callback;
+	OSRestoreInterrupts(interrupt);
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void __VIInit(VITVMode mode) {
-    s_tvMode = mode;
-    
-    // Extract format and scan mode from TV mode
-    s_tvFormat = (mode >> 2) & 0xF;
-    s_scanMode = mode & 0x3;
-    
-    VIInit();
+	return oldCallback;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIWaitForRetrace
+/**
+ * @TODO: Documentation
+ */
+VIRetraceCallback VISetPostRetraceCallback(VIRetraceCallback callback)
+{
+	BOOL interrupt;
+	VIRetraceCallback oldCallback;
 
-  Description:  Wait for next vertical retrace.
-                
-                On GC/Wii: Blocks until VBlank interrupt
-                On PC: Sleeps for one frame time
+	oldCallback = PostCB;
 
-  Arguments:    None
+	interrupt = OSDisableInterrupts();
+	PostCB    = callback;
+	OSRestoreInterrupts(interrupt);
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VIWaitForRetrace(void) {
-    PP_GUARD_VOID(s_initialized, "VIInit must be called first");
-    
-    u32 currentCount = s_retraceCount;
-    
-    // Wait until retrace count increments
-    while (s_retraceCount == currentCount) {
-        ProcessWindowEvents();
-        OSSleepTicks(OSMillisecondsToTicks(1));
-    }
+	return oldCallback;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIFlush
+#pragma dont_inline on
 
-  Description:  Flush VI configuration to hardware. On PC, this swaps the
-                OpenGL back buffer to display.
-                
-                On GC/Wii: Writes shadow registers to VI
-                On PC: Swaps SDL GL buffers
+/**
+ * @TODO: Documentation
+ */
+static VITimingInfo* getTiming(VITVMode mode)
+{
+	switch (mode) {
+	case VI_TVMODE_NTSC_INT:
+	{
+		return &timing[0];
+	}
+	case VI_TVMODE_NTSC_DS:
+	{
+		return &timing[1];
+	}
 
-  Arguments:    None
+	case VI_TVMODE_PAL_INT:
+	{
+		return &timing[2];
+	}
+	case VI_TVMODE_PAL_DS:
+	{
+		return &timing[3];
+	}
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VIFlush(void) {
-    PP_GUARD_VOID(s_initialized, "VIInit must be called first");
-    PP_GUARD_VOID(s_window != NULL, "window not initialized");
-    ProcessWindowEvents();
+#if OS_BUILD_VERSION >= 20011112L
+	case VI_TVMODE_EURGB60_INT:
+	{
+		return &timing[0];
+	}
+	case VI_TVMODE_EURGB60_DS:
+	{
+		return &timing[1];
+	}
+#endif
 
-    // Match SDK semantics: VI state changes are latched by VIFlush and become
-    // visible from a subsequent field boundary.
-    s_flushPending = TRUE;
+	case VI_TVMODE_MPAL_INT:
+	{
+		return &timing[4];
+	}
+	case VI_TVMODE_MPAL_DS:
+	{
+		return &timing[5];
+	}
 
-    // Don't swap here - swap is handled by DEMOSwapBuffers() after rendering.
-    // This prevents double-swapping which causes flashing.
+	case VI_TVMODE_NTSC_PROG:
+	{
+		return &timing[6];
+	}
+
+#if OS_BUILD_VERSION >= 20011002L
+#if OS_BUILD_VERSION >= 20011112L
+	case VI_TVMODE_NTSC_3D:
+	{
+		return &timing[7];
+	}
+#endif
+	case VI_TVMODE_DEBUG_PAL_INT:
+	{
+		return &timing[2];
+	}
+	case VI_TVMODE_DEBUG_PAL_DS:
+	{
+		return &timing[3];
+	}
+#endif
+	}
+
+	return NULL;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VISetNextFrameBuffer
+#pragma dont_inline reset
 
-  Description:  Set the next frame buffer to be displayed.
+/**
+ * @TODO: Documentation
+ */
+void __VIInit(VITVMode mode)
+{
+	VITimingInfo* tm;
+	u32 nonInter;
+	vu32 a;
+	u32 tv, tvForReg;
 
-  Arguments:    fb  Pointer to frame buffer
+	u16 hct, vct;
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VISetNextFrameBuffer(void* fb) {
-    s_pendingNextFB = fb;
-    s_pendingNextFBDirty = TRUE;
+	nonInter = mode & 2;
+	tv       = (u32)mode >> 2;
+
+	*(u32*)OSPhysicalToCached(0xCC) = tv;
+
+	tm = getTiming(mode);
+
+	__VIRegs[VI_DISP_CONFIG] = 2;
+	for (a = 0; a < 1000; a++) {
+		;
+	}
+
+	__VIRegs[VI_DISP_CONFIG] = 0;
+
+	__VIRegs[VI_HORIZ_TIMING_0U] = tm->hlw << 0;
+	__VIRegs[VI_HORIZ_TIMING_0L] = (tm->hce << 0) | (tm->hcs << 8);
+
+	__VIRegs[VI_HORIZ_TIMING_1U] = (tm->hsy << 0) | ((tm->hbe640 & ((1 << 9) - 1)) << 7);
+	__VIRegs[VI_HORIZ_TIMING_1L] = ((tm->hbe640 >> 9) << 0) | (tm->hbs640 << 1);
+
+	__VIRegs[VI_VERT_TIMING] = (tm->equ << 0) | (0 << 4);
+
+	__VIRegs[VI_VERT_TIMING_ODD_U] = (tm->prbOdd + tm->acv * 2 - 2) << 0;
+	__VIRegs[VI_VERT_TIMING_ODD]   = tm->psbOdd + 2 << 0;
+
+	__VIRegs[VI_VERT_TIMING_EVEN_U] = (tm->prbEven + tm->acv * 2 - 2) << 0;
+	__VIRegs[VI_VERT_TIMING_EVEN]   = tm->psbEven + 2 << 0;
+
+	__VIRegs[VI_BBI_ODD_U] = (tm->bs1 << 0) | (tm->be1 << 5);
+	__VIRegs[VI_BBI_ODD]   = (tm->bs3 << 0) | (tm->be3 << 5);
+
+	__VIRegs[VI_BBI_EVEN_U] = (tm->bs2 << 0) | (tm->be2 << 5);
+	__VIRegs[VI_BBI_EVEN]   = (tm->bs4 << 0) | (tm->be4 << 5);
+
+	__VIRegs[VI_HSW] = (40 << 0) | (40 << 8);
+
+	__VIRegs[VI_DISP_INT_1U] = 1;
+	__VIRegs[VI_DISP_INT_1]  = (1 << 0) | (1 << 12) | (0 << 15);
+
+	hct                      = (tm->hlw + 1);
+	vct                      = (tm->numHalfLines / 2 + 1) | (1 << 12) | (0 << 15);
+	__VIRegs[VI_DISP_INT_0U] = hct << 0;
+	__VIRegs[VI_DISP_INT_0]  = vct;
+
+#if OS_BUILD_VERSION >= 20011112L
+	if (mode != VI_TVMODE_NTSC_PROG && mode != VI_TVMODE_NTSC_3D)
+#else
+	if (mode != VI_TVMODE_NTSC_PROG)
+#endif
+	{
+		__VIRegs[VI_DISP_CONFIG] = (1 << 0) | (0 << 1) | (nonInter << 2) | (0 << 3) | (0 << 4) | (0 << 6) | (tv << 8);
+		__VIRegs[VI_CLOCK_SEL]   = 0;
+
+	} else {
+		__VIRegs[VI_DISP_CONFIG] = (1 << 0) | (0 << 1) | (1 << 2) | (0 << 3) | (0 << 4) | (0 << 6) | (tv << 8);
+		__VIRegs[VI_CLOCK_SEL]   = 1;
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIGetNextFrameBuffer
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000160 (Matching by size)
+ */
+static void AdjustPosition(u16 acv)
+{
+	s32 coeff, frac;
 
-  Description:  Get the next frame buffer pointer.
+	HorVer.adjDispPosX = (u16)CLAMP((s16)HorVer.dispPosX + displayOffsetH, 0, 720 - HorVer.dispSizeX);
 
-  Arguments:    None
+	coeff = (HorVer.xfbMode == VI_XFBMODE_SF) ? 2 : 1;
+	frac  = HorVer.dispPosY & 1;
 
-  Returns:      Pointer to next frame buffer
- *---------------------------------------------------------------------------*/
-void* VIGetNextFrameBuffer(void) {
-    if (s_pendingNextFBDirty) {
-        return s_pendingNextFB;
-    }
-    return s_nextFB;
+	HorVer.adjDispPosY = (u16)MAX((s16)HorVer.dispPosY + displayOffsetV, frac);
+
+	HorVer.adjDispSizeY = (u16)(HorVer.dispSizeY + MIN((s16)HorVer.dispPosY + displayOffsetV - frac, 0)
+	                            - MAX((s16)HorVer.dispPosY + (s16)HorVer.dispSizeY + displayOffsetV - ((s16)acv * 2 - frac), 0));
+
+	HorVer.adjPanPosY = (u16)(HorVer.panPosY - MIN((s16)HorVer.dispPosY + displayOffsetV - frac, 0) / coeff);
+
+	HorVer.adjPanSizeY = (u16)(HorVer.panSizeY + MIN((s16)HorVer.dispPosY + displayOffsetV - frac, 0) / coeff
+	                           - MAX((s16)HorVer.dispPosY + (s16)HorVer.dispSizeY + displayOffsetV - ((s16)acv * 2 - frac), 0) / coeff);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIGetCurrentFrameBuffer
-
-  Description:  Get the current frame buffer pointer.
-
-  Arguments:    None
-
-  Returns:      Pointer to current frame buffer
- *---------------------------------------------------------------------------*/
-void* VIGetCurrentFrameBuffer(void) {
-    return s_currentFB;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00003C (Matching by size)
+ */
+static void ImportAdjustingValues(void)
+{
+	displayOffsetH = __OSLockSram()->displayOffsetH;
+	displayOffsetV = 0;
+	__OSUnlockSram(FALSE);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VISetNextRightFrameBuffer
+/**
+ * @TODO: Documentation
+ */
+void VIInit(void)
+{
+	u16 dspCfg;
+	u32 value, tv;
 
-  Description:  Set right eye frame buffer for 3D mode.
+	encoderType = getEncoderType();
 
-  Arguments:    fb  Pointer to right frame buffer
+	if (!(__VIRegs[VI_DISP_CONFIG] & 1)) {
+		__VIInit(VI_TVMODE_NTSC_INT);
+	}
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VISetNextRightFrameBuffer(void* fb) {
-    s_nextRightFB = fb;
+	retraceCount = 0;
+	changed      = 0;
+	shdwChanged  = 0;
+	changeMode   = 0;
+#if defined(VERSION_GPIE01_00) || defined(VERSION_GPIJ01_01)
+#else
+	shdwChangeMode = 0;
+#endif
+	flushFlag = 0;
+
+	__VIRegs[VI_FCT_0U] = ((((taps[0])) << 0) | (((taps[1] & ((1 << (6)) - 1))) << 10));
+	__VIRegs[VI_FCT_0]  = ((((taps[1] >> 6)) << 0) | (((taps[2])) << 4));
+	__VIRegs[VI_FCT_1U] = ((((taps[3])) << 0) | (((taps[4] & ((1 << (6)) - 1))) << 10));
+	__VIRegs[VI_FCT_1]  = ((((taps[4] >> 6)) << 0) | (((taps[5])) << 4));
+	__VIRegs[VI_FCT_2U] = ((((taps[6])) << 0) | (((taps[7] & ((1 << (6)) - 1))) << 10));
+	__VIRegs[VI_FCT_2]  = ((((taps[7] >> 6)) << 0) | (((taps[8])) << 4));
+	__VIRegs[VI_FCT_3U] = ((((taps[9])) << 0) | (((taps[10])) << 8));
+	__VIRegs[VI_FCT_3]  = ((((taps[11])) << 0) | (((taps[12])) << 8));
+	__VIRegs[VI_FCT_4U] = ((((taps[13])) << 0) | (((taps[14])) << 8));
+	__VIRegs[VI_FCT_4]  = ((((taps[15])) << 0) | (((taps[16])) << 8));
+	__VIRegs[VI_FCT_5U] = ((((taps[17])) << 0) | (((taps[18])) << 8));
+	__VIRegs[VI_FCT_5]  = ((((taps[19])) << 0) | (((taps[20])) << 8));
+	__VIRegs[VI_FCT_6U] = ((((taps[21])) << 0) | (((taps[22])) << 8));
+	__VIRegs[VI_FCT_6]  = ((((taps[23])) << 0) | (((taps[24])) << 8));
+
+	__VIRegs[VI_WIDTH] = 640;
+	ImportAdjustingValues();
+	HorVer.dispSizeX = 0x280U;
+	HorVer.dispSizeY = 0x1E0U;
+	HorVer.dispPosX  = (0x2D0 - HorVer.dispSizeX) / 2;
+	HorVer.dispPosY  = (0x1E0 - HorVer.dispSizeY) / 2;
+	AdjustPosition(0xF0U);
+	HorVer.fbSizeX     = 0x280;
+	HorVer.fbSizeY     = 0x1E0;
+	HorVer.panPosX     = 0;
+	HorVer.panPosY     = 0;
+	HorVer.panSizeX    = 0x280;
+	HorVer.panSizeY    = 0x1E0;
+	HorVer.xfbMode     = 0;
+	dspCfg             = __VIRegs[VI_DISP_CONFIG];
+	HorVer.nonInter    = (s32)((dspCfg >> 2U) & 1);
+	HorVer.tv          = (u32)((dspCfg >> 8U) & 3);
+	tv                 = (HorVer.tv == 3) ? 0 : HorVer.tv;
+	HorVer.timing      = getTiming((tv << 2) + HorVer.nonInter);
+	regs[1]            = dspCfg;
+	HorVer.wordPerLine = 0x28;
+	HorVer.std         = 0x28;
+	HorVer.wpl         = 0x28;
+	HorVer.xof         = 0;
+	HorVer.isBlack     = 1;
+	HorVer.is3D        = 0;
+	OSInitThreadQueue(&retraceQueue);
+	value = __VIRegs[VI_DISP_INT_0];
+	value &= ~0x8000;
+	value        = (u16)value;
+	__VIRegs[VI_DISP_INT_0] = value;
+
+	value                   = __VIRegs[VI_DISP_INT_1];
+	value                   = (((u32)(value)) & ~0x00008000) | (((0)) << 15);
+	__VIRegs[VI_DISP_INT_1] = value;
+
+	PreCB  = NULL;
+	PostCB = NULL;
+
+	__OSSetInterruptHandler(__OS_INTERRUPT_PI_VI, __VIRetraceHandler);
+	__OSUnmaskInterrupts(OS_INTERRUPTMASK_PI_VI);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VISetBlack
+/**
+ * @TODO: Documentation
+ */
+void VIWaitForRetrace(void)
+{
+	int interrupt;
+	u32 startCount;
 
-  Description:  Enable or disable black screen.
-                
-                On GC/Wii: Hardware blanks video output
-                On PC: Just sets flag (game checks this)
-
-  Arguments:    black  TRUE for black screen, FALSE for normal
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VISetBlack(BOOL black) {
-    s_pendingBlack = black;
-    s_pendingBlackDirty = TRUE;
+	interrupt  = OSDisableInterrupts();
+	startCount = retraceCount;
+	do {
+		OSSleepThread(&retraceQueue);
+	} while (startCount == retraceCount);
+	OSRestoreInterrupts(interrupt);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VISet3D
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00007C (Matching by size)
+ */
+static void setInterruptRegs(VITimingInfo* tm)
+{
+	u16 vct, hct, borrow;
 
-  Description:  Enable or disable 3D stereoscopic mode.
+	vct    = (u16)(tm->numHalfLines / 2);
+	borrow = (u16)(tm->numHalfLines % 2);
+	hct    = (u16)((borrow) ? tm->hlw : (u16)0);
 
-  Arguments:    threeD  TRUE for 3D, FALSE for 2D
+	vct++;
+	hct++;
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VISet3D(BOOL threeD) {
-    s_3dMode = threeD;
+	regs[VI_DISP_INT_0U] = (u16)hct;
+	changed |= VI_BITMASK(VI_DISP_INT_0U);
+
+	regs[VI_DISP_INT_0] = (u16)((((u32)(vct))) | (((u32)(1)) << 12) | (((u32)(0)) << 15));
+	changed |= VI_BITMASK(VI_DISP_INT_0);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIConfigure
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000098 (Matching by size)
+ */
+static void setPicConfig(u16 fbSizeX, VIXFBMode xfbMode, u16 panPosX, u16 panSizeX, u8* wordPerLine, u8* std, u8* wpl, u8* xof)
+{
+	*wordPerLine = (u8)((fbSizeX + 15) / 16);
+	*std         = (u8)((xfbMode == VI_XFBMODE_SF) ? *wordPerLine : (u8)(2 * *wordPerLine));
+	*xof         = (u8)(panPosX % 16);
+	*wpl         = (u8)((*xof + panSizeX + 15) / 16);
 
-  Description:  Configure video mode from render mode object.
-                
-                On GC/Wii: Configures VI registers from mode object
-                On PC: Extracts and stores TV mode and scan mode from render mode
-
-  Arguments:    rm  Pointer to GXRenderModeObj
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VIConfigure(const GXRenderModeObj* rm) {
-    PP_GUARD_VOID(rm != NULL, "null pointer");
-
-    if (rm->fbWidth > 0) {
-        s_pendingXfbWidth = (int)VIPadFrameBufferWidth(rm->fbWidth);
-    }
-    if (rm->xfbHeight > 0) {
-        s_pendingXfbHeight = (int)rm->xfbHeight;
-    }
-    s_pendingTvMode = (VITVMode)rm->viTVmode;
-    s_pendingTvFormat = ((u32)rm->viTVmode >> 2) & 0xF;
-    s_pendingScanMode = ((u32)rm->viTVmode) & 0x3;
-    s_pendingModeDirty = TRUE;
-
-    // VIConfigure resets pan defaults to mode values; callers can override
-    // again with VIConfigurePan before VIFlush.
-    s_pendingPan.xOrg = rm->viXOrigin;
-    s_pendingPan.yOrg = rm->viYOrigin;
-    s_pendingPan.width = rm->viWidth;
-    s_pendingPan.height = rm->viHeight;
-    s_pendingPanDirty = TRUE;
+	regs[VI_HSW] = (u16)((((u32)(*std))) | (((u32)(*wpl)) << 8));
+	changed |= VI_BITMASK(VI_HSW);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIConfigurePan
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000BC (Matching by size)
+ */
+static void setBBIntervalRegs(VITimingInfo* tm)
+{
+	u16 val;
 
-  Description:  Configure panning (screen position/size).
+	val                = (u16)((((u32)(tm->bs1))) | (((u32)(tm->be1)) << 5));
+	regs[VI_BBI_ODD_U] = val;
+	changed |= VI_BITMASK(VI_BBI_ODD_U);
 
-  Arguments:    xOrg    X origin
-                yOrg    Y origin
-                width   Width
-                height  Height
+	val              = (u16)((((u32)(tm->bs3))) | (((u32)(tm->be3)) << 5));
+	regs[VI_BBI_ODD] = val;
+	changed |= VI_BITMASK(VI_BBI_ODD);
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VIConfigurePan(u16 xOrg, u16 yOrg, u16 width, u16 height) {
-    s_pendingPan.xOrg = xOrg;
-    s_pendingPan.yOrg = yOrg;
-    s_pendingPan.width = width;
-    s_pendingPan.height = height;
-    s_pendingPanDirty = TRUE;
+	val                 = (u16)((((u32)(tm->bs2))) | (((u32)(tm->be2)) << 5));
+	regs[VI_BBI_EVEN_U] = val;
+	changed |= VI_BITMASK(VI_BBI_EVEN_U);
+
+	val               = (u16)((((u32)(tm->bs4))) | (((u32)(tm->be4)) << 5));
+	regs[VI_BBI_EVEN] = val;
+	changed |= VI_BITMASK(VI_BBI_EVEN);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIGetRetraceCount
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00009C (Matching by size)
+ */
+static void setScalingRegs(u16 panSizeX, u16 dispSizeX, BOOL is3D)
+{
+	u32 scale;
 
-  Description:  Get number of vertical retraces since initialization.
+	panSizeX = (u16)(is3D ? panSizeX * 2 : panSizeX);
 
-  Arguments:    None
+	if (panSizeX < dispSizeX) {
+		scale = (256 * (u32)panSizeX + (u32)dispSizeX - 1) / (u32)dispSizeX;
 
-  Returns:      Retrace count
- *---------------------------------------------------------------------------*/
-u32 VIGetRetraceCount(void) {
-    return s_retraceCount;
+		regs[VI_HSR] = (u16)((((u32)(scale))) | (((u32)(1)) << 12));
+		changed |= VI_BITMASK(VI_HSR);
+
+		regs[VI_WIDTH] = (u16)((((u32)(panSizeX))));
+		changed |= VI_BITMASK(VI_WIDTH);
+	} else {
+		regs[VI_HSR] = (u16)((((u32)(256))) | (((u32)(0)) << 12));
+		changed |= VI_BITMASK(VI_HSR);
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIGetNextField
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000080 (Matching by size)
+ */
+static void calcFbbs(u32 bufAddr, u16 panPosX, u16 panPosY, u8 wordPerLine, VIXFBMode xfbMode, u16 dispPosY, u32* tfbb, u32* bfbb)
+{
+	u32 bytesPerLine, xoffInWords;
+	xoffInWords  = (u32)panPosX / 16;
+	bytesPerLine = (u32)wordPerLine * 32;
 
-  Description:  Get next field type (for interlaced modes).
+	*tfbb = bufAddr + xoffInWords * 32 + bytesPerLine * panPosY;
+	*bfbb = (xfbMode == VI_XFBMODE_SF) ? *tfbb : (*tfbb + bytesPerLine);
 
-  Arguments:    None
+	if (dispPosY % 2 == 1) {
+		u32 tmp = *tfbb;
+		*tfbb   = *bfbb;
+		*bfbb   = tmp;
+	}
 
-  Returns:      VI_FIELD_ABOVE or VI_FIELD_BELOW
- *---------------------------------------------------------------------------*/
-u32 VIGetNextField(void) {
-    // Return current field (like PPCArthur)
-    // Field toggles each retrace for interlaced mode
-    return s_field ? VI_FIELD_ABOVE : VI_FIELD_BELOW;
+	*tfbb = ToPhysical(*tfbb);
+	*bfbb = ToPhysical(*bfbb);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIGetCurrentLine
+/**
+ * @TODO: Documentation
+ */
+static void setFbbRegs(VIPositionInfo* hv, u32* tfbb, u32* bfbb, u32* rtfbb, u32* rbfbb)
+{
+	u32 shifted;
+	calcFbbs(hv->bufAddr, hv->panPosX, hv->adjPanPosY, hv->wordPerLine, hv->xfbMode, hv->adjDispPosY, tfbb, bfbb);
 
-  Description:  Get current scan line being drawn.
+	if (hv->is3D) {
+		calcFbbs(hv->rbufAddr, hv->panPosX, hv->adjPanPosY, hv->wordPerLine, hv->xfbMode, hv->adjDispPosY, rtfbb, rbfbb);
+	}
 
-  Arguments:    None
+	if (IS_LOWER_16MB(*tfbb) && IS_LOWER_16MB(*bfbb) && IS_LOWER_16MB(*rtfbb) && IS_LOWER_16MB(*rbfbb)) {
+		shifted = 0;
+	} else {
+		shifted = 1;
+	}
 
-  Returns:      Current line (0 on PC)
- *---------------------------------------------------------------------------*/
-u32 VIGetCurrentLine(void) {
-    // Calculate current scan line based on time since frame start
-    // Inspired by PPCArthur's VI_DSP_POS calculation
-    if (s_frameStart == 0) {
-        return 0;
-    }
-    
-    OSTime elapsed = OSGetTime() - s_frameStart;
-    u32 nanoseconds = (u32)OSTicksToNanoseconds(elapsed);
-    
-    // Calculate line based on TV mode
-    // NTSC: 262.5 lines per field, ~74ns per dot, ~429 dots per half-line
-    u32 dotsPerHalfLine = 429;
-    u32 dotsPerField = 262 * 2 * dotsPerHalfLine;  // 262 lines * 2 fields * half-line
-    u32 dot = (nanoseconds / 74) % dotsPerField;
-    u32 line = (dot / (2 * dotsPerHalfLine)) + 1;  // +1 because line 0 is reserved
-    
-    // Clamp to valid range
-    if (line > 262) {
-        line = 262;
-    }
-    
-    return line;
+	if (shifted) {
+		*tfbb >>= 5;
+		*bfbb >>= 5;
+		*rtfbb >>= 5;
+		*rbfbb >>= 5;
+	}
+
+	regs[VI_TOP_FIELD_BASE_LEFT_U] = (u16)(*tfbb & 0xFFFF);
+	changed |= VI_BITMASK(VI_TOP_FIELD_BASE_LEFT_U);
+
+	regs[VI_TOP_FIELD_BASE_LEFT] = (u16)((((*tfbb >> 16))) | hv->xof << 8 | shifted << 12);
+	changed |= VI_BITMASK(VI_TOP_FIELD_BASE_LEFT);
+
+	regs[VI_BTTM_FIELD_BASE_LEFT_U] = (u16)(*bfbb & 0xFFFF);
+	changed |= VI_BITMASK(VI_BTTM_FIELD_BASE_LEFT_U);
+
+	regs[VI_BTTM_FIELD_BASE_LEFT] = (u16)(*bfbb >> 16);
+	changed |= VI_BITMASK(VI_BTTM_FIELD_BASE_LEFT);
+
+	if (hv->is3D) {
+		regs[VI_TOP_FIELD_BASE_RIGHT_U] = *rtfbb & 0xffff;
+		changed |= VI_BITMASK(VI_TOP_FIELD_BASE_RIGHT_U);
+
+		regs[VI_TOP_FIELD_BASE_RIGHT] = *rtfbb >> 16;
+		changed |= VI_BITMASK(VI_TOP_FIELD_BASE_RIGHT);
+
+		regs[VI_BTTM_FIELD_BASE_RIGHT_U] = *rbfbb & 0xFFFF;
+		changed |= VI_BITMASK(VI_BTTM_FIELD_BASE_RIGHT_U);
+
+		regs[VI_BTTM_FIELD_BASE_RIGHT] = *rbfbb >> 16;
+		changed |= VI_BITMASK(VI_BTTM_FIELD_BASE_RIGHT);
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIGetTvFormat
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000CC (Matching by size)
+ */
+static void setHorizontalRegs(VITimingInfo* tm, u16 dispPosX, u16 dispSizeX)
+{
+	u32 hbe, hbs, hbeLo, hbeHi;
 
-  Description:  Get TV format (NTSC/PAL/MPAL/EURGB60).
+	regs[VI_HORIZ_TIMING_0U] = (u16)tm->hlw;
+	changed |= VI_BITMASK(VI_HORIZ_TIMING_0U);
 
-  Arguments:    None
+	regs[VI_HORIZ_TIMING_0L] = (u16)(tm->hce | tm->hcs << 8);
+	changed |= VI_BITMASK(VI_HORIZ_TIMING_0L);
 
-  Returns:      TV format constant
- *---------------------------------------------------------------------------*/
-u32 VIGetTvFormat(void) {
-    return s_tvFormat;
+	hbe = (u32)(tm->hbe640 - 40 + dispPosX);
+	hbs = (u32)(tm->hbs640 + 40 + dispPosX - (720 - dispSizeX));
+
+	hbeLo = hbe & ONES(9);
+	hbeHi = hbe >> 9;
+
+	regs[VI_HORIZ_TIMING_1U] = (u16)(tm->hsy | hbeLo << 7);
+	changed |= VI_BITMASK(VI_HORIZ_TIMING_1U);
+
+	regs[VI_HORIZ_TIMING_1L] = (u16)(hbeHi | hbs << 1);
+	changed |= VI_BITMASK(VI_HORIZ_TIMING_1L);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIGetScanMode
+/**
+ * @TODO: Documentation
+ */
+static void setVerticalRegs(u16 dispPosY, u16 dispSizeY, u8 equ, u16 acv, u16 prbOdd, u16 prbEven, u16 psbOdd, u16 psbEven, BOOL black)
+{
+	u16 actualPrbOdd, actualPrbEven, actualPsbOdd, actualPsbEven, actualAcv, c, d;
 
-  Description:  Get scan mode (interlace/progressive).
+	if (equ >= 10) {
+		c = 1;
+		d = 2;
+	} else {
+		c = 2;
+		d = 1;
+	}
 
-  Arguments:    None
+	if (dispPosY % 2 == 0) {
+		actualPrbOdd  = (u16)(prbOdd + d * dispPosY);
+		actualPsbOdd  = (u16)(psbOdd + d * ((c * acv - dispSizeY) - dispPosY));
+		actualPrbEven = (u16)(prbEven + d * dispPosY);
+		actualPsbEven = (u16)(psbEven + d * ((c * acv - dispSizeY) - dispPosY));
+	} else {
+		actualPrbOdd  = (u16)(prbEven + d * dispPosY);
+		actualPsbOdd  = (u16)(psbEven + d * ((c * acv - dispSizeY) - dispPosY));
+		actualPrbEven = (u16)(prbOdd + d * dispPosY);
+		actualPsbEven = (u16)(psbOdd + d * ((c * acv - dispSizeY) - dispPosY));
+	}
 
-  Returns:      Scan mode constant
- *---------------------------------------------------------------------------*/
-u32 VIGetScanMode(void) {
-    return s_scanMode;
+	actualAcv = (u16)(dispSizeY / c);
+
+	if (black) {
+		actualPrbOdd += 2 * actualAcv - 2;
+		actualPsbOdd += 2;
+		actualPrbEven += 2 * actualAcv - 2;
+		actualPsbEven += 2;
+		actualAcv = 0;
+	}
+
+	regs[VI_VERT_TIMING] = (u16)(equ | actualAcv << 4);
+	changed |= VI_BITMASK(VI_VERT_TIMING);
+
+	regs[VI_VERT_TIMING_ODD_U] = (u16)actualPrbOdd << 0;
+	changed |= VI_BITMASK(VI_VERT_TIMING_ODD_U);
+
+	regs[VI_VERT_TIMING_ODD] = (u16)actualPsbOdd << 0;
+	changed |= VI_BITMASK(VI_VERT_TIMING_ODD);
+
+	regs[VI_VERT_TIMING_EVEN_U] = (u16)actualPrbEven << 0;
+	changed |= VI_BITMASK(VI_VERT_TIMING_EVEN_U);
+
+	regs[VI_VERT_TIMING_EVEN] = (u16)actualPsbEven << 0;
+	changed |= VI_BITMASK(VI_VERT_TIMING_EVEN);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIGetDTVStatus
+/**
+ * @TODO: Documentation
+ */
+void VIConfigure(const GXRenderModeObj* obj)
+{
+	VITimingInfo* tm;
+	u32 regDspCfg;
+	BOOL enabled;
+	u32 newNonInter, tvInBootrom, tvInGame;
+#if OS_BUILD_VERSION >= 20011112L
+	static u32 message = FALSE;
+#endif
 
-  Description:  Get digital TV status.
+	enabled = OSDisableInterrupts();
 
-  Arguments:    None
+#if defined(VERSION_GPIE01_00) || defined(VERSION_GPIJ01_01)
+	if (obj->viTVmode == VI_TVMODE_NTSC_PROG) {
+		HorVer.nonInter = VI_TVMODE_NTSC_PROG;
+		changeMode      = 1;
+	} else {
+		newNonInter = (u32)obj->viTVmode & 1;
+		if (HorVer.nonInter != newNonInter) {
+			changeMode = 1;
+		}
+		HorVer.nonInter = newNonInter;
+	}
+#else
+	newNonInter = (u32)obj->viTVmode & 3;
+	if (HorVer.nonInter != newNonInter) {
+		changeMode      = 1;
+		HorVer.nonInter = newNonInter;
+	}
+#endif
 
-  Returns:      DTV status (0 on PC)
- *---------------------------------------------------------------------------*/
-u32 VIGetDTVStatus(void) {
-    return 0;  // No DTV hardware on PC
+	tvInBootrom = VIGetTvFormat();
+	tvInGame    = (u32)obj->viTVmode >> 2;
+#if 0
+	tvInBootrom = *(u32*)OSPhysicalToCached(0xCC);
+
+	if ((tvInGame == VI_NTSC) || (tvInGame == VI_MPAL)) {
+	} else {
+		HorVer.tv = tvInGame;
+	}
+#endif
+
+#if OS_BUILD_VERSION >= 20011112L
+	if (tvInGame == VI_DEBUG_PAL && message == FALSE) {
+		message = TRUE;
+		OSReport("***************************************\n");
+		OSReport(" ! ! ! C A U T I O N ! ! !             \n");
+		OSReport("This TV format \"DEBUG_PAL\" is only for \n");
+		OSReport("temporary solution until PAL DAC board \n");
+		OSReport("is available. Please do NOT use this   \n");
+		OSReport("mode in real games!!!                  \n");
+		OSReport("***************************************\n");
+	}
+#endif
+
+	HorVer.tv        = tvInBootrom;
+	HorVer.dispPosX  = obj->viXOrigin;
+	HorVer.dispPosY  = (u16)((HorVer.nonInter == VI_NON_INTERLACE) ? (u16)(obj->viYOrigin * 2) : obj->viYOrigin);
+	HorVer.dispSizeX = obj->viWidth;
+	HorVer.fbSizeX   = obj->fbWidth;
+	HorVer.fbSizeY   = obj->xfbHeight;
+	HorVer.xfbMode   = obj->xFBmode;
+	HorVer.panSizeX  = HorVer.fbSizeX;
+	HorVer.panSizeY  = HorVer.fbSizeY;
+	HorVer.panPosX   = 0;
+	HorVer.panPosY   = 0;
+
+	HorVer.dispSizeY = (u16)((HorVer.nonInter == VI_PROGRESSIVE) ? HorVer.panSizeY
+	                         : (HorVer.xfbMode == VI_XFBMODE_SF) ? (u16)(2 * HorVer.panSizeY)
+	                                                             : HorVer.panSizeY);
+
+#if defined(VERSION_GPIE01_00) || defined(VERSION_GPIJ01_01)
+	tm = getTiming(obj->viTVmode);
+#else
+	tm = getTiming((VITVMode)VI_TVMODE(HorVer.tv, HorVer.nonInter));
+#endif
+	HorVer.timing = tm;
+
+	AdjustPosition(tm->acv);
+	if (encoderType == 0) {
+		HorVer.tv = VI_DEBUG;
+	}
+	setInterruptRegs(tm);
+
+	regDspCfg = regs[VI_DISP_CONFIG];
+	// TODO: USE BIT MACROS OR SOMETHING
+	if ((HorVer.nonInter == VI_PROGRESSIVE)) {
+		regDspCfg = (((u32)(regDspCfg)) & ~0x00000004) | (((u32)(1)) << 2);
+	} else {
+		regDspCfg = (((u32)(regDspCfg)) & ~0x00000004) | (((u32)(HorVer.nonInter & 1)) << 2);
+	}
+
+	regDspCfg = (((u32)(regDspCfg)) & ~0x00000300) | (((u32)(HorVer.tv)) << 8);
+
+	regs[VI_DISP_CONFIG] = (u16)regDspCfg;
+	changed |= VI_BITMASK(0x01);
+
+	regDspCfg = regs[VI_CLOCK_SEL];
+	if (obj->viTVmode != VI_TVMODE_NTSC_PROG) {
+		regDspCfg = (u32)(regDspCfg & ~0x1);
+	} else {
+		regDspCfg = (u32)(regDspCfg & ~0x1) | 1;
+	}
+
+	regs[VI_CLOCK_SEL] = (u16)regDspCfg;
+
+	changed |= 0x200;
+
+	setScalingRegs(HorVer.panSizeX, HorVer.dispSizeX, HorVer.is3D);
+	setHorizontalRegs(tm, HorVer.adjDispPosX, HorVer.dispSizeX);
+	setBBIntervalRegs(tm);
+	setPicConfig(HorVer.fbSizeX, HorVer.xfbMode, HorVer.panPosX, HorVer.panSizeX, &HorVer.wordPerLine, &HorVer.std, &HorVer.wpl,
+	             &HorVer.xof);
+
+	if (FBSet) {
+		setFbbRegs(&HorVer, &HorVer.tfbb, &HorVer.bfbb, &HorVer.rtfbb, &HorVer.rbfbb);
+	}
+
+	setVerticalRegs(HorVer.adjDispPosY, HorVer.adjDispSizeY, tm->equ, tm->acv, tm->prbOdd, tm->prbEven, tm->psbOdd, tm->psbEven,
+	                HorVer.isBlack);
+	OSRestoreInterrupts(enabled);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VISetPreRetraceCallback
-
-  Description:  Set callback to be called before retrace.
-
-  Arguments:    callback  Callback function
-
-  Returns:      Previous callback
- *---------------------------------------------------------------------------*/
-VIRetraceCallback VISetPreRetraceCallback(VIRetraceCallback callback) {
-    VIRetraceCallback prev = s_preRetraceCallback;
-    s_preRetraceCallback = callback;
-    return prev;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000384
+ */
+void VIConfigurePan(u16 panPosX, u16 panPosY, u16 panSizeX, u16 panSizeY)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VISetPostRetraceCallback
+/**
+ * @TODO: Documentation
+ */
+void VIFlush(void)
+{
+	BOOL enabled;
+	s32 regIndex;
+	STACK_PAD_VAR(1); // for stack.
 
-  Description:  Set callback to be called after retrace.
+	enabled = OSDisableInterrupts();
+#if defined(VERSION_GPIE01_00) || defined(VERSION_GPIJ01_01)
+#else
+	shdwChangeMode |= changeMode;
+	changeMode = 0;
+#endif
+	shdwChanged |= changed;
 
-  Arguments:    callback  Callback function
+	while (changed) {
+		regIndex           = cntlzd(changed);
+		shdwRegs[regIndex] = regs[regIndex];
+		changed &= ~VI_BITMASK(regIndex);
+	}
 
-  Returns:      Previous callback
- *---------------------------------------------------------------------------*/
-VIRetraceCallback VISetPostRetraceCallback(VIRetraceCallback callback) {
-    VIRetraceCallback prev = s_postRetraceCallback;
-    s_postRetraceCallback = callback;
-    return prev;
+	flushFlag = 1;
+	OSRestoreInterrupts(enabled);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __VIResetSIIdle
-
-  Description:  Reset SI idle timer (for dimming).
-                Called when controller input detected.
-
-  Arguments:    None
-
-  Returns:      TRUE always
- *---------------------------------------------------------------------------*/
-BOOL __VIResetSIIdle(void) {
-    /* Dimming not implemented on PC. */
-    return TRUE;
+/**
+ * @TODO: Documentation
+ */
+void VISetNextFrameBuffer(void* fb)
+{
+	BOOL enabled   = OSDisableInterrupts();
+	HorVer.bufAddr = (u32)fb;
+	FBSet          = 1;
+	setFbbRegs(&HorVer, &HorVer.tfbb, &HorVer.bfbb, &HorVer.rtfbb, &HorVer.rbfbb);
+	OSRestoreInterrupts(enabled);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __VIDisableDimming
-
-  Description:  Disable screen dimming.
-
-  Arguments:    None
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void __VIDisableDimming(void) {
-    /* Dimming not implemented on PC. */
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00006C
+ */
+void VISetNextRightFrameBuffer(void* fb)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __VISetDimmingCountLimit
+/**
+ * @TODO: Documentation
+ */
+void VISetBlack(BOOL isBlack)
+{
+	int interrupt;
+	VITimingInfo* tm;
 
-  Description:  Set dimming timer limit.
-
-  Arguments:    newLimit  New count limit
-
-  Returns:      Previous limit (0 on PC)
- *---------------------------------------------------------------------------*/
-u32 __VISetDimmingCountLimit(u32 newLimit) {
-    (void)newLimit;
-    return 0;
+	interrupt      = OSDisableInterrupts();
+	HorVer.isBlack = isBlack;
+	tm             = HorVer.timing;
+	setVerticalRegs(HorVer.adjDispPosY, HorVer.dispSizeY, tm->equ, tm->acv, tm->prbOdd, tm->prbEven, tm->psbOdd, tm->psbEven,
+	                HorVer.isBlack);
+	OSRestoreInterrupts(interrupt);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __VIResetRFIdle, __VIResetDevXIdle
-
-  Description:  Reset various device idle timers.
-                Used for power management/dimming on Wii.
-
-  Arguments:    None
-
-  Returns:      TRUE always
- *---------------------------------------------------------------------------*/
-BOOL __VIResetRFIdle(void) { return TRUE; }
-BOOL __VIResetDev0Idle(void) { return TRUE; }
-BOOL __VIResetDev1Idle(void) { return TRUE; }
-BOOL __VIResetDev2Idle(void) { return TRUE; }
-BOOL __VIResetDev3Idle(void) { return TRUE; }
-BOOL __VIResetDev4Idle(void) { return TRUE; }
-BOOL __VIResetDev5Idle(void) { return TRUE; }
-BOOL __VIResetDev6Idle(void) { return TRUE; }
-BOOL __VIResetDev7Idle(void) { return TRUE; }
-BOOL __VIResetDev8Idle(void) { return TRUE; }
-BOOL __VIResetDev9Idle(void) { return TRUE; }
-
-/*---------------------------------------------------------------------------*
-  Name:         VIGetSDLWindow
-
-  Description:  PC-specific: Get SDL window handle for rendering.
-                GX module will use this to set up OpenGL rendering.
-
-  Arguments:    None
-
-  Returns:      SDL_Window pointer
- *---------------------------------------------------------------------------*/
-SDL_Window* VIGetSDLWindow(void) {
-    return s_window;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000100
+ */
+void VISet3D(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIGetGLContext
-
-  Description:  PC-specific: Get OpenGL context.
-
-  Arguments:    None
-
-  Returns:      SDL_GLContext
- *---------------------------------------------------------------------------*/
-SDL_GLContext VIGetGLContext(void) {
-    return s_glContext;
+/**
+ * @TODO: Documentation
+ */
+u32 VIGetRetraceCount(void)
+{
+	return retraceCount;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIGetWindowSize
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000050 (`OS_BUILD_VERSION >= 20011002L`) (Matching by size)
+ * @note UNUSED Size: 000058 (`OS_BUILD_VERSION <  20011002L`) (Matching by size)
+ */
+static u32 getCurrentHalfLine(void)
+{
+	u32 hcount;
+	u32 vcount0;
+	u32 vcount;
 
-  Description:  PC-specific: Get current window dimensions.
+#if OS_BUILD_VERSION >= 20011002L
+#else
+	VITimingInfo* tm;
+	tm = HorVer.timing;
+#endif
 
-  Arguments:    width   Pointer to receive width
-                height  Pointer to receive height
+	vcount = __VIRegs[VI_VERT_COUNT] & 0x7FF;
+	do {
+		vcount0 = vcount;
+		hcount  = __VIRegs[VI_HORIZ_COUNT] & 0x7FF;
+		vcount  = __VIRegs[VI_VERT_COUNT] & 0x7FF;
+	} while (vcount0 != vcount);
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VIGetWindowSize(int* width, int* height) {
-    if (width) *width = s_windowWidth;
-    if (height) *height = s_windowHeight;
+#if OS_BUILD_VERSION >= 20011002L
+	return ((vcount - 1) * 2) + ((hcount - 1) / CurrTiming->hlw);
+#else
+	return ((vcount - 1) * 2) + ((hcount - 1) / tm->hlw);
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VIMakeContextCurrent
-  
-  Description:  PC-specific: Make OpenGL context current for this thread.
-                This should be called before rendering.
-  
-  Arguments:    None
-  
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VIMakeContextCurrent(void) {
-    if (s_window && s_glContext) {
-        if (SDL_GL_MakeCurrent(s_window, s_glContext) != 0) {
-            OSReport("[VIMakeContextCurrent] ERROR: SDL_GL_MakeCurrent failed: %s\n", SDL_GetError());
-        }
-    }
+/**
+ * @TODO: Documentation
+ */
+static u32 getCurrentFieldEvenOdd()
+{
+	u16 value;
+	u32 nin;
+	u32 fmt;
+	VITVMode tvMode;
+	u32 nhlines;
+	VITimingInfo* tm;
+
+#if OS_BUILD_VERSION >= 20011002L
+	if (getCurrentHalfLine() < CurrTiming->numHalfLines) {
+		return 1;
+	}
+#else
+	if (__VIRegs[VI_CLOCK_SEL] & 1) {
+		tm = getTiming(VI_TVMODE_NTSC_PROG);
+	} else {
+		value  = __VIRegs[VI_DISP_CONFIG];
+		nin    = ((value >> 2U) & 1);
+		fmt    = ((value >> 8U) & 3);
+		tvMode = (fmt << 2) + nin;
+		tm     = getTiming(tvMode);
+	}
+	nhlines = tm->numHalfLines;
+	if (getCurrentHalfLine() < nhlines) {
+		return 1;
+	}
+#endif
+	return 0;
 }
 
-BOOL VIIsRenderSuspended(void) {
-    if (!s_window) {
-        return FALSE;
-    }
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000A8 (OS_BUILD_VERSION >= 20011002L) (Matching by size)
+ * @note UNUSED Size: 0000F4                                 (Matching by size)
+ */
+u32 VIGetNextField(void)
+{
+	s32 nextField;
+	BOOL enabled;
 
-    const Uint32 flags = SDL_GetWindowFlags(s_window);
-    if ((flags & SDL_WINDOW_MINIMIZED) || (flags & SDL_WINDOW_HIDDEN)) {
-        return TRUE;
-    }
-
-    // Treat unfocused windows as suspended to avoid tab-away GPU stalls.
-    if ((flags & SDL_WINDOW_INPUT_FOCUS) == 0) {
-        return TRUE;
-    }
-
-    if (s_windowWidth <= 0 || s_windowHeight <= 0) {
-        return TRUE;
-    }
-
-    return FALSE;
+	enabled   = OSDisableInterrupts();
+	nextField = getCurrentFieldEvenOdd() ^ 1;
+	OSRestoreInterrupts(enabled);
+	return nextField ^ (HorVer.panPosY & 1);
 }
 
-static void VIPresentCurrentFrameBuffer(void) {
-    if (s_black || !s_currentFB || s_xfbWidth <= 0 || s_xfbHeight <= 0) {
-        glDisable(GL_SCISSOR_TEST);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        return;
-    }
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000098 (OS_BUILD_VERSION >= 20011002L) (Matching by size)
+ * @note UNUSED Size: 0000A4                                 (Matching by size)
+ */
+u32 VIGetCurrentLine(void)
+{
+	u32 halfLine;
+	VITimingInfo* tm;
+	BOOL enabled;
 
-    if (s_xfbTexture == 0) {
-        glGenTextures(1, &s_xfbTexture);
-        glBindTexture(GL_TEXTURE_2D, s_xfbTexture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
-        glBindTexture(GL_TEXTURE_2D, 0);
-    }
-
-    pc_gx_prepare_for_present();
-
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_BLEND);
-    glDisable(GL_CULL_FACE);
-    glDisable(GL_SCISSOR_TEST);
-    glViewport(0, 0, s_windowWidth, s_windowHeight);
-    // Always reset the backbuffer before blitting XFB to avoid stale pixels/ghost trails.
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    glMatrixMode(GL_PROJECTION);
-    glPushMatrix();
-    glLoadIdentity();
-    glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0);
-
-    glMatrixMode(GL_MODELVIEW);
-    glPushMatrix();
-    glLoadIdentity();
-
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, s_xfbTexture);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, s_xfbWidth, s_xfbHeight, 0,
-                 GL_RGB, GL_UNSIGNED_SHORT_5_6_5, s_currentFB);
-
-    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-    glBegin(GL_QUADS);
-    glTexCoord2f(0.0f, 1.0f); glVertex2f(-1.0f, -1.0f);
-    glTexCoord2f(1.0f, 1.0f); glVertex2f( 1.0f, -1.0f);
-    glTexCoord2f(1.0f, 0.0f); glVertex2f( 1.0f,  1.0f);
-    glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f,  1.0f);
-    glEnd();
-
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glDisable(GL_TEXTURE_2D);
-
-    glPopMatrix();
-    glMatrixMode(GL_PROJECTION);
-    glPopMatrix();
-    glMatrixMode(GL_MODELVIEW);
+#if OS_BUILD_VERSION >= 20011002L
+	tm = CurrTiming;
+#else
+	// I am making up this version difference.  It might be something else.
+	tm = HorVer.timing;
+#endif
+	enabled  = OSDisableInterrupts();
+	halfLine = getCurrentHalfLine();
+	OSRestoreInterrupts(enabled);
+	if (halfLine >= tm->numHalfLines) {
+		halfLine -= tm->numHalfLines;
+	}
+	return halfLine >> 1U;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         VISwapBuffers
-  
-  Description:  PC-specific: Swap OpenGL buffers to display rendered frame.
-                This should be called after rendering is complete.
-  
-  Arguments:    None
-  
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void VISwapBuffers(void) {
-    PP_GUARD_VOID(s_initialized, "VIInit must be called first");
-    PP_GUARD_VOID(s_window != NULL, "window not initialized");
-    PP_GUARD_VOID(s_glContext != NULL, "GL context not initialized");
+/**
+ * @TODO: Documentation
+ */
+u32 VIGetTvFormat(void)
+{
+#if OS_BUILD_VERSION >= 20011112L
+	s32 enabled;
+	s32 format;
 
-    if (VIIsRenderSuspended()) {
-        return;
-    }
+	enabled = OSDisableInterrupts();
+	switch (CurrTvMode) {
+	case 3:
+	case 0:
+	{
+		format = 0;
+		break;
+	}
+	case 4:
+	case 1:
+	{
+		format = 1;
+		break;
+	}
+	case 5:
+	case 2:
+	{
+		format = CurrTvMode;
+		break;
+	}
+	}
+	OSRestoreInterrupts(enabled);
 
-    // Ensure context is current before swapping
-    if (SDL_GL_MakeCurrent(s_window, s_glContext) != 0) {
-        OSReport("[VISwapBuffers] ERROR: SDL_GL_MakeCurrent failed: %s\n", SDL_GetError());
-        return;
-    }
-    VIPresentCurrentFrameBuffer();
-    SDL_GL_SwapWindow(s_window);
+	// We have this assert from some other decomp, but originally it was placed before the variable was
+	// initialized?  I moved it down to here for now, but I'm just guessing at where it really belongs.
+	OSAssertMsgLine(0x80D, format == 0 || format == 1 || format == 2,
+	                "VIGetTvFormat(): Wrong format is stored in lo mem. Maybe lo mem is trashed");
+
+	return format;
+#else
+	return *(u32*)OSPhysicalToCached(0xCC);
+#endif
+}
+
+/**
+ * @TODO: Documentation
+ */
+u32 VIGetDTVStatus(void)
+{
+	u32 stat;
+	int interrupt;
+
+	interrupt = OSDisableInterrupts();
+	stat      = (__VIRegs[VI_DTV_STAT] & 3);
+	OSRestoreInterrupts(interrupt);
+	return (stat & 1);
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0002C8
+ */
+void __VISetAdjustingValues(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00004C
+ */
+void __VIGetAdjustingValues(void)
+{
+	TRAP_UNIMPLEMENTED;
 }

@@ -1,6 +1,5 @@
 libvi_srcs = files(
-    'VI.c',
-    'VIConfig.c'
+    'vi.c'
 )
 
 libvi = library('vi',

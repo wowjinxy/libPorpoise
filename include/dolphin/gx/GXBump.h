@@ -1,33 +1,45 @@
-#ifndef DOLPHIN_GXBUMP_H
-#define DOLPHIN_GXBUMP_H
+#ifndef _DOLPHIN_GXBUMP_H
+#define _DOLPHIN_GXBUMP_H
 
 #include <dolphin/types.h>
-#include <dolphin/gx/GXEnum.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "dolphin/GX/GXEnum.h"
+#include "dolphin/GX/GXTypes.h"
+#include "dolphin/mtx.h"
 
-void GXSetNumIndStages(u8 nIndStages);
-void GXSetIndTexOrder(GXIndTexStageID ind_stage, GXTexCoordID tex_coord, GXTexMapID tex_map);
-void GXSetIndTexCoordScale(GXIndTexStageID ind_state, GXIndTexScale scale_s, GXIndTexScale scale_t);
-void GXSetIndTexMtx(GXIndTexMtxID mtx_sel, const f32 offset[2][3], s8 scale_exp);
-void GXSetTevIndirect(GXTevStageID tev_stage, GXIndTexStageID ind_stage, GXIndTexFormat format, 
-                      GXIndTexBiasSel bias_sel, GXIndTexMtxID matrix_sel,GXIndTexWrap wrap_s, 
-                      GXIndTexWrap wrap_t, GXBool add_prev, GXBool ind_lod, GXIndTexAlphaSel alpha_sel);
-void GXSetTevDirect(GXTevStageID tev_stage);
-void GXSetTevIndWarp(GXTevStageID tev_stage, GXIndTexStageID ind_stage, GXBool signed_offset, 
-                     GXBool replace_mode, GXIndTexMtxID matrix_sel);
-void GXSetTevIndTile(GXTevStageID tev_stage, GXIndTexStageID ind_stage, u16 tilesize_s, 
-                     u16 tilesize_t, u16 tilespacing_s, u16 tilespacing_t, GXIndTexFormat format, 
-                     GXIndTexMtxID matrix_sel, GXIndTexBiasSel bias_sel, GXIndTexAlphaSel alpha_sel);
-void GXSetTevIndBumpST(GXTevStageID tev_stage, GXIndTexStageID ind_stage, GXIndTexMtxID matrix_sel);
-void GXSetTevIndBumpXYZ(GXTevStageID tev_stage, GXIndTexStageID ind_stage, GXIndTexMtxID matrix_sel);
-void GXSetTevIndRepeat(GXTevStageID tev_stage);
-void __GXSetIndirectMask(u32 mask);
+BEGIN_SCOPE_EXTERN_C
 
-#ifdef __cplusplus
-}
-#endif
+////////////// BUMP FUNCTIONS //////////////
+// Flush functions.
+extern void __GXFlushTextureState();
+
+// Indirect texture functions.
+extern void GXSetTevIndirect(GXTevStageID tevStage, GXIndTexStageID indStage, GXIndTexFormat format, GXIndTexBiasSel bias,
+                             GXIndTexMtxID mtx, GXIndTexWrap sWrap, GXIndTexWrap tWrap, GXBool doAddPrev, GXBool isIndLOD,
+                             GXIndTexAlphaSel alpha);
+extern void GXSetIndTexMtx(GXIndTexMtxID mtx, const Mtx23 offsets, s8 scale);
+extern void GXSetIndTexCoordScale(GXIndTexStageID stage, GXIndTexScale sScale, GXIndTexScale tScale);
+extern void GXSetIndTexOrder(GXIndTexStageID stage, GXTexCoordID texCoord, GXTexMapID texMap);
+extern void GXSetNumIndStages(u8 stageCount);
+extern void __GXSetIndirectMask(u32 mask);
+
+// Convenience functions.
+extern void GXSetTevDirect(GXTevStageID stage);
+extern void GXSetTevIndWarp(GXTevStageID tevStage, GXIndTexStageID indStage, GXBool isSignedOffset, GXBool isReplaceMode,
+                            GXIndTexMtxID mtx);
+
+// Unused/inlined in P2.
+extern void GXSetTevIndTile(GXTevStageID tevStage, GXIndTexStageID indStage, u16 sTileSize, u16 tTileSize, u16 sTileSpacing,
+                            u16 tTileSpacing, GXIndTexFormat format, GXIndTexMtxID mtx, GXIndTexBiasSel bias, GXIndTexAlphaSel alpha);
+extern void GXSetTevIndBumpST(GXTevStageID tevStage, GXIndTexStageID indStage, GXIndTexMtxID mtx);
+extern void GXSetTevIndBumpXYZ(GXTevStageID tevStage, GXIndTexStageID indStage, GXIndTexMtxID mtx);
+extern void GXSetTevIndRepeat(GXTevStageID stage);
+
+// Private
+void __GXUpdateBPMask(void);
+
+////////////////////////////////////////////
+
+END_SCOPE_EXTERN_C
 
 #endif

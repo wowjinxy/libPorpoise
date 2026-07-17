@@ -1,39 +1,38 @@
-#ifndef DOLPHIN_GXPIXEL_H
-#define DOLPHIN_GXPIXEL_H
+#ifndef _DOLPHIN_GXPIXEL_H
+#define _DOLPHIN_GXPIXEL_H
 
-#include <dolphin/gx/GXEnum.h>
+#include <dolphin/types.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "dolphin/GX/GXEnum.h"
+#include "dolphin/GX/GXTypes.h"
+#include "dolphin/mtx.h"
 
-void GXSetFog(GXFogType type, f32 startz, f32 endz, f32 nearz, f32 farz, GXColor color);
-void GXSetFogColor(GXColor color);
-void GXInitFogAdjTable(GXFogAdjTable* table, u16 width, const f32 projMtx[4][4]);
-void GXSetFogRangeAdj(GXBool doEnable, u16 center, GXFogAdjTable* table);
-void GXSetBlendMode(GXBlendMode type, GXBlendFactor src_factor, GXBlendFactor dst_factor, GXLogicOp op);
-void GXSetColorUpdate(GXBool update_enable);
-void GXSetAlphaUpdate(GXBool update_enable);
-void GXSetZMode(GXBool compare_enable, GXCompare func, GXBool update_enable);
-void GXSetZCompLoc(GXBool before_tex);
-void GXSetPixelFmt(GXPixelFmt pix_fmt, GXZFmt16 z_fmt);
-void GXSetDither(GXBool dither);
-void GXSetDstAlpha(GXBool enable, u8 alpha);
-void GXSetFieldMask(GXBool odd_mask, GXBool even_mask);
-void GXSetFieldMode(GXBool field_mode, GXBool half_aspect_ratio);
+BEGIN_SCOPE_EXTERN_C
 
-void GXPokeAlphaMode(GXCompare func, u8 threshold);
-void GXPokeAlphaRead(GXAlphaReadMode mode);
-void GXPokeAlphaUpdate(GXBool update_enable);
-void GXPokeBlendMode(GXBlendMode type, GXBlendFactor src_factor, GXBlendFactor dst_factor, GXLogicOp op);
-void GXPokeColorUpdate(GXBool update_enable);
-void GXPokeDstAlpha(GXBool enable, u8 alpha);
-void GXPokeDither(GXBool dither);
-void GXPokeARGB(u16 x, u16 y, u32 color);
-void GXPeekARGB(u16 x, u16 y, u32* color);
+///////////// PIXEL FUNCTIONS //////////////
+// Fog functions.
+extern void GXSetFog(GXFogType type, f32 startZ, f32 endZ, f32 nearZ, f32 farZ, GXColor color);
+extern void GXInitFogAdjTable(GXFogAdjTable* table, u16 width, const Mtx44 projMtx);
+extern void GXSetFogRangeAdj(GXBool doEnable, u16 center, GXFogAdjTable* table);
 
-#ifdef __cplusplus
-}
-#endif
+// Blend functions.
+extern void GXSetBlendMode(GXBlendMode type, GXBlendFactor srcFactor, GXBlendFactor destFactor, GXLogicOp op);
+
+// Color update functions.
+extern void GXSetColorUpdate(GXBool enableUpdate);
+extern void GXSetAlphaUpdate(GXBool enableUpdate);
+
+// Other setter functions.
+extern void GXSetZMode(GXBool enableCompare, GXCompare func, GXBool enableUpdate);
+extern void GXSetZCompLoc(GXBool isBeforeTex);
+extern void GXSetPixelFmt(GXPixelFmt pixelFormat, GXZFmt16 zFormat);
+extern void GXSetDither(GXBool doDither);
+extern void GXSetDstAlpha(GXBool doEnable, u8 alpha);
+extern void GXSetFieldMask(GXBool doOddMask, GXBool doEvenMask);
+extern void GXSetFieldMode(GXBool doFieldMode, GXBool doHalfAspectRatio);
+
+////////////////////////////////////////////
+
+END_SCOPE_EXTERN_C
 
 #endif

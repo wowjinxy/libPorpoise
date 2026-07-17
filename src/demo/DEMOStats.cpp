@@ -4,7 +4,6 @@
   
   Statistics display - stub implementation for compilation.
   
-  Based on Nintendo's Revolution SDK demo library.
  *---------------------------------------------------------------------------*/
 
 #include <dolphin/demo.h>

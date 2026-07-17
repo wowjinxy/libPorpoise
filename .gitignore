@@ -21,6 +21,7 @@ cmake-build-*/
 out/
 obj/
 lib/x64/
+msys2/
 
 # Per-demo/generated build outputs
 /demos/PikminDemo/CMakeFiles/

@@ -1,1299 +1,1268 @@
-/*---------------------------------------------------------------------------*
-  Project:  libPorpoise
-  File:     mtx.c
-  
-  Matrix and vector math functions.
-  
-  Based on Nintendo's Revolution SDK and Aurora implementation.
- *---------------------------------------------------------------------------*/
+#include "Dolphin/mtx.h"
 
-#include <dolphin/mtx.h>
-#include <string.h>
+#include "Dolphin/os.h"
+#include <stl/fdlibm.h>
 #include <math.h>
+#include <stddef.h>
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXIdentity
-    
-    Description:    Creates an identity matrix (3x4).
-    
-    Arguments:      m      output matrix
-    
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXIdentity(Mtx m) {
-    m[0][0] = 1.0f;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = 0.0f;
-    m[1][0] = 0.0f;
-    m[1][1] = 1.0f;
-    m[1][2] = 0.0f;
-    m[1][3] = 0.0f;
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = 1.0f;
-    m[2][3] = 0.0f;
+#pragma dont_inline on
+
+static f32 Unit01[] = { 0.0f, 1.0f };
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00003C (Matching by size)
+ */
+void C_MTXIdentity(Mtx m)
+{
+	m[0][0] = 1.0f;
+	m[0][1] = 0.0f;
+	m[0][2] = 0.0f;
+	m[0][3] = 0.0f;
+
+	m[1][0] = 0.0f;
+	m[1][1] = 1.0f;
+	m[1][2] = 0.0f;
+	m[1][3] = 0.0f;
+
+	m[2][0] = 0.0f;
+	m[2][1] = 0.0f;
+	m[2][2] = 1.0f;
+	m[2][3] = 0.0f;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXCopy
+/**
+ * @TODO: Documentation
+ */
+void PSMTXIdentity(register Mtx m)
+{
+	register f32 c_zero;
+	register f32 c_one;
+	register f32 c_01;
+	register f32 c_10;
 
-    Description:    Copies a 3x4 matrix.
+	c_zero = 0.0f;
+	c_one  = 1.0f;
 
-    Arguments:      src    source matrix
-                    dst    destination matrix
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXCopy(const Mtx src, Mtx dst) {
-    memcpy(dst, src, sizeof(Mtx));
+#ifdef __MWERKS__
+	asm {
+		psq_st      c_zero, 0x0008 (m), 0, 0
+		ps_merge01  c_01, c_zero, c_one
+		psq_st      c_zero, 0x0018 (m), 0, 0
+		ps_merge10  c_10, c_one, c_zero
+		psq_st      c_zero, 0x0020 (m), 0, 0
+		psq_st      c_01,   0x0010 (m), 0, 0
+		psq_st      c_10,   0x0000 (m), 0, 0
+		psq_st      c_10,   0x0028 (m), 0, 0
+	}
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXConcat
-    
-    Description:    Concatenates two matrices: ab = a * b
-    
-    Arguments:      a      first matrix
-                    b      second matrix
-                    ab     output matrix (can be same as a or b)
-    
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXConcat(const Mtx a, const Mtx b, Mtx ab) {
-    Mtx mTmp;
-    MtxPtr m;
-    
-    if (ab == a || ab == b) {
-        m = mTmp;
-    } else {
-        m = ab;
-    }
-    
-    m[0][0] = a[0][2] * b[2][0] + ((a[0][0] * b[0][0]) + (a[0][1] * b[1][0]));
-    m[0][1] = a[0][2] * b[2][1] + ((a[0][0] * b[0][1]) + (a[0][1] * b[1][1]));
-    m[0][2] = a[0][2] * b[2][2] + ((a[0][0] * b[0][2]) + (a[0][1] * b[1][2]));
-    m[0][3] = a[0][3] + (a[0][2] * b[2][3] + (a[0][0] * b[0][3] + (a[0][1] * b[1][3])));
-    
-    m[1][0] = a[1][2] * b[2][0] + ((a[1][0] * b[0][0]) + (a[1][1] * b[1][0]));
-    m[1][1] = a[1][2] * b[2][1] + ((a[1][0] * b[0][1]) + (a[1][1] * b[1][1]));
-    m[1][2] = a[1][2] * b[2][2] + ((a[1][0] * b[0][2]) + (a[1][1] * b[1][2]));
-    m[1][3] = a[1][3] + (a[1][2] * b[2][3] + (a[1][0] * b[0][3] + (a[1][1] * b[1][3])));
-    
-    m[2][0] = a[2][2] * b[2][0] + ((a[2][0] * b[0][0]) + (a[2][1] * b[1][0]));
-    m[2][1] = a[2][2] * b[2][1] + ((a[2][0] * b[0][1]) + (a[2][1] * b[1][1]));
-    m[2][2] = a[2][2] * b[2][2] + ((a[2][0] * b[0][2]) + (a[2][1] * b[1][2]));
-    m[2][3] = a[2][3] + (a[2][2] * b[2][3] + (a[2][0] * b[0][3] + (a[2][1] * b[1][3])));
-    
-    if (m == mTmp) {
-        memcpy(ab, mTmp, sizeof(Mtx));
-    }
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00006C (Matching by size)
+ */
+void C_MTXCopy(const Mtx src, Mtx dst)
+{
+	if (src == dst) {
+		return;
+	}
+
+	dst[0][0] = src[0][0];
+	dst[0][1] = src[0][1];
+	dst[0][2] = src[0][2];
+	dst[0][3] = src[0][3];
+
+	dst[1][0] = src[1][0];
+	dst[1][1] = src[1][1];
+	dst[1][2] = src[1][2];
+	dst[1][3] = src[1][3];
+
+	dst[2][0] = src[2][0];
+	dst[2][1] = src[2][1];
+	dst[2][2] = src[2][2];
+	dst[2][3] = src[2][3];
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXTrans
-    
-    Description:    Creates a translation matrix.
-    
-    Arguments:      m      output matrix
-                    xT     translation in X
-                    yT     translation in Y
-                    zT     translation in Z
-    
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXTrans(Mtx m, f32 xT, f32 yT, f32 zT) {
-    m[0][0] = 1.0f;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = xT;
-    m[1][0] = 0.0f;
-    m[1][1] = 1.0f;
-    m[1][2] = 0.0f;
-    m[1][3] = yT;
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = 1.0f;
-    m[2][3] = zT;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000034 (Matching by size)
+ */
+void PSMTXCopy(register const Mtx src, register Mtx dst)
+{
+#ifdef __MWERKS__
+	asm {
+		psq_l   fp0, 0x0000 (src), 0, 0
+		psq_st  fp0, 0x0000 (dst), 0, 0
+		psq_l   fp1, 0x0008 (src), 0, 0
+		psq_st  fp1, 0x0008 (dst), 0, 0
+		psq_l   fp2, 0x0010 (src), 0, 0
+		psq_st  fp2, 0x0010 (dst), 0, 0
+		psq_l   fp3, 0x0018 (src), 0, 0
+		psq_st  fp3, 0x0018 (dst), 0, 0
+		psq_l   fp4, 0x0020 (src), 0, 0
+		psq_st  fp4, 0x0020 (dst), 0, 0
+		psq_l   fp5, 0x0028 (src), 0, 0
+		psq_st  fp5, 0x0028 (dst), 0, 0
+	}
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXScale
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0002A8 (Matching by size)
+ */
+void C_MTXConcat(const Mtx a, const Mtx b, Mtx dst)
+{
+	Mtx tmp;
+	MtxPtr m;
 
-    Description:    Creates a scale matrix.
+	if (dst == a || dst == b) {
+		m = tmp;
+	} else {
+		m = dst;
+	}
 
-    Arguments:      m      output matrix
-                    xS     scale in X
-                    yS     scale in Y
-                    zS     scale in Z
+	m[0][0] = a[0][0] * b[0][0] + a[0][1] * b[1][0] + a[0][2] * b[2][0];
+	m[0][1] = a[0][0] * b[0][1] + a[0][1] * b[1][1] + a[0][2] * b[2][1];
+	m[0][2] = a[0][0] * b[0][2] + a[0][1] * b[1][2] + a[0][2] * b[2][2];
+	m[0][3] = a[0][0] * b[0][3] + a[0][1] * b[1][3] + a[0][2] * b[2][3] + a[0][3];
 
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXScale(Mtx m, f32 xS, f32 yS, f32 zS) {
-    m[0][0] = xS;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = 0.0f;
-    m[1][0] = 0.0f;
-    m[1][1] = yS;
-    m[1][2] = 0.0f;
-    m[1][3] = 0.0f;
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = zS;
-    m[2][3] = 0.0f;
+	m[1][0] = a[1][0] * b[0][0] + a[1][1] * b[1][0] + a[1][2] * b[2][0];
+	m[1][1] = a[1][0] * b[0][1] + a[1][1] * b[1][1] + a[1][2] * b[2][1];
+	m[1][2] = a[1][0] * b[0][2] + a[1][1] * b[1][2] + a[1][2] * b[2][2];
+	m[1][3] = a[1][0] * b[0][3] + a[1][1] * b[1][3] + a[1][2] * b[2][3] + a[1][3];
+
+	m[2][0] = a[2][0] * b[0][0] + a[2][1] * b[1][0] + a[2][2] * b[2][0];
+	m[2][1] = a[2][0] * b[0][1] + a[2][1] * b[1][1] + a[2][2] * b[2][1];
+	m[2][2] = a[2][0] * b[0][2] + a[2][1] * b[1][2] + a[2][2] * b[2][2];
+	m[2][3] = a[2][0] * b[0][3] + a[2][1] * b[1][3] + a[2][2] * b[2][3] + a[2][3];
+
+	if (m == tmp) {
+		C_MTXCopy(tmp, dst);
+	}
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXRotTrig
+/**
+ * @TODO: Documentation
+ */
+ASM void PSMTXConcat(register const Mtx a, register const Mtx b, register Mtx dst)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
 
-    Description:    Creates a rotation matrix around X/Y/Z using precomputed
-                    sine/cosine values.
+	stwu       r1, -64 (r1)
+	psq_l      fp0, 0 (a), 0, 0
+	stfd       fp14, 8 (r1)
+	psq_l      fp6, 0 (b), 0, 0
+	lis        r6, Unit01 @ha
+	psq_l      fp7, 8 (b), 0, 0
+	stfd       fp15, 16 (r1)
+	addi       r6, r6, Unit01 @l
+	stfd       fp31, 40 (r1)
+	psq_l      fp8, 16 (b), 0, 0
+	ps_muls0   fp12, fp6, fp0
+	psq_l      fp2, 16 (a), 0, 0
+	ps_muls0   fp13, fp7, fp0
+	psq_l      fp31, 0 (r6), 0, 0
+	ps_muls0   fp14, fp6, fp2
+	psq_l      fp9, 24 (b), 0, 0
+	ps_muls0   fp15, fp7, fp2
+	psq_l      fp1, 8 (a), 0, 0
+	ps_madds1  fp12, fp8, fp0, fp12
+	psq_l      fp3, 24 (a), 0, 0
+	ps_madds1  fp14, fp8, fp2, fp14
+	psq_l      fp10, 32 (b), 0, 0
+	ps_madds1  fp13, fp9, fp0, fp13
+	psq_l      fp11, 40 (b), 0, 0
+	ps_madds1  fp15, fp9, fp2, fp15
+	psq_l      fp4, 32 (a), 0, 0
+	psq_l      fp5, 40 (a), 0, 0
+	ps_madds0  fp12, fp10, fp1, fp12
+	ps_madds0  fp13, fp11, fp1, fp13
+	ps_madds0  fp14, fp10, fp3, fp14
+	ps_madds0  fp15, fp11, fp3, fp15
+	psq_st     fp12, 0 (dst), 0, 0
 
-    Arguments:      m      output matrix
-                    axis   'x','y','z' (case-insensitive)
-                    sinA   sine of angle
-                    cosA   cosine of angle
+	ps_muls0   fp2, fp6, fp4
+	ps_madds1  fp13, fp31, fp1, fp13
+	ps_muls0   fp0, fp7, fp4
+	psq_st     fp14, 16 (dst), 0, 0
+	ps_madds1  fp15, fp31, fp3, fp15
 
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXRotTrig(Mtx m, char axis, f32 sinA, f32 cosA) {
-    MTXIdentity(m);
-    switch (axis) {
-        case 'x':
-        case 'X':
-            m[1][1] = cosA;
-            m[1][2] = -sinA;
-            m[2][1] = sinA;
-            m[2][2] = cosA;
-            break;
-        case 'y':
-        case 'Y':
-            m[0][0] = cosA;
-            m[0][2] = sinA;
-            m[2][0] = -sinA;
-            m[2][2] = cosA;
-            break;
-        case 'z':
-        case 'Z':
-            m[0][0] = cosA;
-            m[0][1] = -sinA;
-            m[1][0] = sinA;
-            m[1][1] = cosA;
-            break;
-        default:
-            break;
-    }
+	psq_st     fp13, 8 (dst), 0, 0
+
+	ps_madds1  fp2, fp8, fp4, fp2
+	ps_madds1  fp0, fp9, fp4, fp0
+	ps_madds0  fp2, fp10, fp5, fp2
+	lfd        fp14, 8 (r1)
+	psq_st     fp15, 24 (dst), 0, 0
+	ps_madds0  fp0, fp11, fp5, fp0
+	psq_st     fp2, 32 (dst), 0, 0
+	ps_madds1  fp0, fp31, fp5, fp0
+	lfd        fp15, 16 (r1)
+	psq_st     fp0, 40 (dst), 0, 0
+
+	lfd        fp31, 40 (r1)
+	addi       r1, r1, 64
+
+	blr
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXRotRad
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00009C (Matching by size)
+ */
+void C_MTXTranspose(const Mtx src, Mtx xPose)
+{
+	Mtx tmp;
+	MtxPtr m;
 
-    Description:    Creates a rotation matrix around X/Y/Z from radians.
+	if (src == xPose) {
+		m = tmp;
+	} else {
+		m = xPose;
+	}
 
-    Arguments:      m      output matrix
-                    axis   'x','y','z' (case-insensitive)
-                    rad    angle in radians
+	m[0][0] = src[0][0];
+	m[0][1] = src[1][0];
+	m[0][2] = src[2][0];
+	m[0][3] = 0.0f;
 
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXRotRad(Mtx m, char axis, f32 rad) {
-    MTXRotTrig(m, axis, sinf(rad), cosf(rad));
+	m[1][0] = src[0][1];
+	m[1][1] = src[1][1];
+	m[1][2] = src[2][1];
+	m[1][3] = 0.0f;
+
+	m[2][0] = src[0][2];
+	m[2][1] = src[1][2];
+	m[2][2] = src[2][2];
+	m[2][3] = 0.0f;
+
+	if (m == tmp) {
+		C_MTXCopy(tmp, xPose);
+	}
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXRotDeg
+/**
+ * @TODO: Documentation
+ */
+void PSMTXTranspose(register const Mtx src, register Mtx xPose)
+{
+	register f32 c_zero;
+	register f32 row0a, row1a, row0b, row1b;
+	register f32 trns0, trns1, trns2;
 
-    Description:    Creates a rotation matrix around X/Y/Z from degrees.
+	c_zero = 0.0f;
 
-    Arguments:      m      output matrix
-                    axis   'x','y','z' (case-insensitive)
-                    deg    angle in degrees
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXRotDeg(Mtx m, char axis, f32 deg) {
-    MTXRotRad(m, axis, MTXDegToRad(deg));
+#ifdef __MWERKS__
+	asm {
+		psq_l       row0a, 0 (src),  0, 0
+		stfs        c_zero, 44 (xPose)
+		psq_l       row1a, 16 (src), 0, 0
+		ps_merge00  trns0, row0a, row1a
+		psq_l       row0b, 8 (src),  1, 0
+		ps_merge11  trns1, row0a, row1a
+		psq_l       row1b, 24 (src), 1, 0
+		psq_st      trns0, 0 (xPose),  0, 0
+		psq_l       row0a, 32 (src), 0, 0
+		ps_merge00  trns2, row0b, row1b
+		psq_st      trns1, 16 (xPose), 0, 0
+		ps_merge00  trns0, row0a, c_zero
+		psq_st      trns2, 32 (xPose), 0, 0
+		ps_merge10  trns1, row0a, c_zero
+		psq_st      trns0, 8 (xPose),  0, 0
+		lfs         row0b, 40 (src)
+		psq_st      trns1, 24 (xPose), 0, 0
+		stfs        row0b, 40 (xPose)
+	}
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXRotAxisRad
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0002AC (Matching by size)
+ */
+u32 C_MTXInverse(const Mtx src, Mtx inv)
+{
+	Mtx tmp;
+	MtxPtr m;
+	f32 det;
 
-    Description:    Creates a rotation matrix around an arbitrary axis.
+	if (src == inv) {
+		m = tmp;
+	} else {
+		m = inv;
+	}
 
-    Arguments:      m      output matrix
-                    axis   rotation axis (does not need to be unit length)
-                    rad    angle in radians
+	det = src[0][0] * src[1][1] * src[2][2] + src[0][1] * src[1][2] * src[2][0] + src[0][2] * src[1][0] * src[2][1]
+	    - src[2][0] * src[1][1] * src[0][2] - src[1][0] * src[0][1] * src[2][2] - src[0][0] * src[2][1] * src[1][2];
 
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXRotAxisRad(Mtx m, const Vec* axis, f32 rad) {
-    f32 x = axis->x;
-    f32 y = axis->y;
-    f32 z = axis->z;
-    f32 len = sqrtf(x * x + y * y + z * z);
-    f32 s;
-    f32 c;
-    f32 t;
+	if (det == 0.0f) {
+		return FALSE;
+	}
 
-    if (len <= 0.0f) {
-        MTXIdentity(m);
-        return;
-    }
+	det = 1.0f / det;
 
-    x /= len;
-    y /= len;
-    z /= len;
+	m[0][0] = (src[1][1] * src[2][2] - src[2][1] * src[1][2]) * det;
+	m[0][1] = -(src[0][1] * src[2][2] - src[2][1] * src[0][2]) * det;
+	m[0][2] = (src[0][1] * src[1][2] - src[1][1] * src[0][2]) * det;
 
-    s = sinf(rad);
-    c = cosf(rad);
-    t = 1.0f - c;
+	m[1][0] = -(src[1][0] * src[2][2] - src[2][0] * src[1][2]) * det;
+	m[1][1] = (src[0][0] * src[2][2] - src[2][0] * src[0][2]) * det;
+	m[1][2] = -(src[0][0] * src[1][2] - src[1][0] * src[0][2]) * det;
 
-    m[0][0] = t * x * x + c;
-    m[0][1] = t * x * y - s * z;
-    m[0][2] = t * x * z + s * y;
-    m[0][3] = 0.0f;
+	m[2][0] = (src[1][0] * src[2][1] - src[2][0] * src[1][1]) * det;
+	m[2][1] = -(src[0][0] * src[2][1] - src[2][0] * src[0][1]) * det;
+	m[2][2] = (src[0][0] * src[1][1] - src[1][0] * src[0][1]) * det;
 
-    m[1][0] = t * x * y + s * z;
-    m[1][1] = t * y * y + c;
-    m[1][2] = t * y * z - s * x;
-    m[1][3] = 0.0f;
+	m[0][3] = -m[0][0] * src[0][3] - m[0][1] * src[1][3] - m[0][2] * src[2][3];
+	m[1][3] = -m[1][0] * src[0][3] - m[1][1] * src[1][3] - m[1][2] * src[2][3];
+	m[2][3] = -m[2][0] * src[0][3] - m[2][1] * src[1][3] - m[2][2] * src[2][3];
 
-    m[2][0] = t * x * z - s * y;
-    m[2][1] = t * y * z + s * x;
-    m[2][2] = t * z * z + c;
-    m[2][3] = 0.0f;
+	if (m == tmp) {
+		C_MTXCopy(tmp, inv);
+	}
+
+	return TRUE;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXRotAxisDeg
+/**
+ * @TODO: Documentation
+ */
+ASM u32 PSMTXInverse(register const Mtx src, register Mtx inv) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
 
-    Description:    Creates a rotation matrix around an arbitrary axis.
+	psq_l       fp0,   0 (src), 1, 0
+	psq_l       fp1,   4 (src), 0, 0
+	psq_l       fp2,  16 (src), 1, 0
+	ps_merge10  fp6,  fp1, fp0
+	psq_l       fp3,  20 (src), 0, 0
+	psq_l       fp4,  32 (src), 1, 0
+	ps_merge10  fp7,  fp3, fp2
+	psq_l       fp5,  36 (src), 0, 0
+	ps_mul      fp11, fp3, fp6
+	ps_mul      fp13, fp5, fp7
+	ps_merge10  fp8,  fp5, fp4
+	ps_msub     fp11, fp1, fp7,  fp11
+	ps_mul      fp12, fp1, fp8
+	ps_msub     fp13, fp3, fp8,  fp13
+	ps_mul      fp10, fp3, fp4
+	ps_msub     fp12, fp5, fp6,  fp12
+	ps_mul      fp9,  fp0, fp5
+	ps_mul      fp8,  fp1, fp2
+	ps_sub      fp6,  fp6, fp6
+	ps_msub     fp10, fp2, fp5,  fp10
+	ps_mul      fp7,  fp0, fp13
+	ps_msub     fp9,  fp1, fp4,  fp9
+	ps_madd     fp7,  fp2, fp12, fp7
+	ps_msub     fp8,  fp0, fp3,  fp8
+	ps_madd     fp7,  fp4, fp11, fp7
+	ps_cmpo0    cr0,  fp7, fp6
+	bne         _regular
+	li          r3, 0
+	blr
 
-    Arguments:      m      output matrix
-                    axis   rotation axis
-                    deg    angle in degrees
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXRotAxisDeg(Mtx m, const Vec* axis, f32 deg) {
-    MTXRotAxisRad(m, axis, MTXDegToRad(deg));
+_regular:
+#if OS_BUILD_VERSION >= 20011002L
+	fres        fp0, fp7
+#else
+	ps_res      fp0, fp7
+	ps_add      fp6, fp0, fp0
+	ps_mul      fp5, fp0, fp0
+	ps_nmsub    fp0, fp7, fp5, fp6
+#endif
+	ps_add      fp6, fp0, fp0
+	ps_mul      fp5, fp0, fp0
+	ps_nmsub    fp0, fp7, fp5, fp6
+	lfs         fp1, 12(src)
+	ps_muls0    fp13, fp13, fp0
+	lfs         fp2, 28(src)
+	ps_muls0    fp12, fp12, fp0
+	lfs         fp3, 44(src)
+	ps_muls0    fp11, fp11, fp0
+	ps_merge00  fp5, fp13, fp12
+	ps_muls0    fp10, fp10, fp0
+	ps_merge11  fp4, fp13, fp12
+	ps_muls0    fp9,  fp9,  fp0
+	psq_st      fp5,  0(inv), 0, 0
+	ps_mul      fp6, fp13, fp1
+	psq_st      fp4,  16(inv), 0, 0
+	ps_muls0    fp8,  fp8,  fp0
+	ps_madd     fp6, fp12, fp2, fp6
+	psq_st      fp10, 32(inv), 1, 0
+	ps_nmadd    fp6, fp11, fp3, fp6
+	psq_st      fp9,  36(inv), 1, 0
+	ps_mul      fp7, fp10, fp1
+	ps_merge00  fp5, fp11, fp6
+	psq_st      fp8,  40(inv), 1, 0
+	ps_merge11  fp4, fp11, fp6
+	psq_st      fp5,  8(inv), 0, 0
+	ps_madd     fp7, fp9,  fp2, fp7
+	psq_st      fp4,  24(inv), 0, 0
+	ps_nmadd    fp7, fp8,  fp3, fp7
+	li          r3, 1
+	psq_st      fp7,  44(inv), 1, 0
+	blr
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXQuat
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00021C (Matching by size)
+ */
+u32 C_MTXInvXpose(const Mtx src, Mtx inv)
+{
+	Mtx tmp;
+	MtxPtr m;
+	f32 det;
 
-    Description:    Creates a rotation matrix from quaternion (x,y,z,w).
+	if (src == inv) {
+		m = tmp;
+	} else {
+		m = inv;
+	}
 
-    Arguments:      m      output matrix
-                    q      quaternion
+	det = src[0][0] * src[1][1] * src[2][2] + src[0][1] * src[1][2] * src[2][0] + src[0][2] * src[1][0] * src[2][1]
+	    - src[2][0] * src[1][1] * src[0][2] - src[1][0] * src[0][1] * src[2][2] - src[0][0] * src[2][1] * src[1][2];
 
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXQuat(Mtx m, const Quaternion* q) {
-    f32 x = q->x;
-    f32 y = q->y;
-    f32 z = q->z;
-    f32 w = q->w;
-    f32 n = x * x + y * y + z * z + w * w;
+	if (det == 0.0f) {
+		return FALSE;
+	}
 
-    if (n <= 0.0f) {
-        MTXIdentity(m);
-        return;
-    }
+	det = 1.0f / det;
 
-    {
-        f32 s = 2.0f / n;
-        f32 xx = x * x * s;
-        f32 yy = y * y * s;
-        f32 zz = z * z * s;
-        f32 xy = x * y * s;
-        f32 xz = x * z * s;
-        f32 yz = y * z * s;
-        f32 wx = w * x * s;
-        f32 wy = w * y * s;
-        f32 wz = w * z * s;
+	m[0][0] = (src[1][1] * src[2][2] - src[2][1] * src[1][2]) * det;
+	m[0][1] = -(src[1][0] * src[2][2] - src[2][0] * src[1][2]) * det;
+	m[0][2] = (src[1][0] * src[2][1] - src[2][0] * src[1][1]) * det;
 
-        m[0][0] = 1.0f - (yy + zz);
-        m[0][1] = xy - wz;
-        m[0][2] = xz + wy;
-        m[0][3] = 0.0f;
+	m[1][0] = -(src[0][1] * src[2][2] - src[2][1] * src[0][2]) * det;
+	m[1][1] = (src[0][0] * src[2][2] - src[2][0] * src[0][2]) * det;
+	m[1][2] = -(src[0][0] * src[2][1] - src[2][0] * src[0][1]) * det;
 
-        m[1][0] = xy + wz;
-        m[1][1] = 1.0f - (xx + zz);
-        m[1][2] = yz - wx;
-        m[1][3] = 0.0f;
+	m[2][0] = (src[0][1] * src[1][2] - src[1][1] * src[0][2]) * det;
+	m[2][1] = -(src[0][0] * src[1][2] - src[1][0] * src[0][2]) * det;
+	m[2][2] = (src[0][0] * src[1][1] - src[1][0] * src[0][1]) * det;
 
-        m[2][0] = xz - wy;
-        m[2][1] = yz + wx;
-        m[2][2] = 1.0f - (xx + yy);
-        m[2][3] = 0.0f;
-    }
+	m[0][3] = 0.0f;
+	m[1][3] = 0.0f;
+	m[2][3] = 0.0f;
+
+	if (m == tmp) {
+		C_MTXCopy(tmp, inv);
+	}
+
+	return TRUE;
 }
 
-static BOOL MtxStackCanPush(const MtxStackPtr sPtr) {
-    if (sPtr == NULL || sPtr->stackBase == NULL || sPtr->numMtx == 0) {
-        return FALSE;
-    }
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000D4 (Matching by size)
+ */
+ASM u32 PSMTXInvXpose(register const Mtx src, register Mtx inv)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
 
-    if (sPtr->stackPtr == NULL) {
-        return TRUE;
-    }
+	psq_l       fp0, 0 (src), 1, 0
+	psq_l       fp1, 4 (src), 0, 0
+	psq_l       fp2, 16 (src), 1, 0
+	ps_merge10  fp6, fp1, fp0
+	psq_l       fp3, 20 (src), 0, 0
+	psq_l       fp4, 32 (src), 1, 0
+	ps_merge10  fp7, fp3, fp2
+	psq_l       fp5, 36 (src), 0, 0
+	ps_mul      fp11, fp3, fp6
+	ps_merge10  fp8, fp5, fp4
+	ps_mul      fp13, fp5, fp7
+	ps_msub     fp11, fp1, fp7, fp11
+	ps_mul      fp12, fp1, fp8
+	ps_msub     fp13, fp3, fp8, fp13
+	ps_msub     fp12, fp5, fp6, fp12
+	ps_mul      fp10, fp3, fp4
+	ps_mul      fp9,  fp0, fp5
+	ps_mul      fp8,  fp1, fp2
+	ps_msub     fp10, fp2, fp5, fp10
+	ps_msub     fp9,  fp1, fp4, fp9
+	ps_msub     fp8,  fp0, fp3, fp8
+	ps_mul      fp7, fp0, fp13
+	ps_sub      fp1, fp1, fp1
+	ps_madd     fp7, fp2, fp12, fp7
+	ps_madd     fp7, fp4, fp11, fp7
+	ps_cmpo0    cr0, fp7, fp1
+	bne         _regular
+	li          r3, 0
+	blr
 
-    return ((u32)((sPtr->stackPtr - sPtr->stackBase) / MTX_PTR_OFFSET) < (sPtr->numMtx - 1));
+_regular:
+#if OS_BUILD_VERSION >= 20011002L
+	fres        fp0, fp7
+#else
+	ps_res      f0, f7
+	ps_add      f6, f0, f0
+	ps_mul      f5, f0, f0
+	ps_nmsub    f0, f7, f5, f6
+#endif
+	psq_st      fp1,  12(inv), 1, 0
+	ps_add      fp6, fp0, fp0
+	ps_mul      fp5, fp0, fp0
+	psq_st      fp1,  28(inv), 1, 0
+	ps_nmsub    fp0, fp7, fp5, fp6
+	psq_st      fp1,  44(inv), 1, 0
+	ps_muls0    fp13, fp13, fp0
+	ps_muls0    fp12, fp12, fp0
+	ps_muls0    fp11, fp11, fp0
+	psq_st      fp13,  0(inv), 0, 0
+	psq_st      fp12,  16(inv), 0, 0
+	ps_muls0    fp10, fp10, fp0
+	ps_muls0    fp9,  fp9,  fp0
+	psq_st      fp11,  32(inv), 0, 0
+	psq_st      fp10,  8(inv), 1, 0
+	ps_muls0    fp8,  fp8,  fp0
+	li          r3, 1
+	psq_st      fp9,   24(inv), 1, 0
+	psq_st      fp8,   40(inv), 1, 0
+	blr
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXInitStack
-
-    Description:    Initializes matrix stack metadata after MTXAllocStack.
-
-    Arguments:      sPtr    target stack
-                    numMtx  number of matrices allocated to stackBase
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXInitStack(MtxStackPtr sPtr, u32 numMtx) {
-    if (sPtr == NULL) {
-        return;
-    }
-
-    sPtr->numMtx = numMtx;
-    sPtr->stackPtr = NULL;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000070 (Matching by size)
+ */
+void C_MTXRotRad(Mtx m, char axis, f32 rad)
+{
+	f32 sinA, cosA;
+	sinA = sinf(rad);
+	cosA = cosf(rad);
+	C_MTXRotTrig(m, axis, sinA, cosA);
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXGetStackPtr
-
-    Description:    Returns current top-of-stack matrix pointer.
-
-    Arguments:      sPtr    matrix stack
-
-    Returns:        top-of-stack pointer (or NULL if empty)
- *---------------------------------------------------------------------------*/
-MtxPtr MTXGetStackPtr(MtxStackPtr sPtr) {
-    return sPtr ? sPtr->stackPtr : NULL;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000070 (Matching by size)
+ */
+void PSMTXRotRad(Mtx m, char axis, f32 rad)
+{
+	f32 sinA, cosA;
+	sinA = sinf(rad);
+	cosA = cosf(rad);
+	PSMTXRotTrig(m, axis, sinA, cosA);
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXPush
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000104 (Matching by size)
+ */
+void C_MTXRotTrig(Mtx m, char axis, f32 sinA, f32 cosA)
+{
+	switch (axis) {
+	case 'x':
+	case 'X':
+	{
+		m[0][0] = 1.0f;
+		m[0][1] = 0.0f;
+		m[0][2] = 0.0f;
+		m[0][3] = 0.0f;
 
-    Description:    Pushes a direct copy of m onto the matrix stack.
+		m[1][0] = 0.0f;
+		m[1][1] = cosA;
+		m[1][2] = -sinA;
+		m[1][3] = 0.0f;
 
-    Arguments:      sPtr    matrix stack
-                    m       matrix to copy
+		m[2][0] = 0.0f;
+		m[2][1] = sinA;
+		m[2][2] = cosA;
+		m[2][3] = 0.0f;
+		break;
+	}
+	case 'y':
+	case 'Y':
+	{
+		m[0][0] = cosA;
+		m[0][1] = 0.0f;
+		m[0][2] = sinA;
+		m[0][3] = 0.0f;
 
-    Returns:        pointer to pushed matrix (or current pointer on overflow)
- *---------------------------------------------------------------------------*/
-MtxPtr MTXPush(MtxStackPtr sPtr, Mtx m) {
-    MtxPtr dst;
+		m[1][0] = 0.0f;
+		m[1][1] = 1.0f;
+		m[1][2] = 0.0f;
+		m[1][3] = 0.0f;
 
-    if (!MtxStackCanPush(sPtr)) {
-        ASSERTMSG(FALSE, "MTXPush: stack overflow or uninitialized stack");
-        return sPtr ? sPtr->stackPtr : NULL;
-    }
+		m[2][0] = -sinA;
+		m[2][1] = 0.0f;
+		m[2][2] = cosA;
+		m[2][3] = 0.0f;
+		break;
+	}
+	case 'z':
+	case 'Z':
+	{
+		m[0][0] = cosA;
+		m[0][1] = -sinA;
+		m[0][2] = 0.0f;
+		m[0][3] = 0.0f;
 
-    dst = (sPtr->stackPtr == NULL) ? sPtr->stackBase : (sPtr->stackPtr + MTX_PTR_OFFSET);
-    MTXCopy(m, dst);
-    sPtr->stackPtr = dst;
-    return sPtr->stackPtr;
+		m[1][0] = sinA;
+		m[1][1] = cosA;
+		m[1][2] = 0.0f;
+		m[1][3] = 0.0f;
+
+		m[2][0] = 0.0f;
+		m[2][1] = 0.0f;
+		m[2][2] = 1.0f;
+		m[2][3] = 0.0f;
+		break;
+	}
+	default:
+	{
+		OSAssertMsg(FALSE, "MTXRotTrig():  invalid 'axis' value ");
+		break;
+	}
+	}
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXPushFwd
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000a8 (Matching by size)
+ */
+void PSMTXRotTrig(register Mtx m, register char axis, register f32 sinA, register f32 cosA)
+{
+	register f32 fc0, fc1, nsinA;
+	register f32 fw0, fw1, fw2, fw3;
 
-    Description:    Pushes forward composite matrix (top * m).
+	fc0 = 0.0f;
+	fc1 = 1.0f;
 
-    Arguments:      sPtr    matrix stack
-                    m       matrix to post-concatenate
+#ifdef __MWERKS__
+	asm {
+		ori         axis, axis, 0x20
+		ps_neg      nsinA, sinA
+		cmplwi      axis, 'x'
+		beq         _case_x
+		cmplwi      axis, 'y'
+		beq         _case_y
+		cmplwi      axis, 'z'
+		beq         _case_z
+		b           _end
 
-    Returns:        pointer to pushed matrix (or current pointer on overflow)
- *---------------------------------------------------------------------------*/
-MtxPtr MTXPushFwd(MtxStackPtr sPtr, Mtx m) {
-    MtxPtr dst;
+	_case_x:
+		psq_st      fc1,  0 (m), 1, 0
+		psq_st      fc0,  4 (m), 0, 0
+		ps_merge00  fw0, sinA, cosA
+		psq_st      fc0, 12 (m), 0, 0
+		ps_merge00  fw1, cosA, nsinA
+		psq_st      fc0, 28 (m), 0, 0
+		psq_st      fc0, 44 (m), 1, 0
+		psq_st      fw0, 36 (m), 0, 0
+		psq_st      fw1, 20 (m), 0, 0
+		b           _end;
 
-    if (!MtxStackCanPush(sPtr)) {
-        ASSERTMSG(FALSE, "MTXPushFwd: stack overflow or uninitialized stack");
-        return sPtr ? sPtr->stackPtr : NULL;
-    }
+	_case_y:
+		ps_merge00  fw0, cosA, fc0
+		ps_merge00  fw1, fc0, fc1
+		psq_st      fc0, 24 (m), 0, 0
+		psq_st      fw0,  0 (m), 0, 0
+		ps_merge00  fw2, nsinA, fc0
+		ps_merge00  fw3, sinA, fc0
+		psq_st      fw0, 40 (m), 0, 0;
+		psq_st      fw1, 16 (m), 0, 0;
+		psq_st      fw3,  8 (m), 0, 0;
+		psq_st      fw2, 32 (m), 0, 0;
+		b           _end;
 
-    if (sPtr->stackPtr == NULL) {
-        MTXCopy(m, sPtr->stackBase);
-        sPtr->stackPtr = sPtr->stackBase;
-        return sPtr->stackPtr;
-    }
+	_case_z:
+		psq_st      fc0,  8 (m), 0, 0
+		ps_merge00  fw0, sinA, cosA
+		ps_merge00  fw2, cosA, nsinA
+		psq_st      fc0, 24 (m), 0, 0
+		psq_st      fc0, 32 (m), 0, 0
+		ps_merge00  fw1, fc1, fc0
+		psq_st      fw0, 16 (m), 0, 0
+		psq_st      fw2,  0 (m), 0, 0
+		psq_st      fw1, 40 (m), 0, 0
 
-    dst = sPtr->stackPtr + MTX_PTR_OFFSET;
-    MTXConcat(sPtr->stackPtr, m, dst);
-    sPtr->stackPtr = dst;
-    return sPtr->stackPtr;
+	_end:
+	}
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXPushInv
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000118 (Matching by size)
+ */
+void C_MTXRotAxisRad(Mtx m, const Vec* axis, f32 rad)
+{
+	Vec vec;
+	f32 sinA, cosA;
+	f32 t;
+	f32 x, y, z;
+	f32 squareX, squareY, squareZ;
 
-    Description:    Pushes inverse composite matrix (inverse(m) * top).
+	sinA = sinf(rad);
+	cosA = cosf(rad);
+	t    = 1.0f - cosA;
 
-    Arguments:      sPtr    matrix stack
-                    m       matrix whose inverse is pre-concatenated
+	C_VECNormalize(axis, &vec);
 
-    Returns:        pointer to pushed matrix (or current pointer on failure)
- *---------------------------------------------------------------------------*/
-MtxPtr MTXPushInv(MtxStackPtr sPtr, Mtx m) {
-    MtxPtr dst;
-    Mtx mTmp;
-    Mtx invTmp;
+	x = vec.x;
+	y = vec.y;
+	z = vec.z;
 
-    if (!MtxStackCanPush(sPtr)) {
-        ASSERTMSG(FALSE, "MTXPushInv: stack overflow or uninitialized stack");
-        return sPtr ? sPtr->stackPtr : NULL;
-    }
+	squareX = x * x;
+	squareY = y * y;
+	squareZ = z * z;
 
-    if (sPtr->stackPtr == NULL) {
-        MTXCopy(m, sPtr->stackBase);
-        sPtr->stackPtr = sPtr->stackBase;
-        return sPtr->stackPtr;
-    }
+	m[0][0] = (t * squareX) + (cosA);
+	m[0][1] = (t * x * y) - (sinA * z);
+	m[0][2] = (t * x * z) + (sinA * y);
+	m[0][3] = 0.0f;
 
-    MTXCopy(m, mTmp);
-    if (!MTXInverse(mTmp, invTmp)) {
-        ASSERTMSG(FALSE, "MTXPushInv: MTXInverse failed (singular matrix)");
-        return sPtr->stackPtr;
-    }
+	m[1][0] = (t * x * y) + (sinA * z);
+	m[1][1] = (t * squareY) + (cosA);
+	m[1][2] = (t * y * z) - (sinA * x);
+	m[1][3] = 0.0f;
 
-    dst = sPtr->stackPtr + MTX_PTR_OFFSET;
-    MTXConcat(invTmp, sPtr->stackPtr, dst);
-    sPtr->stackPtr = dst;
-    return sPtr->stackPtr;
+	m[2][0] = (t * x * z) - (sinA * y);
+	m[2][1] = (t * y * z) + (sinA * x);
+	m[2][2] = (t * squareZ) + (cosA);
+	m[2][3] = 0.0f;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXPushInvXpose
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000104 (Matching by size)
+ */
+void PSMTXRotAxisRad(register Mtx m, const Vec* axis, register f32 rad)
+{
+	register f32 tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7, tmp8, tmp9;
 
-    Description:    Pushes inverse-transpose forward composite matrix
-                    (top * transpose(inverse(m))).
+	register f32 sinA, cosA, t;
+	register f32 c_zero;
+	Vec vec;
+	register Vec* vecPtr;
 
-    Arguments:      sPtr    matrix stack
-                    m       matrix to inverse-transpose and concatenate
+	c_zero = 0.0f;
+	vecPtr = &vec;
+	sinA   = sinf(rad);
+	cosA   = cosf(rad);
+	t      = 1.0f - cosA;
 
-    Returns:        pointer to pushed matrix (or current pointer on failure)
- *---------------------------------------------------------------------------*/
-MtxPtr MTXPushInvXpose(MtxStackPtr sPtr, Mtx m) {
-    MtxPtr dst;
-    Mtx mTmp;
-    Mtx invTmp;
-    Mtx invXposeTmp;
+	PSVECNormalize(axis, vecPtr);
 
-    if (!MtxStackCanPush(sPtr)) {
-        ASSERTMSG(FALSE, "MTXPushInvXpose: stack overflow or uninitialized stack");
-        return sPtr ? sPtr->stackPtr : NULL;
-    }
-
-    if (sPtr->stackPtr == NULL) {
-        MTXCopy(m, sPtr->stackBase);
-        sPtr->stackPtr = sPtr->stackBase;
-        return sPtr->stackPtr;
-    }
-
-    MTXCopy(m, mTmp);
-    if (!MTXInverse(mTmp, invTmp)) {
-        ASSERTMSG(FALSE, "MTXPushInvXpose: MTXInverse failed (singular matrix)");
-        return sPtr->stackPtr;
-    }
-    MTXTranspose(invTmp, invXposeTmp);
-
-    dst = sPtr->stackPtr + MTX_PTR_OFFSET;
-    MTXConcat(sPtr->stackPtr, invXposeTmp, dst);
-    sPtr->stackPtr = dst;
-    return sPtr->stackPtr;
+#ifdef __MWERKS__
+	asm {
+		psq_l       rad,  0 (vecPtr), 0, 0
+		lfs         tmp1, 8 (vecPtr)
+		ps_merge00  tmp0, cosA, cosA
+		ps_muls0    tmp4, rad, t
+		ps_muls0    tmp5, tmp1, t
+		ps_muls1    tmp3, tmp4, rad
+		ps_muls0    tmp2, tmp4, rad
+		ps_muls0    rad, rad, sinA
+		ps_muls0    tmp4, tmp4, tmp1
+		fnmsubs     tmp6, tmp1, sinA, tmp3
+		fmadds      tmp7, tmp1, sinA, tmp3
+		ps_neg      tmp9, rad
+		ps_sum0     tmp8, tmp4, c_zero, rad
+		ps_sum0     tmp2, tmp2, tmp6, tmp0
+		ps_sum1     tmp3, tmp0, tmp7, tmp3
+		ps_sum0     tmp6, tmp9, c_zero, tmp4
+		ps_sum0     tmp9, tmp4, tmp4, tmp9
+		psq_st      tmp8, 0x08 (m), 0, 0
+		ps_muls0    tmp5, tmp5, tmp1
+		psq_st      tmp2, 0x00 (m), 0, 0
+		ps_sum1     tmp4, rad, tmp9, tmp4
+		psq_st      tmp3, 0x10 (m), 0, 0
+		ps_sum0     tmp5, tmp5, c_zero, tmp0
+		psq_st      tmp6, 0x18 (m), 0, 0
+		psq_st      tmp4, 0x20 (m), 0, 0
+		psq_st      tmp5, 0x28 (m), 0, 0
+	}
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXPop
+/**
+ * @TODO: Documentation
+ */
+void C_MTXTrans(Mtx m, f32 xT, f32 yT, f32 zT)
+{
+	m[0][0] = 1.0f;
+	m[0][1] = 0.0f;
+	m[0][2] = 0.0f;
+	m[0][3] = xT;
 
-    Description:    Pops one matrix from the stack.
+	m[1][0] = 0.0f;
+	m[1][1] = 1.0f;
+	m[1][2] = 0.0f;
+	m[1][3] = yT;
 
-    Arguments:      sPtr    matrix stack
-
-    Returns:        new top-of-stack pointer, or NULL if stack becomes empty
- *---------------------------------------------------------------------------*/
-MtxPtr MTXPop(MtxStackPtr sPtr) {
-    if (sPtr == NULL || sPtr->stackPtr == NULL) {
-        return NULL;
-    }
-
-    if (sPtr->stackPtr == sPtr->stackBase) {
-        sPtr->stackPtr = NULL;
-    } else {
-        sPtr->stackPtr -= MTX_PTR_OFFSET;
-    }
-
-    return sPtr->stackPtr;
+	m[2][0] = 0.0f;
+	m[2][1] = 0.0f;
+	m[2][2] = 1.0f;
+	m[2][3] = zT;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXMultVec
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000034 (Matching by size)
+ */
+void PSMTXTrans(register Mtx m, register f32 xT, register f32 yT, register f32 zT)
+{
+	register f32 c0;
+	register f32 c1;
 
-    Description:    Multiplies a vector by a 3x4 matrix (includes translation).
+	c0 = 0.0f;
+	c1 = 1.0f;
 
-    Arguments:      m      matrix
-                    src    source vector
-                    dst    destination vector
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXMultVec(const Mtx m, const Vec* src, Vec* dst) {
-    f32 x = src->x;
-    f32 y = src->y;
-    f32 z = src->z;
-
-    dst->x = m[0][0] * x + m[0][1] * y + m[0][2] * z + m[0][3];
-    dst->y = m[1][0] * x + m[1][1] * y + m[1][2] * z + m[1][3];
-    dst->z = m[2][0] * x + m[2][1] * y + m[2][2] * z + m[2][3];
+#ifdef __MWERKS__
+	asm {
+		stfs    xT, 12 (m)
+		stfs    yT, 28 (m)
+		psq_st  c0,  4 (m), 0, 0
+		psq_st  c0, 32 (m), 0, 0
+		stfs    c0, 16 (m)
+		stfs    c1, 20 (m)
+		stfs    c0, 24 (m)
+		stfs    c1, 40 (m)
+		stfs    zT, 44 (m)
+		stfs    c1,  0 (m)
+	}
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXMultVecArray
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000078 (Matching by size)
+ */
+void C_MTXTransApply(const Mtx src, Mtx dst, f32 xT, f32 yT, f32 zT)
+{
+	if (src != dst) {
+		dst[0][0] = src[0][0];
+		dst[0][1] = src[0][1];
+		dst[0][2] = src[0][2];
+		dst[1][0] = src[1][0];
+		dst[1][1] = src[1][1];
+		dst[1][2] = src[1][2];
+		dst[2][0] = src[2][0];
+		dst[2][1] = src[2][1];
+		dst[2][2] = src[2][2];
+	}
 
-    Description:    Multiplies an array of vectors by a 3x4 matrix
-                    (includes translation).
-
-    Arguments:      m        matrix
-                    srcBase  source vector array
-                    dstBase  destination vector array
-                    count    number of vectors
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXMultVecArray(const Mtx m, const Vec* srcBase, Vec* dstBase, u32 count) {
-    while (count--) {
-        MTXMultVec(m, srcBase, dstBase);
-        ++srcBase;
-        ++dstBase;
-    }
+	dst[0][3] = src[0][3] + xT;
+	dst[1][3] = src[1][3] + yT;
+	dst[2][3] = src[2][3] + zT;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXMultVecSR
-
-    Description:    Multiplies a vector by the 3x3 (scale-rotate) part only.
-
-    Arguments:      m      matrix
-                    src    source vector
-                    dst    destination vector
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXMultVecSR(const Mtx m, const Vec* src, Vec* dst) {
-    f32 x = src->x;
-    f32 y = src->y;
-    f32 z = src->z;
-
-    dst->x = m[0][0] * x + m[0][1] * y + m[0][2] * z;
-    dst->y = m[1][0] * x + m[1][1] * y + m[1][2] * z;
-    dst->z = m[2][0] * x + m[2][1] * y + m[2][2] * z;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000040 (Matching by size)
+ */
+ASM void PSMTXTransApply(register const Mtx src, register Mtx dst, register f32 xT, register f32 yT, register f32 zT)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	psq_l    fp4,  0 (src), 0, 0
+	psq_l    fp5,  8 (src), 0, 0
+	psq_l    fp7, 24 (src), 0, 0
+	psq_l    fp8, 40 (src), 0, 0
+	psq_st   fp4,  0 (dst), 0, 0
+	ps_sum1  fp5, xT, fp5, fp5
+	psq_l    fp6, 16 (src), 0, 0   
+	psq_st   fp5,  8 (dst), 0, 0
+	ps_sum1  fp7, yT, fp7, fp7
+	psq_l    fp9, 32 (src), 0, 0
+	psq_st   fp6, 16 (dst), 0, 0
+	ps_sum1  fp8, zT, fp8, fp8
+	psq_st   fp7, 24 (dst), 0, 0
+	psq_st   fp9, 32 (dst), 0, 0
+	psq_st   fp8, 40 (dst), 0, 0
+	blr
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           MTXMultVecArraySR
+/**
+ * @TODO: Documentation
+ */
+void C_MTXScale(Mtx m, f32 xS, f32 yS, f32 zS)
+{
+	m[0][0] = xS;
+	m[0][1] = 0.0f;
+	m[0][2] = 0.0f;
+	m[0][3] = 0.0f;
 
-    Description:    Multiplies an array of vectors by the 3x3 (scale-rotate)
-                    part of a matrix only (no translation).
+	m[1][0] = 0.0f;
+	m[1][1] = yS;
+	m[1][2] = 0.0f;
+	m[1][3] = 0.0f;
 
-    Arguments:      m        matrix
-                    srcBase  source vector array
-                    dstBase  destination vector array
-                    count    number of vectors
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXMultVecArraySR(const Mtx m, const Vec* srcBase, Vec* dstBase, u32 count) {
-    while (count--) {
-        MTXMultVecSR(m, srcBase, dstBase);
-        ++srcBase;
-        ++dstBase;
-    }
+	m[2][0] = 0.0f;
+	m[2][1] = 0.0f;
+	m[2][2] = zS;
+	m[2][3] = 0.0f;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECDotProduct
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000028 (Matching by size)
+ */
+void PSMTXScale(register Mtx m, register f32 xS, register f32 yS, register f32 zS)
+{
+	register f32 c0;
 
-    Description:    Returns the dot product of vectors a and b.
+	c0 = 0.0f;
 
-    Arguments:      a, b   input vectors
-
-    Returns:        dot product
- *---------------------------------------------------------------------------*/
-f32 VECDotProduct(const Vec* a, const Vec* b) {
-    return a->x * b->x + a->y * b->y + a->z * b->z;
+#ifdef __MWERKS__
+	asm {
+		stfs    xS,  0 (m)
+		psq_st  c0,  4 (m), 0, 0
+		psq_st  c0, 12 (m), 0, 0
+		stfs    yS, 20 (m)
+		psq_st  c0, 24 (m), 0, 0
+		psq_st  c0, 32 (m), 0, 0
+		stfs    zS, 40 (m)
+		stfs    c0, 44 (m)
+	}
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECMag
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000094 (Matching by size)
+ */
+void C_MTXScaleApply(const Mtx src, Mtx dst, f32 xS, f32 yS, f32 zS)
+{
+	dst[0][0] = src[0][0] * xS;
+	dst[0][1] = src[0][1] * xS;
+	dst[0][2] = src[0][2] * xS;
+	dst[0][3] = src[0][3] * xS;
 
-    Description:    Returns vector magnitude.
+	dst[1][0] = src[1][0] * yS;
+	dst[1][1] = src[1][1] * yS;
+	dst[1][2] = src[1][2] * yS;
+	dst[1][3] = src[1][3] * yS;
 
-    Arguments:      v      input vector
-
-    Returns:        magnitude
- *---------------------------------------------------------------------------*/
-f32 VECMag(const Vec* v) {
-    return sqrtf(v->x * v->x + v->y * v->y + v->z * v->z);
+	dst[2][0] = src[2][0] * zS;
+	dst[2][1] = src[2][1] * zS;
+	dst[2][2] = src[2][2] * zS;
+	dst[2][3] = src[2][3] * zS;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECSquareMag
-
-    Description:    Returns square magnitude of a vector.
-
-    Arguments:      v      input vector
-
-    Returns:        square magnitude
- *---------------------------------------------------------------------------*/
-f32 VECSquareMag(const Vec* v) {
-    return v->x * v->x + v->y * v->y + v->z * v->z;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00004c (Matching by size)
+ */
+ASM void PSMTXScaleApply(register const Mtx src, register Mtx dst, register f32 xS, register f32 yS, register f32 zS)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	psq_l     fp4,  0 (src), 0, 0
+	psq_l     fp5,  8 (src), 0, 0
+	ps_muls0  fp4, fp4, xS
+	psq_l     fp6, 16 (src), 0, 0
+	ps_muls0  fp5, fp5, xS
+	psq_l     fp7, 24 (src), 0, 0
+	ps_muls0  fp6, fp6, yS
+	psq_l     fp8, 32 (src), 0, 0
+	psq_st    fp4,  0 (dst), 0, 0
+	ps_muls0  fp7, fp7, yS
+	psq_l     fp2, 40 (src), 0, 0
+	psq_st    fp5,  8 (dst), 0, 0
+	ps_muls0  fp8, fp8, zS
+	psq_st    fp6, 16 (dst), 0, 0
+	ps_muls0  fp2, fp2, zS
+	psq_st    fp7, 24 (dst), 0, 0
+	psq_st    fp8, 32 (dst), 0, 0
+	psq_st    fp2, 40 (dst), 0, 0
+	blr
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECCrossProduct
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000F0 (Matching by size)
+ */
+void C_MTXQuat(Mtx m, const Quaternion* quat)
+{
+	f32 s, xs, ys, zs, wx, wy, wz, xx, xy, xz, yy, yz, zz;
 
-    Description:    Cross product: axb = a x b
+	s = 2.0f / ((quat->x * quat->x) + (quat->y * quat->y) + (quat->z * quat->z) + (quat->w * quat->w));
 
-    Arguments:      a,b    input vectors
-                    axb    output vector
+	xs = quat->x * s;
+	ys = quat->y * s;
+	zs = quat->z * s;
+	wx = quat->w * xs;
+	wy = quat->w * ys;
+	wz = quat->w * zs;
+	xx = quat->x * xs;
+	xy = quat->x * ys;
+	xz = quat->x * zs;
+	yy = quat->y * ys;
+	yz = quat->y * zs;
+	zz = quat->z * zs;
 
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void VECCrossProduct(const Vec* a, const Vec* b, Vec* axb) {
-    axb->x = a->y * b->z - a->z * b->y;
-    axb->y = a->z * b->x - a->x * b->z;
-    axb->z = a->x * b->y - a->y * b->x;
+	m[0][0] = 1.0f - (yy + zz);
+	m[0][1] = xy - wz;
+	m[0][2] = xz + wy;
+	m[0][3] = 0.0f;
+
+	m[1][0] = xy + wz;
+	m[1][1] = 1.0f - (xx + zz);
+	m[1][2] = yz - wx;
+	m[1][3] = 0.0f;
+
+	m[2][0] = xz - wy;
+	m[2][1] = yz + wx;
+	m[2][2] = 1.0f - (xx + yy);
+	m[2][3] = 0.0f;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECSquareDistance
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000a4 (Matching by size)
+ */
+void PSMTXQuat(register Mtx m, register const Quaternion* quat)
+{
+	register f32 c_zero, c_one, c_two, scale;
+	register f32 tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7, tmp8, tmp9;
 
-    Description:    Returns square distance between vectors.
+	c_one = 1.0f;
 
-    Arguments:      a, b   input vectors
-
-    Returns:        square distance
- *---------------------------------------------------------------------------*/
-f32 VECSquareDistance(const Vec* a, const Vec* b) {
-    f32 dx = a->x - b->x;
-    f32 dy = a->y - b->y;
-    f32 dz = a->z - b->z;
-    return dx * dx + dy * dy + dz * dz;
+#ifdef __MWERKS__
+	asm {
+		psq_l       tmp0,  0 (quat), 0, 0
+		psq_l       tmp1,  8 (quat), 0, 0
+		fsubs       c_zero, c_one, c_one
+		fadds       c_two, c_one, c_one
+		ps_mul      tmp2, tmp0, tmp0
+		ps_merge10  tmp5, tmp0, tmp0
+		ps_madd     tmp4, tmp1, tmp1, tmp2
+		ps_mul      tmp3, tmp1, tmp1
+		ps_sum0     scale, tmp4, tmp4, tmp4
+		ps_muls1    tmp7, tmp5, tmp1
+		fres        tmp9, scale
+		ps_sum1     tmp4, tmp3, tmp4, tmp2
+		ps_nmsub    scale, scale, tmp9, c_two
+		ps_muls1    tmp6, tmp1, tmp1
+		ps_mul      scale, tmp9, scale
+		ps_sum0     tmp2, tmp2, tmp2, tmp2
+		fmuls       scale, scale, c_two
+		ps_madd     tmp8, tmp0, tmp5, tmp6
+		ps_msub     tmp6, tmp0, tmp5, tmp6
+		psq_st      c_zero, 12 (m), 1, 0
+		ps_nmsub    tmp2, tmp2, scale, c_one
+		ps_nmsub    tmp4, tmp4, scale, c_one
+		psq_st      c_zero, 44 (m), 1, 0
+		ps_mul      tmp8, tmp8, scale
+		ps_mul      tmp6, tmp6, scale
+		psq_st      tmp2, 40 (m), 1, 0
+		ps_madds0   tmp5, tmp0, tmp1, tmp7
+		ps_merge00  tmp1, tmp8, tmp4
+		ps_nmsub    tmp7, tmp7, c_two, tmp5
+		ps_merge10  tmp0, tmp4, tmp6
+		psq_st      tmp1, 16 (m), 0, 0
+		ps_mul      tmp5, tmp5, scale
+		ps_mul      tmp7, tmp7, scale
+		psq_st      tmp0,  0 (m), 0, 0
+		psq_st      tmp5,  8 (m), 1, 0
+		ps_merge10  tmp3, tmp7, c_zero
+		ps_merge01  tmp9, tmp7, tmp5
+		psq_st      tmp3, 24 (m), 0, 0
+		psq_st      tmp9, 32 (m), 0, 0
+	}
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECDistance
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000100 (Nonmatching)
+ */
+void C_MTXReflect(Mtx m, const Vec* p, const Vec* n)
+{
+	f32 vxy, vxz, vyz, pdotn;
 
-    Description:    Returns distance between vectors.
+	vxy   = -2.0f * n->x * n->y;
+	vxz   = -2.0f * n->x * n->z;
+	vyz   = -2.0f * n->y * n->z;
+	pdotn = 2.0f * C_VECDotProduct(p, n);
 
-    Arguments:      a, b   input vectors
+	m[0][0] = 1.0f - 2.0f * n->x * n->x;
+	m[0][1] = vxy;
+	m[0][2] = vxz;
+	m[0][3] = pdotn * n->x;
 
-    Returns:        distance
- *---------------------------------------------------------------------------*/
-f32 VECDistance(const Vec* a, const Vec* b) {
-    return sqrtf(VECSquareDistance(a, b));
+	m[1][0] = vxy;
+	m[1][1] = 1.0f - 2.0f * n->y * n->y;
+	m[1][2] = vyz;
+	m[1][3] = pdotn * n->y;
+
+	m[2][0] = vxz;
+	m[2][1] = vyz;
+	m[2][2] = 1.0f - 2.0f * n->z * n->z;
+	m[2][3] = pdotn * n->z;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECNormalize
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000070 (Matching by size)
+ */
+void PSMTXReflect(register Mtx m, const register Vec* p, const register Vec* n)
+{
+	register f32 c_one;
+	register f32 vn_xy, vn_z1, n2vn_xy, n2vn_z1, pdotn;
+	register f32 tmp0, tmp1, tmp2, tmp3;
+	register f32 tmp4, tmp5, tmp6, tmp7;
 
-    Description:    Normalizes src into dst.
+	c_one = 1.0f;
 
-    Arguments:      src    input vector
-                    dst    output normalized vector
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void VECNormalize(const Vec* src, Vec* dst) {
-    f32 mag = sqrtf(src->x * src->x + src->y * src->y + src->z * src->z);
-    if (mag > 0.0f) {
-        f32 inv = 1.0f / mag;
-        dst->x = src->x * inv;
-        dst->y = src->y * inv;
-        dst->z = src->z * inv;
-    } else {
-        dst->x = 0.0f;
-        dst->y = 0.0f;
-        dst->z = 0.0f;
-    }
+#ifdef __MWERKS__
+	asm {
+		psq_l       vn_z1, 0x0008 (n), 1, 0
+		psq_l       vn_xy, 0x0000 (n), 0, 0
+		psq_l       tmp0,  0x0000 (p), 0, 0
+		ps_nmadd    n2vn_z1, vn_z1, c_one, vn_z1
+		psq_l       tmp1,  0x0008 (p), 1, 0
+		ps_nmadd    n2vn_xy, vn_xy, c_one, vn_xy
+		ps_muls0    tmp4, vn_xy, n2vn_z1
+		ps_mul      pdotn, n2vn_xy, tmp0
+		ps_muls0    tmp2, vn_xy, n2vn_xy
+		ps_sum0     pdotn, pdotn, pdotn, pdotn
+		ps_muls1    tmp3, vn_xy, n2vn_xy
+		psq_st      tmp4, 0x0020 (m), 0, 0
+		ps_sum0     tmp2, tmp2, tmp2, c_one
+		ps_nmadd    pdotn, n2vn_z1, tmp1, pdotn
+		ps_sum1     tmp3, c_one, tmp3, tmp3
+		psq_st      tmp2, 0x0000 (m), 0, 0
+		ps_muls0    tmp5, vn_xy, pdotn
+		ps_merge00  tmp6, n2vn_z1, pdotn
+		psq_st      tmp3, 0x0010 (m), 0, 0
+		ps_merge00  tmp7, tmp4, tmp5
+		ps_muls0    tmp6, tmp6, vn_z1
+		ps_merge11  tmp5, tmp4, tmp5
+		psq_st      tmp7, 0x0008 (m), 0, 0
+		ps_sum0     tmp6, tmp6, tmp6, c_one
+		psq_st      tmp5, 0x0018 (m), 0, 0
+		psq_st      tmp6, 0x0028 (m), 0, 0
+	}
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECAdd
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00018C (Matching by size)
+ */
+void C_MTXLookAt(Mtx m, const Vec* camPos, const Vec* camUp, const Vec* target)
+{
+	Vec vLook, vRight, vUp;
 
-    Description:    Adds vectors a and b into ab.
+	vLook.x = camPos->x - target->x;
+	vLook.y = camPos->y - target->y;
+	vLook.z = camPos->z - target->z;
+	C_VECNormalize(&vLook, &vLook);
+	C_VECCrossProduct(camUp, &vLook, &vRight);
+	C_VECNormalize(&vRight, &vRight);
+	VECCrossProduct(&vLook, &vRight, &vUp);
 
-    Arguments:      a, b   input vectors
-                    ab     output vector
+	m[0][0] = vRight.x;
+	m[0][1] = vRight.y;
+	m[0][2] = vRight.z;
+	m[0][3] = -(camPos->x * vRight.x + camPos->y * vRight.y + camPos->z * vRight.z);
 
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void VECAdd(const Vec* a, const Vec* b, Vec* ab) {
-    ab->x = a->x + b->x;
-    ab->y = a->y + b->y;
-    ab->z = a->z + b->z;
+	m[1][0] = vUp.x;
+	m[1][1] = vUp.y;
+	m[1][2] = vUp.z;
+	m[1][3] = -(camPos->x * vUp.x + camPos->y * vUp.y + camPos->z * vUp.z);
+
+	m[2][0] = vLook.x;
+	m[2][1] = vLook.y;
+	m[2][2] = vLook.z;
+	m[2][3] = -(camPos->x * vLook.x + camPos->y * vLook.y + camPos->z * vLook.z);
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECSubtract
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000094 (Matching by size)
+ */
+void C_MTXLightFrustum(Mtx m, f32 t, f32 b, f32 l, f32 r, f32 n, f32 scaleS, f32 scaleT, f32 transS, f32 transT)
+{
+	f32 tmp;
 
-    Description:    Subtracts b from a (a - b).
+	tmp       = 1.0f / (r - l);
+	m[0][0]   = (2 * n) * tmp * scaleS;
+	m[0][1]   = 0.0f;
+	m[0][2]   = (r + l) * tmp * scaleS - transS;
+	m[0][3]   = 0.0f;
 
-    Arguments:      a, b   input vectors
-                    a_b    output vector
+	tmp       = 1.0f / (t - b);
+	m[1][0]   = 0.0f;
+	m[1][1]   = (2 * n) * tmp * scaleT;
+	m[1][2]   = (t + b) * tmp * scaleT - transT;
+	m[1][3]   = 0.0f;
 
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void VECSubtract(const Vec* a, const Vec* b, Vec* a_b) {
-    a_b->x = a->x - b->x;
-    a_b->y = a->y - b->y;
-    a_b->z = a->z - b->z;
+	m[2][0] = 0.0f;
+	m[2][1] = 0.0f;
+	m[2][2] = -1.0f;
+	m[2][3] = 0.0f;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECReflect
+/**
+ * @TODO: Documentation
+ */
+void C_MTXLightPerspective(Mtx m, f32 fovY, f32 aspect, f32 scaleS, f32 scaleT, f32 transS, f32 transT)
+{
+	f32 angle;
+	f32 cot;
 
-    Description:    Reflects incident vector about normal, returning unit vector.
+	OSAssertMsgLine(2605, m, "MTXLightPerspective():  NULL MtxPtr 'm' ");
+	OSAssertMsgLine(2606, (fovY > 0.0) && (fovY < 180.0), "MTXLightPerspective():  'fovY' out of range ");
+	OSAssertMsgLine(2607, 0 != aspect, "MTXLightPerspective():  'aspect' is 0 ");
 
-    Arguments:      src     incident vector (toward surface)
-                    normal  surface normal (away from surface)
-                    dst     reflected unit vector
+	angle = 0.5f * fovY;
+	angle = MTXDegToRad(angle);
+	cot   = 1.0f / tanf(angle);
 
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void VECReflect(const Vec* src, const Vec* normal, Vec* dst) {
-    f32 nx = normal->x;
-    f32 ny = normal->y;
-    f32 nz = normal->z;
-    f32 nLen = sqrtf(nx * nx + ny * ny + nz * nz);
-    f32 rx, ry, rz;
-    f32 rLen;
+	m[0][0] = scaleS * (cot / aspect);
+	m[0][1] = 0.0f;
+	m[0][2] = -transS;
+	m[0][3] = 0.0f;
 
-    if (nLen <= 0.0f) {
-        dst->x = 0.0f;
-        dst->y = 0.0f;
-        dst->z = 0.0f;
-        return;
-    }
+	m[1][0] = 0.0f;
+	m[1][1] = cot * scaleT;
+	m[1][2] = -transT;
+	m[1][3] = 0.0f;
 
-    nx /= nLen;
-    ny /= nLen;
-    nz /= nLen;
-
-    {
-        f32 d = src->x * nx + src->y * ny + src->z * nz;
-        rx = src->x - 2.0f * d * nx;
-        ry = src->y - 2.0f * d * ny;
-        rz = src->z - 2.0f * d * nz;
-    }
-
-    rLen = sqrtf(rx * rx + ry * ry + rz * rz);
-    if (rLen > 0.0f) {
-        f32 inv = 1.0f / rLen;
-        dst->x = rx * inv;
-        dst->y = ry * inv;
-        dst->z = rz * inv;
-    } else {
-        dst->x = 0.0f;
-        dst->y = 0.0f;
-        dst->z = 0.0f;
-    }
+	m[2][0] = 0.0f;
+	m[2][1] = 0.0f;
+	m[2][2] = -1.0f;
+	m[2][3] = 0.0f;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECHalfAngle
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000088
+ */
+void C_MTXLightOrtho(Mtx m, f32 t, f32 b, f32 l, f32 r, f32 scaleS, f32 scaleT, f32 transS, f32 transT)
+{
+	f32 tmp;
 
-    Description:    Computes unit half-angle vector between light/view vectors.
+	tmp       = 1.0f / (r - l);
+	m[0][0]   = 2 * tmp * scaleS;
+	m[0][1]   = 0.0f;
+	m[0][2]   = 0.0f;
+	m[0][3]   = -(r + l) * tmp * scaleS + transS;
 
-    Arguments:      a      light->surface vector
-                    b      view->surface vector
-                    half   output half-angle unit vector (surface->halfway dir)
+	tmp       = 1.0f / (t - b);
+	m[1][0]   = 0.0f;
+	m[1][1]   = 2 * tmp * scaleT;
+	m[1][2]   = 0.0f;
+	m[1][3]   = -(t + b) * tmp * scaleT + transT;
 
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void VECHalfAngle(const Vec* a, const Vec* b, Vec* half) {
-    f32 ax = -a->x;
-    f32 ay = -a->y;
-    f32 az = -a->z;
-    f32 bx = -b->x;
-    f32 by = -b->y;
-    f32 bz = -b->z;
-    f32 len;
-
-    len = sqrtf(ax * ax + ay * ay + az * az);
-    if (len > 0.0f) {
-        f32 inv = 1.0f / len;
-        ax *= inv;
-        ay *= inv;
-        az *= inv;
-    }
-
-    len = sqrtf(bx * bx + by * by + bz * bz);
-    if (len > 0.0f) {
-        f32 inv = 1.0f / len;
-        bx *= inv;
-        by *= inv;
-        bz *= inv;
-    }
-
-    half->x = ax + bx;
-    half->y = ay + by;
-    half->z = az + bz;
-
-    len = sqrtf(half->x * half->x + half->y * half->y + half->z * half->z);
-    if (len > 0.0f) {
-        f32 inv = 1.0f / len;
-        half->x *= inv;
-        half->y *= inv;
-        half->z *= inv;
-    } else {
-        half->x = 0.0f;
-        half->y = 0.0f;
-        half->z = 0.0f;
-    }
+	m[2][0] = 0.0f;
+	m[2][1] = 0.0f;
+	m[2][2] = 0.0f;
+	m[2][3] = 1.0f;
 }
 
-/*---------------------------------------------------------------------------*
-    Name:           VECScale
-
-    Description:    Scales src by scale into dst.
-
-    Arguments:      src    input vector
-                    dst    output vector
-                    scale  scalar
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void VECScale(const Vec* src, Vec* dst, f32 scale) {
-    dst->x = src->x * scale;
-    dst->y = src->y * scale;
-    dst->z = src->z * scale;
-}
-
-/*---------------------------------------------------------------------------*
-    Name:           MTXFrustum
-    
-    Description:    Creates a perspective projection matrix (4x4).
-    
-    Arguments:      m      output matrix (Mtx44)
-                    t      top clipping plane
-                    b      bottom clipping plane
-                    l      left clipping plane
-                    r      right clipping plane
-                    n      near clipping plane
-                    f      far clipping plane
-    
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXFrustum(Mtx44 m, f32 t, f32 b, f32 l, f32 r, f32 n, f32 f) {
-    f32 tmp;
-    
-    tmp = 1.0f / (r - l);
-    m[0][0] = (2.0f * n * tmp);
-    m[0][1] = 0.0f;
-    m[0][2] = (tmp * (r + l));
-    m[0][3] = 0.0f;
-    
-    tmp = 1.0f / (t - b);
-    m[1][0] = 0.0f;
-    m[1][1] = (2.0f * n * tmp);
-    m[1][2] = (tmp * (t + b));
-    m[1][3] = 0.0f;
-    
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    tmp = 1.0f / (f - n);
-    m[2][2] = (-n * tmp);
-    m[2][3] = (tmp * -(f * n));
-    
-    m[3][0] = 0.0f;
-    m[3][1] = 0.0f;
-    m[3][2] = -1.0f;
-    m[3][3] = 0.0f;
-}
-
-/*---------------------------------------------------------------------------*
-    Name:           MTXLookAt
-    
-    Description:    Creates a view matrix looking from camPos toward objPt
-                    with up vector camUp.
-    
-    Arguments:      m       output matrix
-                    camPos  camera position
-                    camUp   up vector
-                    target  target point to look at
-    
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXLookAt(Mtx m, const Point3d* camPos, const Vec* camUp, const Point3d* target) {
-    Vec look, right, up;
-    f32 len;
-    
-    /* vLook points from target to camera (camera-space +Z axis). */
-    look.x = camPos->x - target->x;
-    look.y = camPos->y - target->y;
-    look.z = camPos->z - target->z;
-    
-    /* Normalize look. */
-    len = sqrtf(look.x * look.x + look.y * look.y + look.z * look.z);
-    if (len > 0.0f) {
-        look.x /= len;
-        look.y /= len;
-        look.z /= len;
-    }
-    
-    /* vRight = camUp x vLook */
-    right.x = camUp->y * look.z - camUp->z * look.y;
-    right.y = camUp->z * look.x - camUp->x * look.z;
-    right.z = camUp->x * look.y - camUp->y * look.x;
-    
-    /* Normalize right. */
-    len = sqrtf(right.x * right.x + right.y * right.y + right.z * right.z);
-    if (len > 0.0f) {
-        right.x /= len;
-        right.y /= len;
-        right.z /= len;
-    }
-    
-    /* vUp = vLook x vRight */
-    up.x = look.y * right.z - look.z * right.y;
-    up.y = look.z * right.x - look.x * right.z;
-    up.z = look.x * right.y - look.y * right.x;
-    
-    /* Build row-major view matrix. */
-    m[0][0] = right.x;
-    m[0][1] = right.y;
-    m[0][2] = right.z;
-    m[0][3] = -(right.x * camPos->x + right.y * camPos->y + right.z * camPos->z);
-    
-    m[1][0] = up.x;
-    m[1][1] = up.y;
-    m[1][2] = up.z;
-    m[1][3] = -(up.x * camPos->x + up.y * camPos->y + up.z * camPos->z);
-    
-    m[2][0] = look.x;
-    m[2][1] = look.y;
-    m[2][2] = look.z;
-    m[2][3] = -(look.x * camPos->x + look.y * camPos->y + look.z * camPos->z);
-}
-
-/*---------------------------------------------------------------------------*
-    Name:           MTXPerspective
-
-    Description:    Creates a perspective projection matrix (4x4).
-
-    Arguments:      m      output matrix (Mtx44)
-                    fovY   vertical field of view in degrees
-                    aspect aspect ratio (width/height)
-                    n      near clipping plane
-                    f      far clipping plane
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXPerspective(Mtx44 m, f32 fovY, f32 aspect, f32 n, f32 f) {
-    f32 angle = 0.5f * fovY * 0.017453293f;
-    f32 cot   = 1.0f / tanf(angle);
-    f32 tmp   = 1.0f / (f - n);
-
-    m[0][0] = cot / aspect;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = 0.0f;
-    m[1][0] = 0.0f;
-    m[1][1] = cot;
-    m[1][2] = 0.0f;
-    m[1][3] = 0.0f;
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = -n * tmp;
-    m[2][3] = tmp * -(f * n);
-    m[3][0] = 0.0f;
-    m[3][1] = 0.0f;
-    m[3][2] = -1.0f;
-    m[3][3] = 0.0f;
-}
-
-/*---------------------------------------------------------------------------*
-    Name:           MTXOrtho
-
-    Description:    Creates an orthographic projection matrix (4x4).
-
-    Arguments:      m      output matrix (Mtx44)
-                    top, bottom, left, right
-                    nearZ, farZ  near and far clipping planes
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXOrtho(Mtx44 m, f32 top, f32 bottom, f32 left, f32 right, f32 nearZ, f32 farZ) {
-    f32 tmp = 1.0f / (right - left);
-    m[0][0] = 2.0f * tmp;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = tmp * -(right + left);
-    tmp     = 1.0f / (top - bottom);
-    m[1][0] = 0.0f;
-    m[1][1] = 2.0f * tmp;
-    m[1][2] = 0.0f;
-    m[1][3] = tmp * -(top + bottom);
-    tmp     = 1.0f / (farZ - nearZ);
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = -1.0f * tmp;
-    m[2][3] = -farZ * tmp;
-    m[3][0] = 0.0f;
-    m[3][1] = 0.0f;
-    m[3][2] = 0.0f;
-    m[3][3] = 1.0f;
-}
-
-/*---------------------------------------------------------------------------*
-    Name:           MTXLightFrustum
-
-    Description:    Creates a 3x4 texture projection matrix for frustum.
-
-    Arguments:      m       output matrix (Mtx 3x4)
-                    t,b,l,r frustum planes
-                    n       near plane
-                    scaleS, scaleT, transS, transT  texture scale/translation
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXLightFrustum(Mtx m, f32 t, f32 b, f32 l, f32 r, f32 n, f32 scaleS, f32 scaleT, f32 transS, f32 transT) {
-    f32 tmp;
-
-    tmp = 1.0f / (r - l);
-    m[0][0] = scaleS * (n * tmp);
-    m[0][1] = 0.0f;
-    m[0][2] = scaleS * (tmp * (r + l)) - transS;
-    m[0][3] = 0.0f;
-
-    tmp = 1.0f / (t - b);
-    m[1][0] = 0.0f;
-    m[1][1] = scaleT * (n * tmp);
-    m[1][2] = scaleT * (tmp * (t + b)) - transT;
-    m[1][3] = 0.0f;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = -1.0f;
-    m[2][3] = 0.0f;
-}
-
-/*---------------------------------------------------------------------------*
-    Name:           MTXLightPerspective
-
-    Description:    Creates a 3x4 texture projection matrix for perspective
-                    (light/texgen).
-
-    Arguments:      m       output matrix (Mtx 3x4)
-                    fovY    vertical field of view in degrees
-                    aspect  aspect ratio
-                    scaleS, scaleT, transS, transT  texture scale/translation
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXLightPerspective(Mtx m, f32 fovY, f32 aspect, f32 scaleS, f32 scaleT, f32 transS, f32 transT) {
-    f32 angle = 0.5f * fovY * 0.017453293f;
-    f32 cot   = 1.0f / tanf(angle);
-
-    m[0][0] = scaleS * (cot / aspect);
-    m[0][1] = 0.0f;
-    m[0][2] = -transS;
-    m[0][3] = 0.0f;
-    m[1][0] = 0.0f;
-    m[1][1] = cot * scaleT;
-    m[1][2] = -transT;
-    m[1][3] = 0.0f;
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = -1.0f;
-    m[2][3] = 0.0f;
-}
-
-/*---------------------------------------------------------------------------*
-    Name:           MTXLightOrtho
-
-    Description:    Creates a 3x4 texture projection matrix for orthographic
-                    light/texgen projection.
-
-    Arguments:      m       output matrix (Mtx 3x4)
-                    t,b,l,r view volume extents
-                    scaleS, scaleT, transS, transT  texture scale/translation
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXLightOrtho(Mtx m, f32 t, f32 b, f32 l, f32 r, f32 scaleS, f32 scaleT, f32 transS, f32 transT) {
-    f32 tmp;
-
-    tmp = 1.0f / (r - l);
-    m[0][0] = scaleS * (2.0f * tmp);
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = scaleS * (tmp * -(r + l)) + transS;
-
-    tmp = 1.0f / (t - b);
-    m[1][0] = 0.0f;
-    m[1][1] = scaleT * (2.0f * tmp);
-    m[1][2] = 0.0f;
-    m[1][3] = scaleT * (tmp * -(t + b)) + transT;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = 0.0f;
-    m[2][3] = 1.0f;
-}
-
-/*---------------------------------------------------------------------------*
-    Name:           MTXReflect
-
-    Description:    Creates a reflection matrix from a plane point/normal.
-
-    Arguments:      m      output matrix
-                    p      point on the reflection plane
-                    n      plane normal
-
-    Returns:        none
- *---------------------------------------------------------------------------*/
-void MTXReflect(Mtx m, const Point3d* p, const Vec* n) {
-    f32 nx = n->x;
-    f32 ny = n->y;
-    f32 nz = n->z;
-    f32 len = sqrtf(nx * nx + ny * ny + nz * nz);
-    f32 d;
-
-    if (len <= 0.0f) {
-        MTXIdentity(m);
-        return;
-    }
-
-    nx /= len;
-    ny /= len;
-    nz /= len;
-
-    d = -(nx * p->x + ny * p->y + nz * p->z);
-
-    m[0][0] = 1.0f - 2.0f * nx * nx;
-    m[0][1] = -2.0f * nx * ny;
-    m[0][2] = -2.0f * nx * nz;
-    m[0][3] = -2.0f * d * nx;
-
-    m[1][0] = -2.0f * ny * nx;
-    m[1][1] = 1.0f - 2.0f * ny * ny;
-    m[1][2] = -2.0f * ny * nz;
-    m[1][3] = -2.0f * d * ny;
-
-    m[2][0] = -2.0f * nz * nx;
-    m[2][1] = -2.0f * nz * ny;
-    m[2][2] = 1.0f - 2.0f * nz * nz;
-    m[2][3] = -2.0f * d * nz;
-}
-
-/* C_MTXLightPerspective alias for Pikmin/Revolution SDK compatibility */
-void C_MTXLightPerspective(Mtx m, f32 fovY, f32 aspect, f32 scaleS, f32 scaleT, f32 transS, f32 transT) {
-    MTXLightPerspective(m, fovY, aspect, scaleS, scaleT, transS, transT);
-}
-
-/* PSMTX* aliases (C implementations for PC; paired-singles on GCN) */
-void PSMTXIdentity(Mtx m) { MTXIdentity(m); }
-void PSMTXCopy(const Mtx src, Mtx dst) { MTXCopy(src, dst); }
-void PSMTXConcat(const Mtx a, const Mtx b, Mtx ab) { MTXConcat(a, b, ab); }
-void PSMTXMultVecArray(const Mtx m, const Vec* srcBase, Vec* dstBase, u32 count) { MTXMultVecArray(m, srcBase, dstBase, count); }
-
-void PSMTXReorder(const Mtx src, ROMtx dest) {
-    dest[0][0] = src[0][0];
-    dest[0][1] = src[1][0];
-    dest[0][2] = src[2][0];
-    dest[1][0] = src[0][1];
-    dest[1][1] = src[1][1];
-    dest[1][2] = src[2][1];
-    dest[2][0] = src[0][2];
-    dest[2][1] = src[1][2];
-    dest[2][2] = src[2][2];
-    dest[3][0] = src[0][3];
-    dest[3][1] = src[1][3];
-    dest[3][2] = src[2][3];
-}
-
-void PSMTXROMultVecArray(const ROMtx m, const Vec* srcBase, Vec* dstBase, u32 count) {
-    while (count--) {
-        f32 x = srcBase->x;
-        f32 y = srcBase->y;
-        f32 z = srcBase->z;
-
-        dstBase->x = m[0][0] * x + m[1][0] * y + m[2][0] * z + m[3][0];
-        dstBase->y = m[0][1] * x + m[1][1] * y + m[2][1] * z + m[3][1];
-        dstBase->z = m[0][2] * x + m[1][2] * y + m[2][2] * z + m[3][2];
-
-        ++srcBase;
-        ++dstBase;
-    }
-}
-
-void PSMTXScale(Mtx m, f32 xS, f32 yS, f32 zS) {
-    m[0][0] = xS;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = 0.0f;
-    m[1][0] = 0.0f;
-    m[1][1] = yS;
-    m[1][2] = 0.0f;
-    m[1][3] = 0.0f;
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = zS;
-    m[2][3] = 0.0f;
-}
-
-void PSMTXTranspose(const Mtx src, Mtx dst) {
-    dst[0][0] = src[0][0];
-    dst[0][1] = src[1][0];
-    dst[0][2] = src[2][0];
-    dst[0][3] = src[0][3];
-    dst[1][0] = src[0][1];
-    dst[1][1] = src[1][1];
-    dst[1][2] = src[2][1];
-    dst[1][3] = src[1][3];
-    dst[2][0] = src[0][2];
-    dst[2][1] = src[1][2];
-    dst[2][2] = src[2][2];
-    dst[2][3] = src[2][3];
-}
-
-u32 PSMTXInverse(const Mtx src, Mtx inv) {
-    f32 det = src[0][0] * (src[1][1] * src[2][2] - src[1][2] * src[2][1])
-            - src[0][1] * (src[1][0] * src[2][2] - src[1][2] * src[2][0])
-            + src[0][2] * (src[1][0] * src[2][1] - src[1][1] * src[2][0]);
-    if (det * det < 1e-10f) return 0;
-    f32 rdet = 1.0f / det;
-    inv[0][0] =  (src[1][1] * src[2][2] - src[1][2] * src[2][1]) * rdet;
-    inv[0][1] = -(src[0][1] * src[2][2] - src[0][2] * src[2][1]) * rdet;
-    inv[0][2] =  (src[0][1] * src[1][2] - src[0][2] * src[1][1]) * rdet;
-    inv[0][3] = -(inv[0][0] * src[0][3] + inv[0][1] * src[1][3] + inv[0][2] * src[2][3]);
-    inv[1][0] = -(src[1][0] * src[2][2] - src[1][2] * src[2][0]) * rdet;
-    inv[1][1] =  (src[0][0] * src[2][2] - src[0][2] * src[2][0]) * rdet;
-    inv[1][2] = -(src[0][0] * src[1][2] - src[0][2] * src[1][0]) * rdet;
-    inv[1][3] = -(inv[1][0] * src[0][3] + inv[1][1] * src[1][3] + inv[1][2] * src[2][3]);
-    inv[2][0] =  (src[1][0] * src[2][1] - src[1][1] * src[2][0]) * rdet;
-    inv[2][1] = -(src[0][0] * src[2][1] - src[0][1] * src[2][0]) * rdet;
-    inv[2][2] =  (src[0][0] * src[1][1] - src[0][1] * src[1][0]) * rdet;
-    inv[2][3] = -(inv[2][0] * src[0][3] + inv[2][1] * src[1][3] + inv[2][2] * src[2][3]);
-    return 1;
-}
-
-void MTXTranspose(const Mtx src, Mtx dst) {
-    PSMTXTranspose(src, dst);
-}
-
-u32 MTXInverse(const Mtx src, Mtx inv) {
-    return PSMTXInverse(src, inv);
-}
-
-/* PSVECMag: declared in Pikmin Dolphin/vec.h; avoid duplicate in mtx.h */
-f32 PSVECMag(const Vec* v) {
-    return sqrtf(v->x * v->x + v->y * v->y + v->z * v->z);
-}
+#pragma dont_inline reset

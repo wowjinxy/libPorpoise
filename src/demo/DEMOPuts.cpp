@@ -4,7 +4,6 @@
   
   Text rendering using DEMOFontBitmap (solid quads per pixel, no texture).
   
-  Based on Nintendo's Revolution SDK demo library.
  *---------------------------------------------------------------------------*/
 
 #include <dolphin/demo.h>
