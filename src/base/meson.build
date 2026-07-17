@@ -1,6 +1,5 @@
 libbase_srcs = files(
-    'PPCArch.c',
-    'PPCPm.c'
+    'PPCArch.c'
 )
 
 libbase = library('base',

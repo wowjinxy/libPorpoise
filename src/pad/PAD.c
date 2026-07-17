@@ -1,890 +1,1471 @@
-/*---------------------------------------------------------------------------*
-  PAD.c - GameCube Controller Input System
-  
-  ARCHITECTURAL DIFFERENCES: GC/Wii vs PC
-  ========================================
-  
-  On GC/Wii (Serial Interface Hardware):
-  ---------------------------------------
-  - Controllers connect via Serial Interface (SI) hardware
-  - SI handles automatic polling at configurable rate (6.75ms default)
-  - Hardware DMA transfers controller data to memory
-  - Supports 4 controller ports (SI channels 0-3)
-  - Controllers send 8-byte packets with button/analog state
-  - Wireless controllers require special probe/pairing commands
-  - Origin calibration sent by controller at reset
-  - Hardware handles trigger/stick analog data directly
-  - Rumble motors controlled via SI command packets
-  
-  On PC (SDL2 Gamepad System):
-  -----------------------------
-  - Modern gamepads via SDL2 (Xbox, PlayStation, Switch Pro, etc.)
-  - Manual polling via SDL_GameControllerGetButton/GetAxis
-  - No hardware DMA - direct API calls
-  - SDL2 handles device detection and hotplug
-  - Analog values from SDL2 axes (-32768 to 32767)
-  - No wireless pairing - OS handles Bluetooth
-  - Origin calibration simulated in software
-  - Keyboard fallback for Player 1 (no controller needed)
-  - Rumble via SDL2 Haptic API
-  
-  WHY THE DIFFERENCE:
-  - Original: Custom hardware interface, fixed packet format
-  - PC: Industry-standard SDL2 library, flexible device support
-  - Can't access serial interface hardware on PC
-  - SDL2 provides better compatibility with modern controllers
-  
-  WHAT WE PRESERVE:
-  - Same API surface (PADInit, PADRead, PADControlMotor, etc.)
-  - PADStatus structure layout
-  - Button bit definitions
-  - Error codes (PAD_ERR_NONE, PAD_ERR_NO_CONTROLLER, etc.)
-  - 4 controller support
-  - Origin calibration concept
-  - Analog modes
-  
-  WHAT'S DIFFERENT:
-  - No SI hardware polling - we poll SDL2 in PADRead()
-  - No hardware DMA - we fill PADStatus manually
-  - Keyboard fallback option (original didn't have this)
-  - SDL2 controller mapping (more flexible than SI)
-  - Rumble intensity/duration controlled via SDL2 Haptic
-  - No wireless pairing commands (OS handles it)
-  
-  KEYBOARD FALLBACK:
-  - If no gamepads detected, Player 1 uses keyboard
-  - Arrow keys: D-pad / Main stick
-  - Z,X,C,V: A,B,X,Y buttons
-  - A,S,D: L,R,Z triggers
-  - I,K,J,L: C-stick
-  - Enter: START button
- *---------------------------------------------------------------------------*/
-
-#include <dolphin/pad.h>
-#include <dolphin/PADConfig.h>
-#include <dolphin/os.h>
-#include <dolphin/porpoise/Guard.h>
+#include "Dolphin/pad.h"
+#include "Dolphin/hw_regs.h"
+#include "Dolphin/os.h"
+#include "Dolphin/si.h"
+#include "Dolphin/vi.h"
+#include <stddef.h>
 #include <string.h>
-#include <stdlib.h>
-#include <SDL2/SDL.h>
 
-/*---------------------------------------------------------------------------*
-    Internal State
- *---------------------------------------------------------------------------*/
+// For ease of implementing multiple revisions, static variables that were renamed go by their final
+// names everywhere in this file and are silently renamed for older revisions via the below macros.
+#if OS_BUILD_VERSION >= 20011002L
+#else
+#define CmdTypeAndStatus cmdTypeAndStatus // This one was renamed only to go unused, lol.
+#define CmdReadOrigin    cmdReadOrigin
+#define CmdCalibrate     cmdCalibrate
+#define CmdProbeDevice   cmdProbeDevice
+#define CmdFixDevice     cmdFixDevice // This one wasn't renamed, but now it's the odd one out.
+#endif
 
-// Initialization flags
-static BOOL s_initialized = FALSE;       // PAD system initialized
-static BOOL s_sdl_initialized = FALSE;   // SDL2 subsystem initialized
+#define RES_WIRELESS_LITE 0x40000
 
-// SDL gamepad handles (NULL if not connected)
-static SDL_GameController* s_gamepads[PAD_MAX_CONTROLLERS] = {NULL};
+typedef void (*MakeStatusCallback)(s32, PADStatus*, u32*);
 
-// Origin/calibration data (analog stick centers, trigger baselines)
-static PADStatus s_origin[PAD_MAX_CONTROLLERS];
+static void PADResetCallback(s32 unused, u32 error, OSContext* context);
+static void PADTypeAndStatusCallback(s32 chan, u32 type);
+#if OS_BUILD_VERSION >= 20011002L
+static void PADReceiveCheckCallback(s32 chan, u32 type);
+#else
+static void PADReceiveCheckCallback(s32 chan, u32 error, OSContext* arg2);
+#endif
+static void SPEC0_MakeStatus(s32 chan, PADStatus* status, u32 data[2]);
+static void SPEC1_MakeStatus(s32 chan, PADStatus* status, u32 data[2]);
+static void SPEC2_MakeStatus(s32 chan, PADStatus* status, u32 data[2]);
+static BOOL OnReset(BOOL f);
 
-// Controller status flags
-static u32 s_enabled_bits = 0;          // OR-ed PAD_CHANn_BIT of enabled channels
-static u32 s_resetting_bits = 0;        // OR-ed PAD_CHANn_BIT of resetting channels
-static u32 s_waiting_bits = 0;          // OR-ed PAD_CHANn_BIT waiting for connection
+extern u16 __OSWirelessPadFixMode AT_ADDRESS(OS_BASE_CACHED | 0x30E0);
+extern u8 GameChoice AT_ADDRESS(OS_BASE_CACHED | 0x30E3);
 
-// Analog mode (controls which analog inputs are active)
-// Mode 3 (default) = full stick + triggers, no analog A/B
-static u32 s_analog_mode = PAD_MODE_3;
+static BOOL Initialized = FALSE;
 
-// Sampling callback (called during PADRead)
-static PADSamplingCallback s_sampling_callback = NULL;
+static u32 EnabledBits   = 0x00000000;
+static u32 ResettingBits = 0x00000000;
+#if OS_BUILD_VERSION >= 20011002L
+#else
+static u32 ProbingBits = 0x00000000;
+#endif
+static u32 RecalibrateBits = 0x00000000;
+static u32 WaitingBits     = 0x00000000;
+static u32 CheckingBits    = 0x00000000;
+#if OS_BUILD_VERSION >= 20011002L
+static u32 PendingBits = 0x00000000;
+#endif
 
-// Keyboard fallback state (for channel 0 only)
-static struct {
-    BOOL enabled;                        // TRUE if using keyboard
-    const Uint8* keys;                   // Keyboard state array
-} s_keyboard;
+#if OS_BUILD_VERSION >= 20011002L
+#else
+static u32 PADType[PAD_MAX_CONTROLLERS];
+#endif
+static u32 Type[PAD_MAX_CONTROLLERS];
+static PADStatus Origin[PAD_MAX_CONTROLLERS];
 
-/*---------------------------------------------------------------------------*
-    Keyboard Mapping (fallback for channel 0)
- *---------------------------------------------------------------------------*/
+static s32 ResettingChan             = 0x00000020;
+static u32 XPatchBits                = PAD_CHAN0_BIT | PAD_CHAN1_BIT | PAD_CHAN2_BIT | PAD_CHAN3_BIT;
+static u32 AnalogMode                = 0x00000300;
+static u32 Spec                      = 0x00000005;
+static MakeStatusCallback MakeStatus = SPEC2_MakeStatus;
+#if OS_BUILD_VERSION >= 20011002L && OS_BUILD_VERSION < 20011217L
+static u32 SamplingRate = 0; // This was moved to SISamplingRate.c
+#endif
+#if OS_BUILD_VERSION >= 20011002L
+static PADSamplingCallback SamplingCallback = NULL;
+#endif
 
-#define KEY_UP      SDL_SCANCODE_UP
-#define KEY_DOWN    SDL_SCANCODE_DOWN
-#define KEY_LEFT    SDL_SCANCODE_LEFT
-#define KEY_RIGHT   SDL_SCANCODE_RIGHT
-#define KEY_A       SDL_SCANCODE_Z
-#define KEY_B       SDL_SCANCODE_X
-#define KEY_X       SDL_SCANCODE_C
-#define KEY_Y       SDL_SCANCODE_V
-#define KEY_START   SDL_SCANCODE_RETURN
-#define KEY_L       SDL_SCANCODE_A
-#define KEY_R       SDL_SCANCODE_S
-#define KEY_Z       SDL_SCANCODE_D
+static u32 CmdReadOrigin    = 0x41000000;
+static u32 CmdCalibrate     = 0x42000000;
+static u32 CmdTypeAndStatus = 0x00000000;
+static u32 CmdProbeDevice[PAD_MAX_CONTROLLERS];
+#if OS_BUILD_VERSION >= 20011002L
+#else
+static u32 CmdFixDevice[PAD_MAX_CONTROLLERS];
+#endif
 
-// C-stick
-#define KEY_CUP     SDL_SCANCODE_I
-#define KEY_CDOWN   SDL_SCANCODE_K
-#define KEY_CLEFT   SDL_SCANCODE_J
-#define KEY_CRIGHT  SDL_SCANCODE_L
+static OSResetFunctionInfo ResetFunctionInfo = {
+	OnReset,
+	127,
+	NULL,
+	NULL,
+};
 
-/*---------------------------------------------------------------------------*
-  Name:         InitSDL
+#if OS_BUILD_VERSION >= 20011002L
+extern u32 __PADFixBits; // This was moved to SIBios.c
+#else
+u32 __PADFixBits;
+#endif
+u32 __PADSpec;
 
-  Description:  Initialize SDL2 gamepad subsystem. If gamepad init fails,
-                falls back to keyboard input for Player 1.
-                
-                On GC/Wii: SI hardware is initialized and polls automatically
-                On PC: We initialize SDL2 for manual polling
+// TODO: This struct changed / moved a lot.
+typedef struct XY {
+#if OS_BUILD_VERSION >= 20011002L
+	u16 line;
+#else
+	u8 line;
+#endif
+	u8 count;
+} XY;
 
-  Arguments:    None
+#if OS_BUILD_VERSION >= 20011217L
+extern XY XYNTSC[12]; // This was moved to SISamplingRate.c
+extern XY XYPAL[12];  // This was moved to SISamplingRate.c
+#else
+static XY XYNTSC[12] = {
+#if OS_BUILD_VERSION >= 20011002L
+	{ 0xF6, 0x02 }, { 0x0E, 0x13 }, { 0x1E, 0x09 },
+#else
+	{ 0xF7, 0x02 }, { 0x0E, 0x13 }, { 0x1D, 0x09 },
+#endif
+	{ 0x25, 0x07 }, { 0x34, 0x05 }, { 0x41, 0x04 }, { 0x57, 0x03 }, { 0x57, 0x03 },
+	{ 0x57, 0x03 }, { 0x83, 0x02 }, { 0x83, 0x02 }, { 0x83, 0x02 },
+};
+static XY XYPAL[12] = {
+#if OS_BUILD_VERSION >= 20011002L
+	{ 0x128, 0x02 },
+#else
+	{ 0x94, 0x03 },
+#endif
+	{ 0x0D, 0x18 },  { 0x1A, 0x0C }, { 0x27, 0x08 }, { 0x34, 0x06 }, { 0x3E, 0x05 }, { 0x4E, 0x04 },
+	{ 0x68, 0x03 },  { 0x68, 0x03 }, { 0x68, 0x03 }, { 0x68, 0x03 }, { 0x9C, 0x02 },
+};
+#endif
 
-  Returns:      TRUE if SDL2 initialized (either gamepad or events)
-                FALSE if complete failure
- *---------------------------------------------------------------------------*/
-static BOOL InitSDL(void) {
-    if (s_sdl_initialized) {
-        return TRUE;
-    }
-    
-    // Load configuration from pad_config.ini
-    PADLoadConfig();
-    
-    // Try to initialize gamepad + haptic (rumble)
-    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC) < 0) {
-        OSReport("PAD: Failed to initialize SDL gamepad: %s\n", SDL_GetError());
-        
-        // Try keyboard fallback
-        if (SDL_InitSubSystem(SDL_INIT_EVENTS) < 0) {
-            OSReport("PAD: Failed to initialize SDL events: %s\n", SDL_GetError());
-            return FALSE;
-        }
-        
-        OSReport("PAD: Using keyboard fallback for player 1\n");
-        s_keyboard.enabled = TRUE;
-        s_keyboard.keys = SDL_GetKeyboardState(NULL);
-    }
-    
-    s_sdl_initialized = TRUE;
-    return TRUE;
+#if OS_BUILD_VERSION >= 20011002L
+#else
+
+/**
+ * This was moved to OSRtc.c
+ * @note UNUSED Size: 000044
+ */
+static u16 GetWirelessID(s32 chan)
+{
+	OSSramEx* sram;
+	u16 id;
+
+	sram = __OSLockSramEx();
+	id   = sram->wirelessPadID[chan];
+	__OSUnlockSramEx(FALSE);
+	return id;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OpenGamepad
+/**
+ * This was moved to OSRtc.c
+ * @note UNUSED Size: 000068
+ */
+static void SetWirelessID(s32 chan, u16 id)
+{
+	OSSramEx* sram = __OSLockSramEx();
 
-  Description:  Open a gamepad for the specified channel.
-                Equivalent to detecting a controller on SI hardware.
-                
-                On GC/Wii: Controller detected via SI status register
-                On PC: SDL_GameControllerOpen() opens indexed device
-
-  Arguments:    chan    Channel number (0-3)
-
-  Returns:      None (s_gamepads[chan] set to controller handle or NULL)
- *---------------------------------------------------------------------------*/
-static void OpenGamepad(s32 chan) {
-    if (chan < 0 || chan >= PAD_MAX_CONTROLLERS) {
-        return;
-    }
-    
-    // Close existing gamepad (if unplugged/replaced)
-    if (s_gamepads[chan]) {
-        SDL_GameControllerClose(s_gamepads[chan]);
-        s_gamepads[chan] = NULL;
-    }
-    
-    // Try to open gamepad at this index
-    s_gamepads[chan] = SDL_GameControllerOpen(chan);
-    if (s_gamepads[chan]) {
-        OSReport("PAD: Channel %d connected - %s\n", chan, 
-                 SDL_GameControllerName(s_gamepads[chan]));
-    }
+	if (sram->wirelessPadID[chan] != id) {
+		sram->wirelessPadID[chan] = id;
+		__OSUnlockSramEx(TRUE);
+		return;
+	}
+	__OSUnlockSramEx(FALSE);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ScanGamepads
+#endif
 
-  Description:  Scan for connected gamepads and open any new ones.
-                Equivalent to SI hardware detecting controller insertions.
-                
-                On GC/Wii: SI hardware automatically detects connections
-                On PC: We manually check SDL joystick count
+/**
+ * @TODO: Documentation
+ */
+#if OS_BUILD_VERSION >= 20011002L
+static void DoReset(void)
+#else
+static BOOL DoReset(void)
+#endif
+{
+	u32 chanBit;
+#if OS_BUILD_VERSION >= 20011002L
+#else
+	BOOL rc;
+	rc = TRUE;
+#endif
 
-  Arguments:    None
+	#ifndef LIBPORPOISE_PORT
+	//TODO
+	ResettingChan = __mwerks_cntlzw(ResettingBits);
+	#endif
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-static void ScanGamepads(void) {
-    for (s32 chan = 0; chan < PAD_MAX_CONTROLLERS; chan++) {
-        u32 chanBit = PAD_CHAN0_BIT >> chan;
-        
-        // Skip if not enabled
-        if (!(s_enabled_bits & chanBit)) {
-            continue;
-        }
-        
-        // Check if we need to open this gamepad
-        if (!s_gamepads[chan]) {
-            int numJoysticks = SDL_NumJoysticks();
-            if (chan < numJoysticks) {
-                if (SDL_IsGameController(chan)) {
-                    OpenGamepad(chan);
-                }
-            }
-        }
-    }
+#if OS_BUILD_VERSION >= 20011002L
+	if (ResettingChan != 0x20) {
+		chanBit = PAD_CHAN0_BIT >> ResettingChan;
+		ResettingBits &= ~chanBit;
+		memset(&Origin[ResettingChan], 0, sizeof(PADStatus));
+		SIGetTypeAsync(ResettingChan, PADTypeAndStatusCallback);
+	}
+#else
+	if ((ResettingChan >= 0) && (ResettingChan < 4)) {
+		memset(&Origin[ResettingChan], 0, sizeof(PADStatus));
+		Type[ResettingChan]    = 0;
+		PADType[ResettingChan] = 0;
+		rc                     = SITransfer(ResettingChan, &CmdTypeAndStatus, 1, &Type[ResettingChan], 3, PADResetCallback, 0);
+		chanBit                = PAD_CHAN0_BIT >> ResettingChan;
+		ResettingBits &= ~chanBit;
+		if (!rc) {
+			ResettingChan = 0x20;
+			ResettingBits = 0;
+		}
+	}
+	return rc;
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         UpdateOrigin
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000060 (Matching by size)
+ */
+static void PADEnable(s32 chan)
+{
+	u32 cmd;
+	u32 chanBit;
+	u32 data[2];
 
-  Description:  Update origin/calibration data for the specified channel.
-                Adjusts origin based on analog mode (some modes disable
-                certain analog inputs by masking them).
-                
-                On GC/Wii: Controller sends origin data in response to
-                           CMD_READ_ORIGIN command
-                On PC: We track origin in software for calibration
-
-  Arguments:    chan    Channel number to update
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-static void UpdateOrigin(s32 chan) {
-    PADStatus* origin = &s_origin[chan];
-    
-    // Adjust for analog mode - mask out unused analog inputs
-    // This matches the original behavior where different modes
-    // provide different precision for different inputs
-    switch (s_analog_mode & 7) {
-        case PAD_MODE_0:
-        case PAD_MODE_5:
-        case PAD_MODE_6:
-        case PAD_MODE_7:
-            // These modes reduce precision on triggers and analog buttons
-            origin->triggerLeft  &= ~15;
-            origin->triggerRight &= ~15;
-            origin->analogA      &= ~15;
-            origin->analogB      &= ~15;
-            break;
-        case PAD_MODE_1:
-            // Reduced precision on C-stick and analog buttons
-            origin->substickX    &= ~15;
-            origin->substickY    &= ~15;
-            origin->analogA      &= ~15;
-            origin->analogB      &= ~15;
-            break;
-        case PAD_MODE_2:
-            // Reduced precision on C-stick and triggers
-            origin->substickX    &= ~15;
-            origin->substickY    &= ~15;
-            origin->triggerLeft  &= ~15;
-            origin->triggerRight &= ~15;
-            break;
-        case PAD_MODE_3:
-        case PAD_MODE_4:
-            // Full precision mode (default)
-            break;
-    }
+	chanBit = PAD_CHAN0_BIT >> chan;
+	EnabledBits |= chanBit;
+	SIGetResponse(chan, &data);
+	OSAssertLine(0x1C4, !(Type[chan] & RES_WIRELESS_LITE));
+	cmd = (AnalogMode | 0x400000);
+	SISetCommand(chan, cmd);
+	SIEnablePolling(EnabledBits);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ReadKeyboard
+#if OS_BUILD_VERSION >= 20011002L
+#else
 
-  Description:  Read keyboard input and convert to PADStatus.
-                This is a PC-specific extension not present in original.
-                Allows Player 1 to play without a gamepad.
-                
-                On GC/Wii: N/A (no keyboard support)
-                On PC: Maps keyboard to controller buttons/sticks
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000C0
+ */
+static void ProbeWireless(s32 chan)
+{
+	u32 cmd;
+	u32 chanBit;
+	u32 type;
+	u32 data[2];
 
-  Arguments:    status    Pointer to PADStatus to fill
-
-  Returns:      None (status filled with keyboard input or error)
- *---------------------------------------------------------------------------*/
-static void ReadKeyboard(PADStatus* status) {
-    if (!s_keyboard.enabled || !s_keyboard.keys) {
-        status->err = PAD_ERR_NO_CONTROLLER;
-        memset(status, 0, offsetof(PADStatus, err));
-        return;
-    }
-    
-    // Update keyboard state
-    SDL_PumpEvents();
-    s_keyboard.keys = SDL_GetKeyboardState(NULL);
-    
-    // Clear status
-    memset(status, 0, sizeof(PADStatus));
-    status->err = PAD_ERR_NONE;
-    
-    // Get configured key bindings
-    SDL_Scancode key_up = PADGetKeyboardBinding(PAD_BUTTON_UP);
-    SDL_Scancode key_down = PADGetKeyboardBinding(PAD_BUTTON_DOWN);
-    SDL_Scancode key_left = PADGetKeyboardBinding(PAD_BUTTON_LEFT);
-    SDL_Scancode key_right = PADGetKeyboardBinding(PAD_BUTTON_RIGHT);
-    
-    // D-pad buttons (also used for main stick)
-    if (s_keyboard.keys[key_left])  status->button |= PAD_BUTTON_LEFT;
-    if (s_keyboard.keys[key_right]) status->button |= PAD_BUTTON_RIGHT;
-    if (s_keyboard.keys[key_up])    status->button |= PAD_BUTTON_UP;
-    if (s_keyboard.keys[key_down])  status->button |= PAD_BUTTON_DOWN;
-    
-    // Face buttons
-    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_BUTTON_A)])     status->button |= PAD_BUTTON_A;
-    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_BUTTON_B)])     status->button |= PAD_BUTTON_B;
-    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_BUTTON_X)])     status->button |= PAD_BUTTON_X;
-    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_BUTTON_Y)])     status->button |= PAD_BUTTON_Y;
-    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_BUTTON_START)]) status->button |= PAD_BUTTON_START;
-    
-    // Triggers (digital buttons)
-    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_TRIGGER_Z)])     status->button |= PAD_TRIGGER_Z;
-    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_TRIGGER_L)])     status->button |= PAD_TRIGGER_L;
-    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_TRIGGER_R)])     status->button |= PAD_TRIGGER_R;
-    
-    // Main analog stick (digital simulation: -100 or +100)
-    // We use ±100 instead of ±127 to avoid triggering unintended actions
-    if (s_keyboard.keys[key_left])  status->stickX = -100;
-    if (s_keyboard.keys[key_right]) status->stickX = 100;
-    if (s_keyboard.keys[key_up])    status->stickY = 100;
-    if (s_keyboard.keys[key_down])  status->stickY = -100;
-    
-    // C-stick (digital simulation) - uses separate bindings
-    if (s_keyboard.keys[KEY_CLEFT])  status->substickX = -100;
-    if (s_keyboard.keys[KEY_CRIGHT]) status->substickX = 100;
-    if (s_keyboard.keys[KEY_CUP])    status->substickY = 100;
-    if (s_keyboard.keys[KEY_CDOWN])  status->substickY = -100;
-    
-    // Triggers analog (digital: 0 or 255)
-    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_TRIGGER_L)]) status->triggerLeft = 255;
-    if (s_keyboard.keys[PADGetKeyboardBinding(PAD_TRIGGER_R)]) status->triggerRight = 255;
-    
-    // Analog A/B not supported on keyboard
-    status->analogA = 0;
-    status->analogB = 0;
+	chanBit = PAD_CHAN0_BIT >> chan;
+	EnabledBits |= chanBit;
+	ProbingBits |= chanBit;
+	SIGetResponse(chan, &data);
+	type = Type[chan];
+	if (!(type & 0x02000000)) {
+		cmd = (chan << 0xE) | 0x4D0000 | (__OSWirelessPadFixMode & 0x3FFF);
+	} else if (((type & 0xC0000) + 0xFFFC0000) == 0) {
+		cmd = 0x500000;
+	} else {
+		cmd = (type & 0x70000) + 0x440000;
+	}
+	SISetCommand(chan, cmd);
+	SIEnablePolling(EnabledBits);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PadAxisToStickSafe
+/**
+ * This was moved to later in this file.
+ */
+static void PADProbeCallback(s32 chan, u32 error, OSContext* context)
+{
+	OSAssertLine(0x1F5, 0 <= ResettingChan && ResettingChan < SI_MAX_CHAN);
+	OSAssertLine(0x1F6, chan == ResettingChan);
 
-  Description:  Convert SDL axis range (-32768..32767) to PAD stick range.
-                Uses widened math for inversion to avoid -32768 overflow.
- *---------------------------------------------------------------------------*/
-static s8 PadAxisToStickSafe(s16 axis, BOOL invert) {
-    s32 value = (s32)axis;
-    if (invert) {
-        value = -value;
-        // -(-32768) produces 32768 in widened math; clamp before downscale.
-        if (value > 32767) {
-            value = 32767;
-        }
-    }
-
-    // Keep historical PAD range semantics after scaling.
-    return (s8)(value / 256);
+	if (!(error & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_NO_RESPONSE | SI_ERROR_COLLISION))) {
+		u32 type = Type[chan];
+		if (!(type & 0x80000) && !(type & 0x40000)) {
+			PADEnable(ResettingChan);
+			WaitingBits |= PAD_CHAN0_BIT >> ResettingChan;
+		} else {
+			ProbeWireless(ResettingChan);
+		}
+	}
+	DoReset();
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ReadGamepad
+#endif
 
-  Description:  Read gamepad input via SDL2 and convert to PADStatus.
-                This replaces reading SI response data on original hardware.
-                
-                On GC/Wii: Read 8-byte packet from SI response buffer
-                On PC: Query SDL2 for button/axis state
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000098 (OS_BUILD_VERSION >= 20011002L) (Matching by size)
+ * @note UNUSED Size: 0000C0                                 (Matching by size)
+ */
+static void PADDisable(s32 chan)
+{
+	int enabled;
+	u32 chanBit;
 
-  Arguments:    chan      Channel number to read
-                status    Pointer to PADStatus to fill
-
-  Returns:      None (status filled with gamepad input or error)
- *---------------------------------------------------------------------------*/
-static void ReadGamepad(s32 chan, PADStatus* status) {
-    SDL_GameController* pad = s_gamepads[chan];
-    
-    if (!pad) {
-        status->err = PAD_ERR_NO_CONTROLLER;
-        memset(status, 0, offsetof(PADStatus, err));
-        return;
-    }
-    
-    // Clear status
-    memset(status, 0, sizeof(PADStatus));
-    status->err = PAD_ERR_NONE;
-    
-    // Read digital buttons (SDL_GameControllerGetButton returns 0 or 1)
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_LEFT))
-        status->button |= PAD_BUTTON_LEFT;
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT))
-        status->button |= PAD_BUTTON_RIGHT;
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_UP))
-        status->button |= PAD_BUTTON_UP;
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_DOWN))
-        status->button |= PAD_BUTTON_DOWN;
-    
-    // Face buttons (SDL layout: A=cross, B=circle on PlayStation)
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_A))
-        status->button |= PAD_BUTTON_A;
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_B))
-        status->button |= PAD_BUTTON_B;
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_X))
-        status->button |= PAD_BUTTON_X;
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_Y))
-        status->button |= PAD_BUTTON_Y;
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_START))
-        status->button |= PAD_BUTTON_START;
-    
-    // Shoulder buttons
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))
-        status->button |= PAD_TRIGGER_R;
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER))
-        status->button |= PAD_TRIGGER_L;
-    
-    // Z button (no direct equivalent - map to right stick press or back button)
-    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_RIGHTSTICK) ||
-        SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_BACK))
-        status->button |= PAD_TRIGGER_Z;
-    
-    // Read analog stick (SDL returns -32768 to 32767, convert to -128 to 127)
-    s16 axisX = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
-    s16 axisY = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
-    status->stickX = PadAxisToStickSafe(axisX, FALSE);
-    status->stickY = PadAxisToStickSafe(axisY, TRUE);  // Invert Y (SDL uses down=positive)
-    
-    // Read C-stick (right analog)
-    s16 cAxisX = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTX);
-    s16 cAxisY = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY);
-    status->substickX = PadAxisToStickSafe(cAxisX, FALSE);
-    status->substickY = PadAxisToStickSafe(cAxisY, TRUE);  // Invert Y
-    
-    // Read triggers (SDL returns 0-32767, convert to 0-255)
-    u16 trigL = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
-    u16 trigR = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
-    status->triggerLeft = (u8)(trigL / 128);
-    status->triggerRight = (u8)(trigR / 128);
-    
-    // Analog A/B not supported on modern controllers
-    status->analogA = 0;
-    status->analogB = 0;
-    
-    // Apply origin calibration (subtract baseline values)
-    PADStatus* origin = &s_origin[chan];
-    status->stickX -= origin->stickX;
-    status->stickY -= origin->stickY;
-    status->substickX -= origin->substickX;
-    status->substickY -= origin->substickY;
-    
-    // Clamp triggers to origin (prevent negative values)
-    if (status->triggerLeft > origin->triggerLeft) {
-        status->triggerLeft -= origin->triggerLeft;
-    } else {
-        status->triggerLeft = 0;
-    }
-    
-    if (status->triggerRight > origin->triggerRight) {
-        status->triggerRight -= origin->triggerRight;
-    } else {
-        status->triggerRight = 0;
-    }
+	enabled = OSDisableInterrupts();
+	chanBit = PAD_CHAN0_BIT >> chan;
+	SIDisablePolling(chanBit);
+	EnabledBits &= ~chanBit;
+	WaitingBits &= ~chanBit;
+	CheckingBits &= ~chanBit;
+#if OS_BUILD_VERSION >= 20011002L
+	PendingBits &= ~chanBit;
+	OSSetWirelessID(chan, 0);
+#else
+	ProbingBits &= ~chanBit;
+	SetWirelessID(chan, 0);
+#endif
+	OSRestoreInterrupts(enabled);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADInit
+/**
+ * @TODO: Documentation
+ */
+static void UpdateOrigin(s32 chan)
+{
+	PADStatus* origin;
+	u32 chanBit;
 
-  Description:  Initializes the PAD system. Must be called before any other
-                PAD functions. Initializes SDL2, enables all 4 channels, and
-                starts the reset sequence.
-                
-                On GC/Wii: Initializes SI hardware, sets sampling rate,
-                           registers reset/shutdown callbacks
-                On PC: Initializes SDL2 gamepad system, scans for controllers
+	chanBit = PAD_CHAN0_BIT >> chan;
+	origin  = &Origin[chan];
+	switch (AnalogMode & 0x00000700u) {
+	case 0x00000000u:
+	case 0x00000500u:
+	case 0x00000600u:
+	case 0x00000700u:
+	{
+		origin->triggerLeft &= ~15;
+		origin->triggerRight &= ~15;
+		origin->analogA &= ~15;
+		origin->analogB &= ~15;
+		break;
+	}
+	case 0x00000100u:
+	{
+		origin->substickX &= ~15;
+		origin->substickY &= ~15;
+		origin->analogA &= ~15;
+		origin->analogB &= ~15;
+		break;
+	}
+	case 0x00000200u:
+	{
+		origin->substickX &= ~15;
+		origin->substickY &= ~15;
+		origin->triggerLeft &= ~15;
+		origin->triggerRight &= ~15;
+		break;
+	}
+	case 0x00000300u:
+	{
+		break;
+	}
+	case 0x00000400u:
+	{
+		break;
+	}
+	}
 
-  Arguments:    None
+	origin->stickX -= 128;
+	origin->stickY -= 128;
+	origin->substickX -= 128;
+	origin->substickY -= 128;
 
-  Returns:      TRUE if initialization succeeded
-                FALSE if SDL2 failed to initialize
- *---------------------------------------------------------------------------*/
-BOOL PADInit(void) {
-    if (s_initialized) {
-        return TRUE;
-    }
-    
-    OSReport("PAD: Initializing controller subsystem...\n");
-    
-    // Initialize SDL
-    if (!InitSDL()) {
-        OSReport("PAD: Failed to initialize SDL\n");
-        return FALSE;
-    }
-    
-    // Clear state
-    memset(s_gamepads, 0, sizeof(s_gamepads));
-    memset(s_origin, 0, sizeof(s_origin));
-    s_enabled_bits = 0;
-    s_resetting_bits = 0;
-    s_waiting_bits = 0;
-    s_analog_mode = PAD_MODE_3;
-    s_sampling_callback = NULL;
-    
-    s_initialized = TRUE;
-    
-    // Reset all channels (equivalent to SIRefreshSamplingRate + PADReset in original)
-    return PADReset(PAD_CHAN0_BIT | PAD_CHAN1_BIT | PAD_CHAN2_BIT | PAD_CHAN3_BIT);
+#if OS_BUILD_VERSION >= 20011002L
+	if ((XPatchBits & chanBit) != 0 && origin->stickX > 64 && (SIGetType(chan) & 0xFFFF0000) == SI_GC_CONTROLLER)
+#else
+	if ((XPatchBits & chanBit) != 0 && origin->stickX > 64 && (Type[chan] & 0xFFFF0000) == SI_GC_CONTROLLER)
+#endif
+	{
+		origin->stickX = 0;
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADReset
-
-  Description:  Resets the specified game controllers. Clears origin data
-                and attempts to (re)open gamepads for the specified channels.
-                
-                On GC/Wii: Sends reset sequence via SI (type check, origin read)
-                On PC: Clears state and calls SDL_GameControllerOpen
-
-  Arguments:    mask    Bit mask of controllers to reset (PAD_CHANn_BIT)
-
-  Returns:      Always TRUE
- *---------------------------------------------------------------------------*/
-BOOL PADReset(u32 mask) {
-    PP_GUARD_RET(s_initialized, FALSE, "PADInit must be called first");
-    
-    BOOL enabled = OSDisableInterrupts();
-    
-    for (s32 chan = 0; chan < PAD_MAX_CONTROLLERS; chan++) {
-        u32 chanBit = PAD_CHAN0_BIT >> chan;
-        
-        if (mask & chanBit) {
-            // Enable this channel
-            s_enabled_bits |= chanBit;
-            s_resetting_bits |= chanBit;
-            
-            // Clear origin
-            memset(&s_origin[chan], 0, sizeof(PADStatus));
-            
-            // Try to open gamepad (skip Player 1 if keyboard fallback active)
-            if (!s_keyboard.enabled || chan != 0) {
-                OpenGamepad(chan);
-            }
-            
-            // Reset complete immediately (no async SI transfer on PC)
-            s_resetting_bits &= ~chanBit;
-        }
-    }
-    
-    OSRestoreInterrupts(enabled);
-    return TRUE;
+/**
+ * @TODO: Documentation
+ */
+static void PADOriginCallback(s32 chan, u32 error, OSContext* context)
+{
+	OSAssertLine(0x267, 0 <= ResettingChan && ResettingChan < SI_MAX_CHAN);
+	OSAssertLine(0x268, chan == ResettingChan);
+	if (!(error & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_NO_RESPONSE | SI_ERROR_COLLISION))) {
+		UpdateOrigin(ResettingChan);
+		PADEnable(ResettingChan);
+	}
+	DoReset();
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADRecalibrate
-
-  Description:  Recalibrates the specified game controllers. Resets the
-                origin/calibration data to recenter analog sticks and reset
-                trigger baselines.
-                
-                On GC/Wii: Sends CMD_CALIBRATE command via SI
-                On PC: Resets software origin values
-
-  Arguments:    mask    Bit mask of controllers to recalibrate (PAD_CHANn_BIT)
-
-  Returns:      Always TRUE
- *---------------------------------------------------------------------------*/
-BOOL PADRecalibrate(u32 mask) {
-    PP_GUARD_RET(s_initialized, FALSE, "PADInit must be called first");
-    
-    // For PC implementation, recalibration just resets the origin.
-    // In original hardware, this sends a calibration command to the controller.
-    BOOL enabled = OSDisableInterrupts();
-    
-    for (s32 chan = 0; chan < PAD_MAX_CONTROLLERS; chan++) {
-        u32 chanBit = PAD_CHAN0_BIT >> chan;
-        
-        if (mask & chanBit) {
-            memset(&s_origin[chan], 0, sizeof(PADStatus));
-            UpdateOrigin(chan);
-        }
-    }
-    
-    OSRestoreInterrupts(enabled);
-    return TRUE;
+/**
+ * @TODO: Documentation
+ */
+static void PADOriginUpdateCallback(s32 chan, u32 error, OSContext* context)
+{
+	OSAssertLine(0x285, 0 <= chan && chan < SI_MAX_CHAN);
+	if (!(EnabledBits & (PAD_CHAN0_BIT >> chan)))
+		return;
+	if (!(error & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_NO_RESPONSE | SI_ERROR_COLLISION)))
+		UpdateOrigin(chan);
+#if OS_BUILD_VERSION >= 20011002L
+	if ((error & SI_ERROR_NO_RESPONSE))
+		PADDisable(chan);
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADRead
+#if OS_BUILD_VERSION >= 20011002L
 
-  Description:  Reads current status of all game controllers. This is the main
-                function called every frame to get controller input.
-                
-                On GC/Wii: Reads data from SI response buffer (filled by
-                           hardware DMA during automatic polling)
-                On PC: Manually queries SDL2 for each controller's state
+/**
+ * This was moved from earlier in this file.
+ */
+static void PADProbeCallback(s32 chan, u32 error, OSContext* context)
+{
+	OSAssertLine(0x1F5, 0 <= ResettingChan && ResettingChan < SI_MAX_CHAN);
+	OSAssertLine(0x1F6, chan == ResettingChan);
 
-  Arguments:    status    Array of PAD_MAX_CONTROLLERS PADStatus structures
-                          to fill in. Each err field indicates validity.
-
-  Returns:      Bit mask of controllers that support rumble motors
-                (PAD_CHANn_BIT for channels with rumble support)
- *---------------------------------------------------------------------------*/
-u32 PADRead(PADStatus* status) {
-    if (!status) {
-        PP_GUARD_NOTIFY("status != NULL", "null pointer");
-        return 0;
-    }
-
-    if (!s_initialized) {
-        // Preserve historical behavior: return a "not ready" array if PADInit was not called.
-        for (s32 i = 0; i < PAD_MAX_CONTROLLERS; i++) {
-            status[i].err = PAD_ERR_NOT_READY;
-            memset(&status[i], 0, offsetof(PADStatus, err));
-        }
-        PP_GUARD_NOTIFY("s_initialized", "PADInit must be called first");
-        return 0;
-    }
-    
-    // Pump SDL events (updates gamepad state)
-    if (s_sdl_initialized) {
-        SDL_PumpEvents();
-    }
-    
-    // Scan for new gamepads (hot-plug support)
-    ScanGamepads();
-    
-    // Call sampling callback if registered
-    if (s_sampling_callback) {
-        s_sampling_callback();
-    }
-    
-    u32 motor = 0;  // Bitmask of controllers with rumble support
-    
-    // Read each controller
-    for (s32 chan = 0; chan < PAD_MAX_CONTROLLERS; chan++) {
-        PADStatus* st = &status[chan];
-        u32 chanBit = PAD_CHAN0_BIT >> chan;
-        
-        // Check if channel is enabled
-        if (!(s_enabled_bits & chanBit)) {
-            st->err = PAD_ERR_NO_CONTROLLER;
-            memset(st, 0, offsetof(PADStatus, err));
-            continue;
-        }
-        
-        // Check if resetting
-        if (s_resetting_bits & chanBit) {
-            st->err = PAD_ERR_NOT_READY;
-            memset(st, 0, offsetof(PADStatus, err));
-            continue;
-        }
-        
-        // Read input (keyboard for chan 0 if no gamepad, else SDL2 gamepad)
-        if (chan == 0 && s_keyboard.enabled && !s_gamepads[0]) {
-            ReadKeyboard(st);
-        } else {
-            ReadGamepad(chan, st);
-        }
-        
-        // Check if controller supports rumble
-        if (s_gamepads[chan]) {
-            SDL_Joystick* joy = SDL_GameControllerGetJoystick(s_gamepads[chan]);
-            if (joy && SDL_JoystickIsHaptic(joy)) {
-                motor |= chanBit;
-            }
-        }
-    }
-    
-    return motor;
+	if (!(error & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_NO_RESPONSE | SI_ERROR_COLLISION))) {
+		PADEnable(ResettingChan);
+		WaitingBits |= PAD_CHAN0_BIT >> ResettingChan;
+	}
+	DoReset();
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADControlMotor
+/**
+ * @TODO: Documentation
+ */
+static void PADTypeAndStatusCallback(s32 chan, u32 type)
+{
+	u32 chanBit;
+	u32 recalibrate;
+	BOOL rc;
+	u32 error;
 
-  Description:  Controls the rumble motor for a single controller.
-                
-                On GC/Wii: Sends motor control bits via SI command packet
-                           (2 bits for dual motors on some controllers)
-                On PC: Uses SDL2 Haptic API for rumble effect
+	rc          = TRUE;
+	chanBit     = PAD_CHAN0_BIT >> ResettingChan;
+	recalibrate = RecalibrateBits & chanBit;
+	RecalibrateBits &= ~chanBit;
 
-  Arguments:    chan      Channel number (PAD_CHANn)
-                command   Motor command:
-                          PAD_MOTOR_STOP - Stop rumble
-                          PAD_MOTOR_RUMBLE - Start rumble
-                          PAD_MOTOR_STOP_HARD - Hard stop (same as STOP on PC)
+	if (type & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_COLLISION | SI_ERROR_NO_RESPONSE)) {
+		DoReset();
+		return;
+	}
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void PADControlMotor(s32 chan, u32 command) {
-    PP_GUARD_VOID(s_initialized, "PADInit must be called first");
-    PP_GUARD_VOID(chan >= 0 && chan < PAD_MAX_CONTROLLERS, "invalid channel");
-    
-    SDL_GameController* pad = s_gamepads[chan];
-    if (!pad) {
-        return;
-    }
-    
-    SDL_Joystick* joy = SDL_GameControllerGetJoystick(pad);
-    if (!joy || !SDL_JoystickIsHaptic(joy)) {
-        return;
-    }
-    
-    // Open haptic device temporarily
-    SDL_Haptic* haptic = SDL_HapticOpenFromJoystick(joy);
-    if (!haptic) {
-        return;
-    }
-    
-    if (command == PAD_MOTOR_RUMBLE) {
-        // Start rumble (intensity from config, 1000ms duration)
-        if (SDL_HapticRumbleSupported(haptic)) {
-            SDL_HapticRumbleInit(haptic);
-            float intensity = PADGetRumbleIntensity();
-            SDL_HapticRumblePlay(haptic, intensity, 1000);
-        }
-    } else {
-        // Stop rumble (PAD_MOTOR_STOP or PAD_MOTOR_STOP_HARD)
-        SDL_HapticRumbleStop(haptic);
-    }
-    
-    SDL_HapticClose(haptic);
+	type &= ~0xff;
+	Type[ResettingChan] = type;
+
+	if ((type & SI_TYPE_MASK) != SI_TYPE_GC || !(type & SI_GC_STANDARD)) {
+		DoReset();
+		return;
+	}
+
+	if (Spec < PAD_SPEC_2) {
+		PADEnable(ResettingChan);
+		DoReset();
+		return;
+	}
+
+	if (!(type & SI_GC_WIRELESS) || (type & SI_WIRELESS_IR)) {
+		if (recalibrate) {
+			rc = SITransfer(ResettingChan, &CmdCalibrate, 3, &Origin[ResettingChan], 10, PADOriginCallback, 0);
+		} else {
+			rc = SITransfer(ResettingChan, &CmdReadOrigin, 1, &Origin[ResettingChan], 10, PADOriginCallback, 0);
+		}
+	} else if ((((type & SI_WIRELESS_FIX_ID) != 0) && ((type & SI_WIRELESS_CONT_MASK) == 0)) && ((type & SI_WIRELESS_LITE) == 0)) {
+		if (type & SI_WIRELESS_RECEIVED) {
+			rc = SITransfer(ResettingChan, &CmdReadOrigin, 1, &Origin[ResettingChan], 10, PADOriginCallback, 0);
+		} else {
+			rc = SITransfer(ResettingChan, &CmdProbeDevice[ResettingChan], 3, &Origin[ResettingChan], 8, PADProbeCallback, 0);
+		}
+	}
+
+	if (!rc) {
+		PendingBits |= chanBit;
+		DoReset();
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADControlAllMotors
+/**
+ * This was moved from later in this file
+ */
+static void PADReceiveCheckCallback(s32 chan, u32 type)
+{
+	u32 error;
+	u32 chanBit;
 
-  Description:  Controls rumble motors for all controllers simultaneously.
-                More efficient than calling PADControlMotor 4 times.
-                
-                On GC/Wii: Batches SI commands for all channels
-                On PC: Calls PADControlMotor for each channel
+	chanBit = PAD_CHAN0_BIT >> chan;
 
-  Arguments:    commandArray    Array of PAD_MAX_CONTROLLERS motor commands
+	if (!(EnabledBits & chanBit))
+		return;
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void PADControlAllMotors(const u32* commandArray) {
-    PP_GUARD_VOID(s_initialized, "PADInit must be called first");
-    PP_GUARD_VOID(commandArray != NULL, "null pointer");
-    
-    for (s32 chan = 0; chan < PAD_MAX_CONTROLLERS; chan++) {
-        PADControlMotor(chan, commandArray[chan]);
-    }
+	error = type & 0xff;
+	type &= ~0xff;
+
+	WaitingBits &= ~chanBit;
+	CheckingBits &= ~chanBit;
+
+	if (!(error & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_NO_RESPONSE | SI_ERROR_COLLISION)) && (type & SI_GC_WIRELESS)
+	    && (type & SI_WIRELESS_FIX_ID) && (type & SI_WIRELESS_RECEIVED) && !(type & SI_WIRELESS_IR)
+	    && (type & SI_WIRELESS_CONT_MASK) == SI_WIRELESS_CONT && !(type & SI_WIRELESS_LITE)) {
+		SITransfer(chan, &CmdReadOrigin, 1, &Origin[chan], 10, PADOriginUpdateCallback, 0);
+	} else {
+		PADDisable(chan);
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADGetType
+#else
 
-  Description:  Queries game pad type information for a channel.
-                
-                On GC/Wii: Returns SI type register value (identifies
-                           controller model, wireless/wired, motor support)
-                On PC: Returns generic controller type (always same value)
+/**
+ * @TODO: Documentation
+ */
+static void PADFixCallback(s32 unused, u32 error, OSContext* context)
+{
+	u32 type;
+	u32 id;
+	u32 frame;
 
-  Arguments:    chan    Channel number (PAD_CHANn)
-                type    Pointer to receive type information
+	OSAssertLine(0x2A9, 0 <= ResettingChan && ResettingChan < SI_MAX_CHAN);
 
-  Returns:      TRUE if controller is connected and ready
-                FALSE if not connected or resetting
- *---------------------------------------------------------------------------*/
-BOOL PADGetType(s32 chan, u32* type) {
-    PP_GUARD_RET(s_initialized, FALSE, "PADInit must be called first");
-    PP_GUARD_RET(chan >= 0 && chan < PAD_MAX_CONTROLLERS, FALSE, "invalid channel");
-    PP_GUARD_PTR_RET(type, FALSE);
-    
-    u32 chanBit = PAD_CHAN0_BIT >> chan;
-    
-    // Check if enabled and ready
-    if (!(s_enabled_bits & chanBit) || (s_resetting_bits & chanBit)) {
-        return FALSE;
-    }
-    
-    // For PC implementation, return a generic controller type
-    // Original would return SI type bits identifying exact hardware
-    *type = 0x09000000;  // Standard controller type
-    return TRUE;
+	if (!(error & 0xF)) {
+		type = Type[ResettingChan];
+		id   = (GetWirelessID(ResettingChan) << 8);
+		if (!(type & 0x100000) || ((id & 0xCFFF00u) != (type & 0xCFFF00))) {
+			DoReset();
+			return;
+		}
+		if ((type & 0x40000000) && !(type & 0x80000) && !(type & 0x40000)) {
+			SITransfer(ResettingChan, &CmdReadOrigin, 1, &Origin[ResettingChan], 0xA, PADOriginCallback, 0);
+			return;
+		}
+		frame = (ResettingChan << 0x16) | 0x4D000000 | (__OSWirelessPadFixMode << 8) & 0x3FFF00u;
+		SITransfer(ResettingChan, &CmdProbeDevice[ResettingChan], 3, &Origin[ResettingChan], 8, PADProbeCallback, 0);
+		return;
+	}
+	DoReset();
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADSync
+/**
+ * @TODO: Documentation
+ */
+static void PADResetCallback(s32 unused, u32 error, OSContext* context)
+{
+	u32 type;
+	u32 id;
+	u32 recalibrate;
+	u32 chanBit;
+	int fix;
 
-  Description:  Checks if PADInit() or PADReset() has completed the reset
-                sequence. Used to wait for controllers to be ready.
-                
-                On GC/Wii: Waits for SI transfers to complete
-                On PC: Checks if any channels are resetting
+	OSAssertLine(0x2E9, 0 <= ResettingChan && ResettingChan < SI_MAX_CHAN);
 
-  Arguments:    None
+	if (error & 0xF) {
+		Type[ResettingChan] = 0;
+	}
 
-  Returns:      TRUE if no reset operation is in progress
-                FALSE if still resetting
- *---------------------------------------------------------------------------*/
-BOOL PADSync(void) {
-    return (s_resetting_bits == 0);
+	PADType[ResettingChan] = type = Type[ResettingChan];
+	chanBit                       = PAD_CHAN0_BIT >> ResettingChan;
+	recalibrate                   = RecalibrateBits & chanBit;
+	RecalibrateBits &= ~chanBit;
+	fix = __PADFixBits & chanBit;
+	__PADFixBits &= ~chanBit;
+	if ((error & 0xF) || (((type & 0x18000000) + 0xF8000000) != 0)) {
+		SetWirelessID(ResettingChan, 0);
+		DoReset();
+		return;
+	}
+	if (Spec < 2) {
+		PADEnable(ResettingChan);
+		DoReset();
+		return;
+	}
+	if (!(type & 0x80000000) || (type & 0x04000000)) {
+		SetWirelessID(ResettingChan, 0);
+		if (!(type & 0x01000000)) {
+			DoReset();
+			return;
+		}
+		if (recalibrate != 0) {
+			SITransfer(ResettingChan, &CmdCalibrate, 3, &Origin[ResettingChan], 0xA, PADOriginCallback, 0);
+			return;
+		}
+		SITransfer(ResettingChan, &CmdReadOrigin, 1, &Origin[ResettingChan], 0xA, PADOriginCallback, 0);
+		return;
+	}
+	id = (GetWirelessID(ResettingChan) << 8);
+	if ((fix != 0) && (id & 0x100000)) {
+		CmdFixDevice[ResettingChan] = (id & 0xCFFF00) | 0x4E000000 | 0x100000;
+		SITransfer(ResettingChan, &CmdFixDevice[ResettingChan], 3, &Type[ResettingChan], 3, PADFixCallback, 0);
+		return;
+	}
+	if (type & 0x100000) {
+		if ((id & 0xCFFF00) != (type & 0xCFFF00)) {
+			if (!(id & 0x100000)) {
+				id = (type & 0xCFFF00);
+				id |= 0x100000;
+				SetWirelessID(ResettingChan, (u16)(id >> 8) & 0xFFFFFF);
+			}
+			CmdFixDevice[ResettingChan] = id | 0x4E000000;
+			SITransfer(ResettingChan, &CmdFixDevice[ResettingChan], 3, &Type[ResettingChan], 3, PADFixCallback, 0);
+			return;
+		}
+		if ((type & 0x40000000) && !(type & 0x80000) && !(type & 0x40000)) {
+			SITransfer(ResettingChan, &CmdReadOrigin, 1, &Origin[ResettingChan], 0xA, PADOriginCallback, 0);
+			return;
+		}
+		SITransfer(ResettingChan, &CmdProbeDevice[ResettingChan], 3, &Origin[ResettingChan], 8, PADProbeCallback, 0);
+		return;
+	}
+	if (type & 0x40000000) {
+		u32 id = (type & 0xCFFF00);
+		id |= 0x100000;
+		SetWirelessID(ResettingChan, (u16)(id >> 8) & 0xFFFFFF);
+		CmdFixDevice[ResettingChan] = id | 0x4E000000;
+		SITransfer(ResettingChan, &CmdFixDevice[ResettingChan], 3, &Type[ResettingChan], 3, PADFixCallback, 0);
+		return;
+	}
+	SetWirelessID(ResettingChan, 0);
+	ProbeWireless(ResettingChan);
+	DoReset();
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADSetAnalogMode
+#endif
 
-  Description:  Sets the analog mode for all controllers. Different modes
-                provide different precision for different analog inputs.
-                
-                On GC/Wii: Sends mode command via SI, changes data packet format
-                On PC: Changes how we interpret/clamp analog values
+/**
+ * @TODO: Documentation
+ */
+BOOL PADReset(u32 mask)
+{
+	BOOL enabled;
+#if OS_BUILD_VERSION >= 20011002L
+#if OS_BUILD_VERSION >= 20011112L
+	u32 disabledBits;
+#endif
+#else
+	BOOL rc = FALSE;
+#endif
 
-  Arguments:    mode    Analog mode (0-7)
-                        PAD_MODE_3 (default): Full stick + triggers, no analog A/B
+	OSAssertMsgLine(0x392, !(mask & 0x0FFFFFFF), "PADReset(): invalid mask");
+	enabled = OSDisableInterrupts();
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void PADSetAnalogMode(u32 mode) {
-    PP_GUARD_VOID(mode < 8, "invalid analog mode");
-    
-    BOOL enabled = OSDisableInterrupts();
-    s_analog_mode = mode;
-    OSRestoreInterrupts(enabled);
+#if OS_BUILD_VERSION >= 20011002L
+	mask |= PendingBits;
+	PendingBits = 0;
+	mask &= ~(WaitingBits | CheckingBits);
+	ResettingBits |= mask;
+#if OS_BUILD_VERSION >= 20011112L
+	disabledBits = ResettingBits & EnabledBits;
+#endif
+	EnabledBits &= ~mask;
+#else
+	mask = mask & ~(CheckingBits | (ProbingBits | WaitingBits));
+	ResettingBits |= mask;
+	EnabledBits &= ~mask;
+	WaitingBits &= ~mask;
+#endif
+
+	if (Spec == PAD_SPEC_4) {
+		RecalibrateBits |= mask;
+	}
+
+#if OS_BUILD_VERSION >= 20011112L
+	SIDisablePolling(disabledBits);
+	if (ResettingChan == 0x20) {
+		DoReset();
+	}
+#else
+	SIDisablePolling(ResettingBits);
+	if (ResettingChan == 0x20) {
+#if OS_BUILD_VERSION >= 20011002L
+		DoReset();
+#else
+		rc = DoReset();
+#endif
+	}
+#endif
+
+	OSRestoreInterrupts(enabled);
+
+#if OS_BUILD_VERSION >= 20011002L
+	return TRUE;
+#else
+	return rc;
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADSetSamplingRate
+/**
+ * @TODO: Documentation
+ */
+BOOL PADRecalibrate(u32 mask)
+{
+	BOOL enabled;
+#if OS_BUILD_VERSION >= 20011002L
+#if OS_BUILD_VERSION >= 20011112L
+	u32 disabledBits;
+#endif
+#else
+	BOOL rc = FALSE;
+#endif
 
-  Description:  Sets the controller sampling rate in milliseconds.
-                
-                On GC/Wii: Configures SI hardware polling rate (affects VI timing)
-                On PC: No-op - sampling rate is tied to PADRead() call frequency
-                
-                This function exists for API compatibility but has no effect
-                on PC. Games should call PADRead() once per frame.
+	OSAssertMsgLine(0x3BD, !(mask & 0x0FFFFFFF), "PADRecalibrate(): invalid mask");
+	enabled = OSDisableInterrupts();
 
-  Arguments:    msec    Desired sampling rate in milliseconds (ignored on PC)
+#if OS_BUILD_VERSION >= 20011002L
+	mask |= PendingBits;
+	PendingBits = 0;
+	mask &= ~(WaitingBits | CheckingBits);
+	ResettingBits |= mask;
+#if OS_BUILD_VERSION >= 20011112L
+	disabledBits = ResettingBits & EnabledBits;
+#endif
+#else
+	mask &= ~(CheckingBits | (ProbingBits | WaitingBits));
+	ResettingBits |= mask;
+#endif
+	EnabledBits &= ~mask;
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void PADSetSamplingRate(u32 msec) {
-    (void)msec;
-    // No-op on PC - sampling rate tied to PADRead() calls
-    // Original would configure SI SIPOLL register
+#if OS_BUILD_VERSION >= 20011002L
+	if (!(GameChoice & 0x40)) {
+		RecalibrateBits |= mask;
+	}
+#if OS_BUILD_VERSION >= 20011112L
+	SIDisablePolling(disabledBits);
+#else
+	SIDisablePolling(ResettingBits);
+#endif
+#else
+	RecalibrateBits |= mask;
+	SIDisablePolling(ResettingBits);
+#endif
+
+	if (ResettingChan == 32) {
+#if OS_BUILD_VERSION >= 20011002L
+		DoReset();
+#else
+		rc = DoReset();
+#endif
+	}
+
+	OSRestoreInterrupts(enabled);
+
+#if OS_BUILD_VERSION >= 20011002L
+	return TRUE;
+#else
+	return rc;
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADSetSpec
+/**
+ * @TODO: Documentation
+ */
+BOOL PADInit(void)
+{
+	s32 chan;
+	OSTime time;
 
-  Description:  Set controller specification/version.
+#if OS_BUILD_VERSION >= 20011002L
+	if (Initialized) {
+		return TRUE;
+	} else
+#else
+	if (!Initialized)
+#endif
+	{
+		if (__PADSpec) {
+			PADSetSpec(__PADSpec);
+		}
 
-  Arguments:    spec  Controller spec
+#if OS_BUILD_VERSION >= 20011217L
+		Initialized = TRUE;
+#endif
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void PADSetSpec(u32 spec) {
-    (void)spec;
-    /* SDL2 handles all controller types - no spec needed */
+#if OS_BUILD_VERSION >= 20011002L
+		if (__PADFixBits != 0)
+#else
+		if (__PADFixBits == -1)
+#endif
+		{
+			time = OSGetTime();
+			__OSWirelessPadFixMode
+			    = (u16)((((time) & 0xffff) + ((time >> 16) & 0xffff) + ((time >> 32) & 0xffff) + ((time >> 48) & 0xffff)) & 0x3fffu);
+#if OS_BUILD_VERSION >= 20011002L
+			RecalibrateBits = PAD_CHAN0_BIT | PAD_CHAN1_BIT | PAD_CHAN2_BIT | PAD_CHAN3_BIT;
+#endif
+		}
+
+		for (chan = 0; chan < SI_MAX_CHAN; ++chan) {
+			CmdProbeDevice[chan] = (0x4d << 24) | (chan << 22) | ((__OSWirelessPadFixMode & 0x3fff) << 8);
+		}
+
+#if OS_BUILD_VERSION >= 20011217L
+		SIRefreshSamplingRate();
+#else
+		Initialized = TRUE;
+		PADSetSamplingRate(0);
+#endif
+		OSRegisterResetFunction(&ResetFunctionInfo);
+	}
+	return PADReset(PAD_CHAN0_BIT | PAD_CHAN1_BIT | PAD_CHAN2_BIT | PAD_CHAN3_BIT);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PADSetSamplingCallback
+#if OS_BUILD_VERSION >= 20011002L
+#else
 
-  Description:  Installs a callback function that is called during PADRead()
-                when controller data is sampled. Useful for custom input
-                processing or recording.
-                
-                On GC/Wii: Called during SI polling interrupt
-                On PC: Called directly in PADRead()
+/**
+ * This was moved to earlier in this file
+ */
+static void PADReceiveCheckCallback(s32 chan, u32 error, OSContext*)
+{
+	u32 type;
+	u32 chanBit;
 
-  Arguments:    callback    Callback function pointer, or NULL to remove
+	type    = Type[chan];
+	chanBit = PAD_CHAN0_BIT >> chan;
 
-  Returns:      Previous callback function
- *---------------------------------------------------------------------------*/
-PADSamplingCallback PADSetSamplingCallback(PADSamplingCallback callback) {
-    PADSamplingCallback prev = s_sampling_callback;
-    s_sampling_callback = callback;
-    return prev;
+	WaitingBits &= ~chanBit;
+	CheckingBits &= ~chanBit;
+
+	if (EnabledBits & chanBit) {
+		if (!(error & 0xF) && (type & 0x80000000) && (type & 0x02000000) && (type & 0x40000000) && !(type & 0x04000000)) {
+			SITransfer(chan, &CmdReadOrigin, 1, &Origin[chan], 0xA, PADOriginUpdateCallback, 0);
+			return;
+		}
+		PADDisable(chan);
+	}
 }
+
+#endif
+
+/**
+ * @TODO: Documentation
+ */
+u32 PADRead(PADStatus* status)
+{
+	BOOL enabled;
+	s32 chan;
+	u32 data[2];
+	u32 chanBit;
+	u32 sr;
+	int chanShift;
+	u32 motor;
+
+#if OS_BUILD_VERSION >= 20011002L
+	enabled = OSDisableInterrupts();
+#endif
+
+	motor = 0;
+
+	for (chan = 0; chan < SI_MAX_CHAN; chan++, status++) {
+		chanBit   = PAD_CHAN0_BIT >> chan;
+		chanShift = 8 * (SI_MAX_CHAN - 1 - chan);
+
+#if OS_BUILD_VERSION >= 20011002L
+		if (PendingBits & chanBit) {
+			PADReset(0);
+			status->err = PAD_ERR_NOT_READY;
+			memset(status, 0, offsetof(PADStatus, err));
+			continue;
+		}
+#endif
+
+		if ((ResettingBits & chanBit) || ResettingChan == chan) {
+			status->err = PAD_ERR_NOT_READY;
+			memset(status, 0, offsetof(PADStatus, err));
+			continue;
+		}
+
+		if (!(EnabledBits & chanBit)) {
+			status->err = PAD_ERR_NO_CONTROLLER;
+			memset(status, 0, offsetof(PADStatus, err));
+			continue;
+		}
+
+#if OS_BUILD_VERSION >= 20011002L
+		if (SIIsChanBusy(chan)) {
+			status->err = PAD_ERR_TRANSFER;
+			memset(status, 0, offsetof(PADStatus, err));
+			continue;
+		}
+#endif
+
+#if OS_BUILD_VERSION >= 20011112L
+		sr = SIGetStatus(chan);
+		if (sr & SI_ERROR_NO_RESPONSE)
+#elif OS_BUILD_VERSION >= 20011002L
+		sr = SIGetStatus();
+		if (sr & (SI_ERROR_NO_RESPONSE << chanShift))
+#else
+		sr = SIGetStatus(SI_MAX_CHAN - 1 - chan);
+		if (sr & (SI_ERROR_NO_RESPONSE << chanShift))
+#endif
+		{
+#if OS_BUILD_VERSION >= 20011002L
+			SIGetResponse(chan, data);
+#endif
+
+			if (WaitingBits & chanBit) {
+				status->err = PAD_ERR_NONE;
+				memset(status, 0, offsetof(PADStatus, err));
+
+				if (!(CheckingBits & chanBit)) {
+#if OS_BUILD_VERSION >= 20011002L // TODO
+					CheckingBits |= chanBit;
+					SIGetTypeAsync(chan, PADReceiveCheckCallback);
+#else
+					enabled = OSDisableInterrupts();
+					if (SITransfer(chan, &CmdTypeAndStatus, 1, &Type[chan], 3, PADReceiveCheckCallback, 0) != 0) {
+						CheckingBits |= chanBit;
+					}
+					OSRestoreInterrupts(enabled);
+#endif
+				}
+			} else {
+				PADDisable(chan);
+				status->err = PAD_ERR_NO_CONTROLLER;
+				memset(status, 0, offsetof(PADStatus, err));
+			}
+			continue;
+		}
+
+#if OS_BUILD_VERSION >= 20011002L
+		if (!(SIGetType(chan) & SI_GC_NOMOTOR))
+#else
+		if (!(ProbingBits & chanBit) && !(Type[chan] & SI_GC_NOMOTOR))
+#endif
+		{
+			motor |= chanBit;
+		}
+
+#if OS_BUILD_VERSION >= 20011002L
+		if (!SIGetResponse(chan, data))
+#else
+		if (!(sr & (0x20 << chanShift)))
+#endif
+		{
+			status->err = PAD_ERR_TRANSFER;
+			memset(status, 0, offsetof(PADStatus, err));
+			continue;
+		}
+#if OS_BUILD_VERSION >= 20011002L
+#else
+		SIGetResponse(chan, &data);
+#endif
+
+		if (data[0] & 0x80000000) {
+			status->err = PAD_ERR_TRANSFER;
+			memset(status, 0, offsetof(PADStatus, err));
+			continue;
+		}
+
+#if OS_BUILD_VERSION >= 20011002L
+#else
+		if (ProbingBits & chanBit) {
+			status->err = PAD_ERR_NO_CONTROLLER;
+			memset(status, 0, offsetof(PADStatus, err));
+			continue;
+		}
+#endif
+
+		MakeStatus(chan, status, data);
+
+		// Check and clear PAD_ORIGIN bit
+		if (status->button & 0x2000) {
+			status->err = PAD_ERR_TRANSFER;
+			memset(status, 0, offsetof(PADStatus, err));
+
+			// Get origin. It is okay if the following transfer fails
+			// since the PAD_ORIGIN bit remains until the read origin
+			// command complete.
+			SITransfer(chan, &CmdReadOrigin, 1, &Origin[chan], 10, PADOriginUpdateCallback, 0);
+			continue;
+		}
+
+		status->err = PAD_ERR_NONE;
+
+		// Clear PAD_INTERFERE bit
+		status->button &= ~0x0080;
+	}
+
+#if OS_BUILD_VERSION >= 20011002L
+	OSRestoreInterrupts(enabled);
+#endif
+	return motor;
+}
+
+/**
+ * This implementation was moved to SISetSamplingRate.c (`SISetSamplingRate`)
+ * @note UNUSED Size: 000020 (`OS_BUILD_VERSION >= 20011217L`) (Matching by size)
+ */
+void PADSetSamplingRate(u32 msec)
+{
+#if OS_BUILD_VERSION >= 20011217L
+	// It's unclear how this function was stubbed, but you're not supposed to use it anymore.
+	PPCHalt();
+#else
+	u32 tv;
+	XY* xy;
+#if OS_BUILD_VERSION >= 20011002L
+	BOOL enabled;
+	int test;
+#endif
+
+	OSAssertMsgLine(0x4CE, (msec <= 11), "PADSetSamplingRate(): out of rage (0 <= msec <= 11)");
+	if (msec > 11) {
+		msec = 11;
+	}
+#if OS_BUILD_VERSION >= 20011002L
+	enabled      = OSDisableInterrupts();
+	SamplingRate = msec;
+#endif
+
+	tv = VIGetTvFormat();
+	switch (tv) {
+	case VI_NTSC:
+	case VI_MPAL:
+	{
+		xy = XYNTSC;
+		break;
+	}
+	case VI_PAL:
+	{
+		xy = XYPAL;
+		break;
+	}
+	default:
+	{
+#if OS_BUILD_VERSION >= 20011112L
+		OSErrorLine(1174, "PADSetSamplingRate: unknown TV format");
+#elif OS_BUILD_VERSION >= 20011002L
+		OSErrorLine(1153, "PADSetSamplingRate: unknown TV format");
+#else
+		OSErrorLine(1296, "PADSetSamplingRate: unknown TV format");
+#endif
+		break;
+	}
+	}
+#if OS_BUILD_VERSION >= 20011002L
+	SISetXY((__VIRegs[VI_CLOCK_SEL] & 1 ? 2u : 1u) * xy[msec].line, xy[msec].count);
+#else
+	SISetXY(xy[msec].line, xy[msec].count);
+#endif
+	SIEnablePolling(EnabledBits);
+
+#if OS_BUILD_VERSION >= 20011002L
+	OSRestoreInterrupts(enabled);
+#endif
+#endif
+}
+
+#if OS_BUILD_VERSION >= 20011002L && OS_BUILD_VERSION < 20011217L
+/**
+ * This implementation was moved to SISamplingRate.c (`SIRefreshSamplingRate`)
+ */
+void __PADRefreshSamplingRate(void)
+{
+	PADSetSamplingRate(SamplingRate);
+}
+#endif
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000CC (OS_BUILD_VERSION <  20011002L) (Matching by size)
+ * @note UNUSED Size: 0000B8 (OS_BUILD_VERSION >= 20011002L) (Matching by size)
+ */
+void PADControlAllMotors(const u32* commandArray)
+{
+	BOOL enabled;
+	int chan;
+	u32 command;
+	BOOL commit;
+	u32 chanBit;
+
+	enabled = OSDisableInterrupts();
+	commit  = FALSE;
+
+	for (chan = 0; chan < SI_MAX_CHAN; chan++, commandArray++) {
+		chanBit = PAD_CHAN0_BIT >> chan;
+#if OS_BUILD_VERSION >= 20011002L
+		if ((EnabledBits & chanBit) && !(SIGetType(chan) & SI_GC_NOMOTOR))
+#else
+		if ((EnabledBits & chanBit) && !(ProbingBits & chanBit) && !(Type[chan] & SI_GC_NOMOTOR))
+#endif
+		{
+			command = *commandArray;
+			OSAssertMsgLine(0x545, !(command & 0xFFFFFFFC), "PADControlAllMotors(): invalid command");
+			if (Spec < PAD_SPEC_2 && command == PAD_MOTOR_STOP_HARD)
+				command = PAD_MOTOR_STOP;
+			SISetCommand(chan, (0x40 << 16) | AnalogMode | (command & (0x00000001 | 0x00000002)));
+			commit = TRUE;
+		}
+	}
+	if (commit)
+		SITransferCommands();
+	OSRestoreInterrupts(enabled);
+}
+
+/**
+ * @TODO: Documentation
+ */
+void PADControlMotor(s32 chan, u32 command)
+{
+	BOOL enabled;
+	u32 chanBit;
+
+	OSAssertMsgLine(0x568, !(command & 0xFFFFFFFC), "PADControlMotor(): invalid command");
+
+	enabled = OSDisableInterrupts();
+	chanBit = PAD_CHAN0_BIT >> chan;
+#if OS_BUILD_VERSION >= 20011002L
+	if ((EnabledBits & chanBit) && !(SIGetType(chan) & SI_GC_NOMOTOR))
+#else
+	if ((EnabledBits & chanBit) && !(ProbingBits & chanBit) && !(Type[chan] & SI_GC_NOMOTOR))
+#endif
+	{
+		if (Spec < PAD_SPEC_2 && command == PAD_MOTOR_STOP_HARD)
+			command = PAD_MOTOR_STOP;
+		SISetCommand(chan, (0x40 << 16) | AnalogMode | (command & (0x00000001 | 0x00000002)));
+		SITransferCommands();
+	}
+	OSRestoreInterrupts(enabled);
+}
+
+/**
+ * @TODO: Documentation
+ */
+void PADSetSpec(u32 spec)
+{
+	OSAssertLine(0x58C, !Initialized);
+	__PADSpec = 0;
+	switch (spec) {
+	case PAD_SPEC_0:
+	{
+		MakeStatus = SPEC0_MakeStatus;
+		break;
+	}
+	case PAD_SPEC_1:
+	{
+		MakeStatus = SPEC1_MakeStatus;
+		break;
+	}
+	case PAD_SPEC_2:
+	case PAD_SPEC_3:
+	case PAD_SPEC_4:
+	case PAD_SPEC_5:
+	{
+		MakeStatus = SPEC2_MakeStatus;
+		break;
+	}
+	}
+	Spec = spec;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PADGetSpec(void)
+{
+	return Spec;
+}
+
+/**
+ * @TODO: Documentation
+ */
+static void SPEC0_MakeStatus(s32 chan, PADStatus* status, u32 data[2])
+{
+	status->button = 0;
+	status->button |= ((data[0] >> 16) & 0x0008) ? PAD_BUTTON_A : 0;
+	status->button |= ((data[0] >> 16) & 0x0020) ? PAD_BUTTON_B : 0;
+	status->button |= ((data[0] >> 16) & 0x0100) ? PAD_BUTTON_X : 0;
+	status->button |= ((data[0] >> 16) & 0x0001) ? PAD_BUTTON_Y : 0;
+	status->button |= ((data[0] >> 16) & 0x0010) ? PAD_BUTTON_START : 0;
+	status->stickX       = (s8)(data[1] >> 16);
+	status->stickY       = (s8)(data[1] >> 24);
+	status->substickX    = (s8)(data[1]);
+	status->substickY    = (s8)(data[1] >> 8);
+	status->triggerLeft  = (u8)(data[0] >> 8);
+	status->triggerRight = (u8)data[0];
+	status->analogA      = 0;
+	status->analogB      = 0;
+	if (170 <= status->triggerLeft)
+		status->button |= PAD_TRIGGER_L;
+	if (170 <= status->triggerRight)
+		status->button |= PAD_TRIGGER_R;
+	status->stickX -= 128;
+	status->stickY -= 128;
+	status->substickX -= 128;
+	status->substickY -= 128;
+}
+
+/**
+ * @TODO: Documentation
+ */
+static void SPEC1_MakeStatus(s32 chan, PADStatus* status, u32 data[2])
+{
+	status->button = 0;
+	status->button |= ((data[0] >> 16) & 0x0080) ? PAD_BUTTON_A : 0;
+	status->button |= ((data[0] >> 16) & 0x0100) ? PAD_BUTTON_B : 0;
+	status->button |= ((data[0] >> 16) & 0x0020) ? PAD_BUTTON_X : 0;
+	status->button |= ((data[0] >> 16) & 0x0010) ? PAD_BUTTON_Y : 0;
+	status->button |= ((data[0] >> 16) & 0x0200) ? PAD_BUTTON_START : 0;
+
+	status->stickX    = (s8)(data[1] >> 16);
+	status->stickY    = (s8)(data[1] >> 24);
+	status->substickX = (s8)(data[1]);
+	status->substickY = (s8)(data[1] >> 8);
+
+	status->triggerLeft  = (u8)(data[0] >> 8);
+	status->triggerRight = (u8)data[0];
+
+	status->analogA = 0;
+	status->analogB = 0;
+
+	if (170 <= status->triggerLeft)
+		status->button |= PAD_TRIGGER_L;
+	if (170 <= status->triggerRight)
+		status->button |= PAD_TRIGGER_R;
+
+	status->stickX -= 128;
+	status->stickY -= 128;
+	status->substickX -= 128;
+	status->substickY -= 128;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000054 (Matching by size)
+ */
+static s8 ClampS8(s8 var, s8 org)
+{
+	if (0 < org) {
+		s8 min = (s8)(-128 + org);
+		if (var < min)
+			var = min;
+	} else if (org < 0) {
+		s8 max = (s8)(127 + org);
+		if (max < var)
+			var = max;
+	}
+	return var -= org;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00001C (Matching by size)
+ */
+static u8 ClampU8(u8 var, u8 org)
+{
+	if (var < org)
+		var = org;
+	return var -= org;
+}
+
+/**
+ * @TODO: Documentation
+ */
+static void SPEC2_MakeStatus(s32 chan, PADStatus* status, u32 data[2])
+{
+	PADStatus* origin;
+
+	status->button = (u16)((data[0] >> 16) & PAD_ALL);
+	status->stickX = (s8)(data[0] >> 8);
+	status->stickY = (s8)(data[0]);
+
+	switch (AnalogMode & 0x00000700) {
+	case 0x00000000:
+	case 0x00000500:
+	case 0x00000600:
+	case 0x00000700:
+	{
+		status->substickX    = (s8)(data[1] >> 24);
+		status->substickY    = (s8)(data[1] >> 16);
+		status->triggerLeft  = (u8)(((data[1] >> 12) & 0x0f) << 4);
+		status->triggerRight = (u8)(((data[1] >> 8) & 0x0f) << 4);
+		status->analogA      = (u8)(((data[1] >> 4) & 0x0f) << 4);
+		status->analogB      = (u8)(((data[1] >> 0) & 0x0f) << 4);
+		break;
+	}
+	case 0x00000100:
+	{
+		status->substickX    = (s8)(((data[1] >> 28) & 0x0f) << 4);
+		status->substickY    = (s8)(((data[1] >> 24) & 0x0f) << 4);
+		status->triggerLeft  = (u8)(data[1] >> 16);
+		status->triggerRight = (u8)(data[1] >> 8);
+		status->analogA      = (u8)(((data[1] >> 4) & 0x0f) << 4);
+		status->analogB      = (u8)(((data[1] >> 0) & 0x0f) << 4);
+		break;
+	}
+	case 0x00000200:
+	{
+		status->substickX    = (s8)(((data[1] >> 28) & 0x0f) << 4);
+		status->substickY    = (s8)(((data[1] >> 24) & 0x0f) << 4);
+		status->triggerLeft  = (u8)(((data[1] >> 20) & 0x0f) << 4);
+		status->triggerRight = (u8)(((data[1] >> 16) & 0x0f) << 4);
+		status->analogA      = (u8)(data[1] >> 8);
+		status->analogB      = (u8)(data[1] >> 0);
+		break;
+	}
+	case 0x00000300:
+	{
+		status->substickX    = (s8)(data[1] >> 24);
+		status->substickY    = (s8)(data[1] >> 16);
+		status->triggerLeft  = (u8)(data[1] >> 8);
+		status->triggerRight = (u8)(data[1] >> 0);
+		status->analogA      = 0;
+		status->analogB      = 0;
+		break;
+	}
+	case 0x00000400:
+	{
+		status->substickX    = (s8)(data[1] >> 24);
+		status->substickY    = (s8)(data[1] >> 16);
+		status->triggerLeft  = 0;
+		status->triggerRight = 0;
+		status->analogA      = (u8)(data[1] >> 8);
+		status->analogB      = (u8)(data[1] >> 0);
+		break;
+	}
+	}
+
+	status->stickX -= 128;
+	status->stickY -= 128;
+	status->substickX -= 128;
+	status->substickY -= 128;
+
+	origin               = &Origin[chan];
+	status->stickX       = ClampS8(status->stickX, origin->stickX);
+	status->stickY       = ClampS8(status->stickY, origin->stickY);
+	status->substickX    = ClampS8(status->substickX, origin->substickX);
+	status->substickY    = ClampS8(status->substickY, origin->substickY);
+	status->triggerLeft  = ClampU8(status->triggerLeft, origin->triggerLeft);
+	status->triggerRight = ClampU8(status->triggerRight, origin->triggerRight);
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000074 (OS_BUILD_VERSION >= 20011002L)
+ * @note UNUSED Size: 000054                                 (Matching by size)
+ */
+int PADGetType(s32 chan, u32* type)
+{
+#if OS_BUILD_VERSION >= 20011002L
+	TRAP_UNIMPLEMENTED;
+#else
+	u32 chanBit;
+
+	*type   = Type[chan];
+	chanBit = PAD_CHAN0_BIT >> chan;
+	if (ResettingBits & chanBit || ResettingChan == chan || !(EnabledBits & chanBit)) {
+		return 0;
+	}
+	return 1;
+#endif
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000064 (Matching by size)
+ */
+BOOL PADSync(void)
+{
+	return ResettingBits == 0 && (s32)ResettingChan == 32 && !SIBusy();
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000078 (OS_BUILD_VERSION <  20011002L) (Matching by size)
+ * @note UNUSED Size: 000074 (OS_BUILD_VERSION >= 20011002L) (Matching by size)
+ */
+void PADSetAnalogMode(u32 mode)
+{
+	BOOL enabled;
+	u32 mask;
+
+	OSAssertMsgLine(0x6C9, (mode < 8), "PADSetAnalogMode(): invalid mode");
+
+	enabled    = OSDisableInterrupts();
+	AnalogMode = mode << 8;
+#if OS_BUILD_VERSION >= 20011002L
+	mask = EnabledBits; // This is a guess
+#else
+	mask = EnabledBits & ~ProbingBits;
+#endif
+
+	EnabledBits &= ~mask;
+	WaitingBits &= ~mask;
+	CheckingBits &= ~mask;
+
+	SIDisablePolling(mask);
+	OSRestoreInterrupts(enabled);
+}
+
+/**
+ * @TODO: Documentation
+ */
+static BOOL OnReset(BOOL f)
+{
+	BOOL sync;
+	static BOOL recalibrated = FALSE;
+
+#if OS_BUILD_VERSION >= 20011002L
+	if (SamplingCallback)
+		PADSetSamplingCallback(NULL);
+#endif
+
+	if (!f) {
+		sync = PADSync();
+		if (!recalibrated && sync) {
+			recalibrated = PADRecalibrate(PAD_CHAN0_BIT | PAD_CHAN1_BIT | PAD_CHAN2_BIT | PAD_CHAN3_BIT);
+			return FALSE;
+		}
+		return sync;
+	} else
+		recalibrated = FALSE;
+
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00000C
+ */
+void __PADDisableXPatch(void)
+{
+	XPatchBits = 0;
+}
+
+#if OS_BUILD_VERSION >= 20011002L
+
+static void SamplingHandler(__OSInterrupt interrupt, OSContext* context)
+{
+	OSContext exceptionContext;
+
+	if (SamplingCallback) {
+		OSClearContext(&exceptionContext);
+		OSSetCurrentContext(&exceptionContext);
+		SamplingCallback();
+		OSClearContext(&exceptionContext);
+		OSSetCurrentContext(context);
+	}
+}
+
+#if OS_BUILD_VERSION >= 20011112L
+PADSamplingCallback PADSetSamplingCallback(PADSamplingCallback callback)
+#else
+void PADSetSamplingCallback(PADSamplingCallback callback)
+#endif
+{
+#if OS_BUILD_VERSION >= 20011112L
+	PADSamplingCallback prev;
+	prev = SamplingCallback;
+#endif
+
+	SamplingCallback = callback;
+	if (callback)
+		SIRegisterPollingHandler(SamplingHandler);
+	else
+		SIUnregisterPollingHandler(SamplingHandler);
+
+#if OS_BUILD_VERSION >= 20011112L
+	return prev;
+#endif
+}
+
+BOOL __PADDisableRecalibration(BOOL disable)
+{
+	BOOL enabled;
+	BOOL prev;
+
+	enabled = OSDisableInterrupts();
+	prev    = (GameChoice & 0x40) ? TRUE : FALSE;
+	GameChoice &= (u8)~0x40;
+	if (disable) {
+		GameChoice |= 0x40;
+	}
+	OSRestoreInterrupts(enabled);
+	return prev;
+}
+
+#endif

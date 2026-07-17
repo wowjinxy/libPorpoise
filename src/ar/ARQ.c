@@ -1,206 +1,250 @@
-/*---------------------------------------------------------------------------*
-  ARQ.c - ARAM Queue (Queued DMA Operations)
-  
-  Manages queued DMA transfers between ARAM and main RAM.
-  
-  On GC/Wii: Queues large transfers, breaks into chunks
-  On PC: Executes immediately (simulated DMA is instant)
- *---------------------------------------------------------------------------*/
-
 #include <dolphin/ar.h>
 #include <dolphin/os.h>
-#include <string.h>
+#include <stddef.h>
 
-/*---------------------------------------------------------------------------*
-    Internal State
- *---------------------------------------------------------------------------*/
+static ARQRequest* __ARQRequestQueueHi;
+static ARQRequest* __ARQRequestTailHi;
+static ARQRequest* __ARQRequestQueueLo;
+static ARQRequest* __ARQRequestTailLo;
+static ARQRequest* __ARQRequestPendingHi;
+static ARQRequest* __ARQRequestPendingLo;
+static ARQCallback __ARQCallbackHi;
+static ARQCallback __ARQCallbackLo;
+static u32 __ARQChunkSize;
 
-static BOOL s_arqInitialized = FALSE;
-static u32 s_chunkSize = 4096;  // Default chunk size
+static volatile BOOL __ARQ_init_flag = FALSE;
 
-// Priority queues (high and low)
-static ARQRequest* s_queueHi = NULL;
-static ARQRequest* s_queueLo = NULL;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000070
+ */
+void __ARQPopTaskQueueHi()
+{
+	if (__ARQRequestQueueHi) {
+		if (__ARQRequestQueueHi->type == ARQ_TYPE_MRAM_TO_ARAM) {
+			ARStartDMA(__ARQRequestQueueHi->type, __ARQRequestQueueHi->source, __ARQRequestQueueHi->dest, __ARQRequestQueueHi->length);
+		} else {
+			ARStartDMA(__ARQRequestQueueHi->type, __ARQRequestQueueHi->dest, __ARQRequestQueueHi->source, __ARQRequestQueueHi->length);
+		}
 
-/*---------------------------------------------------------------------------*
-  Name:         ARQInit
+		__ARQCallbackHi = __ARQRequestQueueHi->callback;
 
-  Description:  Initialize ARAM Queue subsystem.
+		__ARQRequestPendingHi = __ARQRequestQueueHi;
 
-  Arguments:    None
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void ARQInit(void) {
-    if (s_arqInitialized) {
-        return;
-    }
-    
-    s_queueHi = NULL;
-    s_queueLo = NULL;
-    s_chunkSize = 4096;
-    s_arqInitialized = TRUE;
-    
-    OSReport("ARQ: Queue system initialized\n");
+		__ARQRequestQueueHi = __ARQRequestQueueHi->next;
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARQReset
+/**
+ * @TODO: Documentation
+ */
+void __ARQServiceQueueLo()
+{
+	if ((__ARQRequestPendingLo == NULL) && (__ARQRequestQueueLo)) {
+		__ARQRequestPendingLo = __ARQRequestQueueLo;
+		__ARQRequestQueueLo   = __ARQRequestQueueLo->next;
+	}
 
-  Description:  Reset ARAM Queue subsystem.
+	if (__ARQRequestPendingLo) {
+		if (__ARQRequestPendingLo->length <= __ARQChunkSize) {
 
-  Arguments:    None
+			if (__ARQRequestPendingLo->type == ARQ_TYPE_MRAM_TO_ARAM) {
+				ARStartDMA(__ARQRequestPendingLo->type, __ARQRequestPendingLo->source, __ARQRequestPendingLo->dest,
+				           __ARQRequestPendingLo->length);
+			} else {
+				ARStartDMA(__ARQRequestPendingLo->type, __ARQRequestPendingLo->dest, __ARQRequestPendingLo->source,
+				           __ARQRequestPendingLo->length);
+			}
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void ARQReset(void) {
-    s_queueHi = NULL;
-    s_queueLo = NULL;
-    s_arqInitialized = FALSE;
+			__ARQCallbackLo = __ARQRequestPendingLo->callback;
+
+		} else if (__ARQRequestPendingLo->type == ARQ_TYPE_MRAM_TO_ARAM) {
+			ARStartDMA(__ARQRequestPendingLo->type, __ARQRequestPendingLo->source, __ARQRequestPendingLo->dest, __ARQChunkSize);
+
+		} else {
+			ARStartDMA(__ARQRequestPendingLo->type, __ARQRequestPendingLo->dest, __ARQRequestPendingLo->source, __ARQChunkSize);
+		}
+
+		__ARQRequestPendingLo->length -= __ARQChunkSize;
+		__ARQRequestPendingLo->source += __ARQChunkSize;
+		__ARQRequestPendingLo->dest += __ARQChunkSize;
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARQCheckInit
-
-  Description:  Check if ARQ is initialized.
-
-  Arguments:    None
-
-  Returns:      TRUE if ARQInit() has been called
- *---------------------------------------------------------------------------*/
-BOOL ARQCheckInit(void) {
-    return s_arqInitialized;
+/**
+ * @TODO: Documentation
+ */
+void __ARQCallbackHack(void)
+{
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARQPostRequest
+/**
+ * @TODO: Documentation
+ */
+void __ARQInterruptServiceRoutine(void)
+{
+	if (__ARQCallbackHi) {
+		(*__ARQCallbackHi)((u32)__ARQRequestPendingHi);
+		__ARQRequestPendingHi = NULL;
+		__ARQCallbackHi       = NULL;
 
-  Description:  Post a DMA request to the queue. On PC, executes immediately
-                since simulated DMA is instant.
-                
-                On GC/Wii: Adds to queue, processes in chunks
-                On PC: Executes DMA immediately, calls callback
+	} else if (__ARQCallbackLo) {
+		(*__ARQCallbackLo)((u32)__ARQRequestPendingLo);
+		__ARQRequestPendingLo = NULL;
+		__ARQCallbackLo       = NULL;
+	}
 
-  Arguments:    request   ARQ request structure
-                owner     Owner ID
-                type      DMA type (AR_MRAM_TO_ARAM or AR_ARAM_TO_MRAM)
-                priority  Priority (0=high, 1=low)
-                source    Source address
-                dest      Destination address
-                length    Transfer length
-                callback  Completion callback
+	__ARQPopTaskQueueHi();
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void ARQPostRequest(ARQRequest* request, u32 owner, u32 type, u32 priority,
-                    u32 source, u32 dest, u32 length,
-                    void (*callback)(ARQRequest*)) {
-    if (!s_arqInitialized || !request) {
-        return;
-    }
-    
-    // Fill in request
-    request->owner = owner;
-    request->type = type;
-    request->priority = priority;
-    request->source = source;
-    request->dest = dest;
-    request->length = length;
-    request->callback = callback;
-    request->next = NULL;
-    
-    // On PC, execute immediately (no real queue needed).
-    // ARStartDMA expects (mainmemAddr, aramAddr), so ARAM->MRAM
-    // requests must swap source/dest when forwarding.
-    if (type == AR_MRAM_TO_ARAM) {
-        ARStartDMA(type, source, dest, length);
-    } else {
-        ARStartDMA(type, dest, source, length);
-    }
-    
-    // Call callback
-    if (callback) {
-        callback(request);
-    }
+	if (__ARQRequestPendingHi == NULL) {
+		__ARQServiceQueueLo();
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARQRemoveRequest
-
-  Description:  Remove a request from the queue.
-                
-                On PC: No-op since requests execute immediately
-
-  Arguments:    request  Request to remove
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void ARQRemoveRequest(ARQRequest* request) {
-    (void)request;
-    
-    /* On PC, requests are not queued - they execute immediately.
-     * This function exists for API compatibility.
-     */
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000010
+ */
+void __ARQInitTempQueue(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARQRemoveOwnerRequest
-
-  Description:  Remove all requests from a specific owner.
-                
-                On PC: No-op since requests execute immediately
-
-  Arguments:    owner  Owner ID
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void ARQRemoveOwnerRequest(u32 owner) {
-    (void)owner;
-    
-    /* On PC, requests are not queued - they execute immediately. */
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000028
+ */
+void __ARQPushTempQueue(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARQFlushQueue
+/**
+ * @TODO: Documentation
+ */
+void ARQInit()
+{
+	if (__ARQ_init_flag == TRUE) {
+		return;
+	}
 
-  Description:  Flush all pending requests.
-                
-                On PC: No-op since requests execute immediately
+	__ARQRequestQueueHi = __ARQRequestQueueLo = NULL;
+	__ARQChunkSize                            = ARQ_CHUNK_SIZE_DEFAULT;
+	ARRegisterDMACallback(&__ARQInterruptServiceRoutine);
+	__ARQRequestPendingHi = NULL;
+	__ARQRequestPendingLo = NULL;
+	__ARQCallbackHi       = NULL;
+	__ARQCallbackLo       = NULL;
 
-  Arguments:    None
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void ARQFlushQueue(void) {
-    /* On PC, no pending requests - all execute immediately. */
+	__ARQ_init_flag = TRUE;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARQSetChunkSize
-
-  Description:  Set chunk size for breaking up large DMA transfers.
-                
-                On GC/Wii: Large transfers split into chunks to avoid blocking
-                On PC: Stored but not used (transfers are instant)
-
-  Arguments:    size  Chunk size in bytes
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void ARQSetChunkSize(u32 size) {
-    s_chunkSize = size;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00000C
+ */
+void ARQReset(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARQGetChunkSize
+/**
+ * @TODO: Documentation
+ */
+void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u32 source, u32 dest, u32 length, ARQCallback callback)
+{
+	BOOL enabled;
 
-  Description:  Get current chunk size.
+	task->next   = NULL;
+	task->owner  = owner;
+	task->type   = type;
+	task->source = source;
+	task->dest   = dest;
+	task->length = length;
 
-  Arguments:    None
+	if (callback) {
+		task->callback = callback;
+	} else {
+		task->callback = (ARQCallback)&__ARQCallbackHack;
+	}
 
-  Returns:      Chunk size in bytes
- *---------------------------------------------------------------------------*/
-u32 ARQGetChunkSize(void) {
-    return s_chunkSize;
+	enabled = OSDisableInterrupts();
+
+	switch (priority) {
+	case ARQ_PRIORITY_LOW:
+	{
+		if (__ARQRequestQueueLo) {
+			__ARQRequestTailLo->next = task;
+		} else {
+			__ARQRequestQueueLo = task;
+		}
+		__ARQRequestTailLo = task;
+		break;
+	}
+	case ARQ_PRIORITY_HIGH:
+	{
+		if (__ARQRequestQueueHi) {
+			__ARQRequestTailHi->next = task;
+		} else {
+			__ARQRequestQueueHi = task;
+		}
+		__ARQRequestTailHi = task;
+		break;
+	}
+	}
+
+	if ((__ARQRequestPendingHi == NULL) && (__ARQRequestPendingLo == NULL)) {
+		__ARQPopTaskQueueHi();
+
+		if (__ARQRequestPendingHi == NULL) {
+			__ARQServiceQueueLo();
+		}
+	}
+
+	OSRestoreInterrupts(enabled);
 }
 
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000110
+ */
+void ARQRemoveRequest(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00011C
+ */
+void ARQRemoveOwnerRequest(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000048
+ */
+void ARQFlushQueue(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000020
+ */
+void ARQSetChunkSize(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008
+ */
+void ARQGetChunkSize(void)
+{
+	TRAP_UNIMPLEMENTED;
+}

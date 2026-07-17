@@ -1,199 +1,133 @@
-/*---------------------------------------------------------------------------*
-  DVDQueue.c - DVD Command Queue Management
-  
-  Manages priority-based command queues for DVD operations.
-  
-  On GC/Wii: Hardware has limited command slots, needs queuing
-  On PC: File I/O is instant, but we maintain queues for API compatibility
- *---------------------------------------------------------------------------*/
+#include "Dolphin/dvd.h"
+#include "Dolphin/os.h"
+#include <stddef.h>
 
-#include <dolphin/dvd.h>
-#include <dolphin/dvd_internal.h>
-#include <dolphin/os.h>
-#include <string.h>
+struct DVDQueue WaitingQueue[4];
 
-/*---------------------------------------------------------------------------*
-    Queue System
- *---------------------------------------------------------------------------*/
+/**
+ * @TODO: Documentation
+ */
+void __DVDClearWaitingQueue()
+{
+	int i;
 
-#define NUM_QUEUES 4  // One for each priority level
+	for (i = 0; i < 4; i++) {
+		struct DVDQueue* ptr = &WaitingQueue[i];
 
-typedef struct {
-    DVDCommandBlock* next;
-    DVDCommandBlock* prev;
-} Queue;
-
-static Queue s_waitingQueue[NUM_QUEUES];
-
-/*---------------------------------------------------------------------------*
-  Name:         __DVDClearWaitingQueue
-
-  Description:  Initialize/clear all waiting queues.
-
-  Arguments:    None
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void __DVDClearWaitingQueue(void) {
-    for (u32 i = 0; i < NUM_QUEUES; i++) {
-        DVDCommandBlock* q = (DVDCommandBlock*)&s_waitingQueue[i];
-        q->next = q;
-        q->prev = q;
-    }
+		ptr->mHead = ptr;
+		ptr->mTail = ptr;
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __DVDPushWaitingQueue
+/**
+ * @TODO: Documentation
+ */
+BOOL __DVDPushWaitingQueue(int idx, struct DVDQueue* newTail)
+{
+	BOOL intrEnabled = OSDisableInterrupts();
 
-  Description:  Add command block to waiting queue for specified priority.
+	struct DVDQueue* waitingQueue = &WaitingQueue[idx];
 
-  Arguments:    prio   Priority level (0-3)
-                block  Command block to queue
+	waitingQueue->mTail->mHead = newTail;
+	newTail->mTail             = waitingQueue->mTail;
+	newTail->mHead             = waitingQueue;
+	waitingQueue->mTail        = newTail;
 
-  Returns:      TRUE always
- *---------------------------------------------------------------------------*/
-BOOL __DVDPushWaitingQueue(s32 prio, DVDCommandBlock* block) {
-    BOOL enabled = OSDisableInterrupts();
-    
-    DVDCommandBlock* q = (DVDCommandBlock*)&s_waitingQueue[prio];
-    
-    // Insert at end of queue
-    q->prev->next = block;
-    block->prev = q->prev;
-    block->next = q;
-    q->prev = block;
-    
-    OSRestoreInterrupts(enabled);
-    return TRUE;
+	OSRestoreInterrupts(intrEnabled);
+	return TRUE;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         PopWaitingQueuePrio
-
-  Description:  Pop command block from specified priority queue.
-
-  Arguments:    prio  Priority level (0-3)
-
-  Returns:      Command block, or NULL if queue empty
- *---------------------------------------------------------------------------*/
-static DVDCommandBlock* PopWaitingQueuePrio(s32 prio) {
-    DVDCommandBlock* tmp;
-    BOOL enabled;
-    DVDCommandBlock* q;
-    
-    enabled = OSDisableInterrupts();
-    
-    q = (DVDCommandBlock*)&s_waitingQueue[prio];
-    
-    // Check if queue empty
-    if (q->next == q) {
-        OSRestoreInterrupts(enabled);
-        return NULL;
-    }
-    
-    // Pop from front
-    tmp = q->next;
-    q->next = tmp->next;
-    tmp->next->prev = q;
-    
-    OSRestoreInterrupts(enabled);
-    return tmp;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000064
+ */
+void PopWaitingQueuePrio(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __DVDPopWaitingQueue
+/**
+ * @TODO: Documentation
+ */
+DVDQueue* __DVDPopWaitingQueue()
+{
+	BOOL intrEnabled = OSDisableInterrupts();
+	int i;
 
-  Description:  Pop highest priority command block from all queues.
+	for (i = 0; i < 4; i++) {
+		if (WaitingQueue[i].mHead != &WaitingQueue[i]) {
+			DVDQueue* tempQueue;
+			DVDQueue* outQueue;
 
-  Arguments:    None
+			OSRestoreInterrupts(intrEnabled);
 
-  Returns:      Command block with highest priority, or NULL if all empty
- *---------------------------------------------------------------------------*/
-DVDCommandBlock* __DVDPopWaitingQueue(void) {
-    DVDCommandBlock* block;
-    
-    // Check queues from highest to lowest priority
-    for (s32 prio = 0; prio < NUM_QUEUES; prio++) {
-        block = PopWaitingQueuePrio(prio);
-        if (block) {
-            return block;
-        }
-    }
-    
-    return NULL;
+			intrEnabled            = OSDisableInterrupts();
+			tempQueue              = &WaitingQueue[i];
+			outQueue               = tempQueue->mHead;
+			tempQueue->mHead       = outQueue->mHead;
+			outQueue->mHead->mTail = tempQueue;
+			OSRestoreInterrupts(intrEnabled);
+
+			outQueue->mHead = NULL;
+			outQueue->mTail = NULL;
+			return outQueue;
+		}
+	}
+	OSRestoreInterrupts(intrEnabled);
+	return NULL;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __DVDCheckWaitingList
+/**
+ * @TODO: Documentation
+ */
+BOOL __DVDCheckWaitingQueue()
+{
+	BOOL intrEnabled = OSDisableInterrupts();
+	int i;
 
-  Description:  Check if any commands are waiting in queues.
-
-  Arguments:    None
-
-  Returns:      TRUE if any queue has commands, FALSE if all empty
- *---------------------------------------------------------------------------*/
-BOOL __DVDCheckWaitingList(void) {
-    BOOL enabled = OSDisableInterrupts();
-    
-    for (u32 i = 0; i < NUM_QUEUES; i++) {
-        DVDCommandBlock* q = (DVDCommandBlock*)&s_waitingQueue[i];
-        if (q->next != q) {
-            OSRestoreInterrupts(enabled);
-            return TRUE;
-        }
-    }
-    
-    OSRestoreInterrupts(enabled);
-    return FALSE;
+	for (i = 0; i < 4; i++) {
+		if (WaitingQueue[i].mHead != &WaitingQueue[i]) {
+			OSRestoreInterrupts(intrEnabled);
+			return TRUE;
+		}
+	}
+	OSRestoreInterrupts(intrEnabled);
+	return FALSE;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __DVDDequeueWaitingQueue
+/**
+ * @TODO: Documentation
+ */
+BOOL __DVDDequeueWaitingQueue(DVDQueue* queue)
+{
+	BOOL intrEnabled      = OSDisableInterrupts();
+	struct DVDQueue* tail = queue->mTail;
+	struct DVDQueue* head = queue->mHead;
 
-  Description:  Remove a specific command block from waiting queue.
-
-  Arguments:    block  Command block to remove
-
-  Returns:      TRUE if removed, FALSE if not in queue
- *---------------------------------------------------------------------------*/
-BOOL __DVDDequeueWaitingQueue(DVDCommandBlock* block) {
-    BOOL enabled;
-    BOOL inQueue = FALSE;
-    
-    if (!block) {
-        return FALSE;
-    }
-    
-    enabled = OSDisableInterrupts();
-    
-    // Check if block is actually in a queue
-    if (block->next && block->prev) {
-        block->prev->next = block->next;
-        block->next->prev = block->prev;
-        block->next = NULL;
-        block->prev = NULL;
-        inQueue = TRUE;
-    }
-    
-    OSRestoreInterrupts(enabled);
-    return inQueue;
+	if (tail == NULL || head == NULL) {
+		OSRestoreInterrupts(intrEnabled);
+		return FALSE;
+	}
+	tail->mHead = head;
+	head->mTail = tail;
+	OSRestoreInterrupts(intrEnabled);
+	return TRUE;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __DVDIsBlockInWaitingQueue
-
-  Description:  Check if command block is in waiting queue.
-
-  Arguments:    block  Command block to check
-
-  Returns:      TRUE if in queue, FALSE otherwise
- *---------------------------------------------------------------------------*/
-BOOL __DVDIsBlockInWaitingQueue(DVDCommandBlock* block) {
-    if (!block) {
-        return FALSE;
-    }
-    
-    // Block is in queue if next/prev are not NULL
-    return (block->next != NULL && block->prev != NULL);
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000CC
+ */
+void __DVDIsBlockInWaitingQueue(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00010C
+ */
+void DVDDumpWaitingQueue(void)
+{
+	TRAP_UNIMPLEMENTED;
+}

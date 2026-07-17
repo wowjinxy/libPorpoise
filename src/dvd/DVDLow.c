@@ -1,229 +1,586 @@
-/*---------------------------------------------------------------------------*
-  DVDLow.c - Low-Level DVD Commands
-  
-  Low-level DVD interface functions for direct hardware control.
-  
-  On GC/Wii: Sends commands directly to DI (Drive Interface) hardware
-  On PC: Stubs - no DVD hardware, operations handled by high-level DVD.c
- *---------------------------------------------------------------------------*/
+#include "Dolphin/dvd.h"
+#include "Dolphin/hw_regs.h"
+#include "Dolphin/os.h"
+#include <stddef.h>
 
-#include <dolphin/dvd.h>
-#include <dolphin/os.h>
+static BOOL FirstRead                    = TRUE;
+static volatile BOOL StopAtNextInt       = FALSE;
+static u32 LastLength                    = 0;
+static DVDLowCallback Callback           = NULL;
+static DVDLowCallback ResetCoverCallback = NULL;
+static volatile OSTime LastResetEnd      = 0;
+static vu32 ResetOccurred                = FALSE;
+static volatile BOOL WaitingCoverClose   = FALSE;
+static BOOL Breaking                     = FALSE;
+static vu32 WorkAroundType               = 0;
+static u32 WorkAroundSeekLocation        = 0;
+static volatile OSTime LastReadFinished  = 0;
+static OSTime LastReadIssued             = 0;
+static volatile BOOL LastCommandWasRead  = FALSE;
+static vu32 NextCommandNumber            = 0;
 
-/*---------------------------------------------------------------------------*
-  Name:         DVDLowInit
+typedef struct DVDBuffer {
+	void* addr;
+	u32 length;
+	u32 offset;
+} DVDBuffer;
 
-  Description:  Initialize low-level DVD system.
-                
-                On GC/Wii: Sets up DI registers, enables interrupts
-                On PC: No-op stub
+typedef struct DVDCommand {
+	s32 cmd;
+	void* addr;
+	u32 length;
+	u32 offset;
+	DVDLowCallback callback;
+} DVDCommand;
 
-  Arguments:    None
+static DVDCommand CommandList[3];
+static OSAlarm AlarmForWA;
+static OSAlarm AlarmForTimeout;
+static OSAlarm AlarmForBreak;
+static DVDBuffer Prev;
+static DVDBuffer Curr;
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void DVDLowInit(void) {
-    /* No low-level DVD hardware on PC.
-     * All initialization handled by DVDInit().
-     */
+// forward declare some statics:
+static void Read(void* addr, u32 length, u32 offset, DVDLowCallback callback);
+
+/**
+ * @TODO: Documentation
+ */
+void __DVDInitWA(void)
+{
+	NextCommandNumber  = 0;
+	CommandList[0].cmd = -1;
+	__DVDLowSetWAType(0, 0);
+	OSInitAlarm();
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DVDLowRead
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000094 (Matching by size)
+ */
+static BOOL ProcessNextCommand(void)
+{
+	s32 n = NextCommandNumber;
 
-  Description:  Low-level read command to DVD hardware.
-                
-                On GC/Wii: Sends read command to DI, starts DMA
-                On PC: Not used - DVDRead() handles file I/O directly
+	if (CommandList[n].cmd == 1) {
+		++NextCommandNumber;
+		Read(CommandList[n].addr, CommandList[n].length, CommandList[n].offset, CommandList[n].callback);
+		return TRUE;
+	} else if (CommandList[n].cmd == 2) {
+		++NextCommandNumber;
+		DVDLowSeek(CommandList[n].offset, CommandList[n].callback);
+		return TRUE;
+	}
 
-  Arguments:    addr      Destination buffer
-                length    Bytes to read
-                offset    Disc offset
-                callback  Callback when complete
-
-  Returns:      TRUE if command issued
- *---------------------------------------------------------------------------*/
-BOOL DVDLowRead(void* addr, u32 length, u32 offset, void (*callback)(u32)) {
-    (void)addr;
-    (void)length;
-    (void)offset;
-    (void)callback;
-    
-    /* Not implemented on PC.
-     * Use DVDRead() or DVDReadAsync() instead.
-     */
-    return FALSE;
+	return FALSE;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DVDLowSeek
+/**
+ * @TODO: Documentation
+ */
+void __DVDInterruptHandler(__OSInterrupt interrupt, OSContext* context)
+{
+	DVDLowCallback cb;
+	OSContext exceptionContext;
+	u32 cause = 0;
+	u32 reg;
+	u32 intr;
+	u32 mask;
 
-  Description:  Low-level seek command to DVD hardware.
-                
-                On GC/Wii: Commands disc head to seek position
-                On PC: Not used - DVDSeek() handles directly
+	OSCancelAlarm(&AlarmForTimeout);
 
-  Arguments:    offset    Disc offset to seek to
-                callback  Callback when complete
+	if (LastCommandWasRead) {
+		LastReadFinished = __OSGetSystemTime();
+		FirstRead        = FALSE;
+		Prev.addr        = Curr.addr;
+		Prev.length      = Curr.length;
+		Prev.offset      = Curr.offset;
+		if (StopAtNextInt == TRUE) {
+			cause |= 8;
+		}
+	}
 
-  Returns:      TRUE if command issued
- *---------------------------------------------------------------------------*/
-BOOL DVDLowSeek(u32 offset, void (*callback)(u32)) {
-    (void)offset;
-    (void)callback;
-    
-    /* Not implemented on PC.
-     * Use DVDSeek() or DVDSeekAsync() instead.
-     */
-    return FALSE;
+	LastCommandWasRead = FALSE;
+	StopAtNextInt      = FALSE;
+	reg                = __DIRegs[DI_STATUS];
+	mask               = reg & 0x2a;
+	intr               = (reg & 0x54) & (mask << 1);
+
+	if (intr & 0x40) {
+		cause |= 8;
+	}
+
+	if (intr & 0x10) {
+		cause |= 1;
+	}
+
+	if (intr & 4) {
+		cause |= 2;
+	}
+
+	if (cause) {
+		ResetOccurred = FALSE;
+	}
+
+	__DIRegs[DI_STATUS] = intr | mask;
+
+	if (ResetOccurred && (__OSGetSystemTime() - LastResetEnd) < OSMillisecondsToTicks(200)) {
+		reg  = __DIRegs[DI_COVER_STATUS];
+		mask = reg & 0x2;
+		intr = (reg & 4) & (mask << 1);
+		if (intr & 4) {
+			if (ResetCoverCallback) {
+				ResetCoverCallback(4);
+			}
+			ResetCoverCallback = NULL;
+		}
+
+		__DIRegs[DI_COVER_STATUS] = __DIRegs[DI_COVER_STATUS];
+	} else if (WaitingCoverClose) {
+		reg  = __DIRegs[DI_COVER_STATUS];
+		mask = reg & 2;
+		intr = (reg & 4) & (mask << 1);
+
+		if (intr & 4) {
+			cause |= 4;
+		}
+
+		__DIRegs[DI_COVER_STATUS] = intr | mask;
+		WaitingCoverClose         = FALSE;
+	} else {
+		__DIRegs[DI_COVER_STATUS] = 0;
+	}
+
+	if ((cause & 8) && !Breaking) {
+		cause &= ~8;
+	}
+
+	if ((cause & 1)) {
+		if (ProcessNextCommand()) {
+			return;
+		}
+	} else {
+		CommandList[0].cmd = -1;
+		NextCommandNumber  = 0;
+	}
+
+	OSClearContext(&exceptionContext);
+	OSSetCurrentContext(&exceptionContext);
+
+	if (cause) {
+		cb       = Callback;
+		Callback = NULL;
+		if (cb) {
+			cb(cause);
+		}
+
+		Breaking = FALSE;
+	}
+
+	OSClearContext(&exceptionContext);
+	OSSetCurrentContext(context);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DVDLowWaitCoverClose
-
-  Description:  Wait for disc cover to be closed.
-                
-                On GC/Wii: Waits for cover sensor interrupt
-                On PC: Returns immediately (no cover)
-
-  Arguments:    callback  Callback when cover closed
-
-  Returns:      TRUE always
- *---------------------------------------------------------------------------*/
-BOOL DVDLowWaitCoverClose(void (*callback)(u32)) {
-    /* No disc cover on PC.
-     * Call callback immediately to signal "cover closed".
-     */
-    if (callback) {
-        callback(0);
-    }
-    return TRUE;
+/**
+ * @TODO: Documentation
+ */
+static void AlarmHandler(OSAlarm* alarm, OSContext* context)
+{
+	ProcessNextCommand();
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DVDLowReadDiskID
-
-  Description:  Low-level read disc ID sector.
-                
-                On GC/Wii: Reads disc ID from sector 0
-                On PC: Returns fake disc ID
-
-  Arguments:    diskID    Buffer for disc ID
-                callback  Callback when complete
-
-  Returns:      TRUE if command issued
- *---------------------------------------------------------------------------*/
-BOOL DVDLowReadDiskID(DVDDiskID* diskID, void (*callback)(u32)) {
-    (void)diskID;
-    
-    /* Handled by DVDReadDiskID() instead.
-     * This low-level version not needed on PC.
-     */
-    if (callback) {
-        callback(0);
-    }
-    return TRUE;
+/**
+ * @TODO: Documentation
+ */
+static void AlarmHandlerForTimeout(OSAlarm* alarm, OSContext* context)
+{
+	OSContext tmpContext;
+	DVDLowCallback callback;
+	__OSMaskInterrupts(OS_INTERRUPTMASK_PI_DI);
+	OSClearContext(&tmpContext);
+	OSSetCurrentContext(&tmpContext);
+	callback = Callback;
+	Callback = NULL;
+	if (callback != NULL) {
+		callback(0x10);
+	}
+	OSClearContext(&tmpContext);
+	OSSetCurrentContext(context);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DVDLowStopMotor
-
-  Description:  Stop disc motor.
-                
-                On GC/Wii: Sends motor stop command to drive
-                On PC: No-op (no motor)
-
-  Arguments:    callback  Callback when complete
-
-  Returns:      TRUE always
- *---------------------------------------------------------------------------*/
-BOOL DVDLowStopMotor(void (*callback)(u32)) {
-    /* No disc motor on PC. */
-    if (callback) {
-        callback(0);
-    }
-    return TRUE;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000064 (Matching by size)
+ */
+static void SetTimeoutAlarm(OSTime timeout)
+{
+	OSCreateAlarm(&AlarmForTimeout);
+	OSSetAlarm(&AlarmForTimeout, timeout, AlarmHandlerForTimeout);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DVDLowRequestError
+/**
+ * @TODO: Documentation
+ */
+static void Read(void* addr, u32 length, u32 offset, DVDLowCallback callback)
+{
+	StopAtNextInt      = FALSE;
+	LastCommandWasRead = TRUE;
+	Callback           = callback;
+	LastReadIssued     = __OSGetSystemTime();
 
-  Description:  Request error information from drive.
-                
-                On GC/Wii: Queries drive for last error
-                On PC: Returns no error
+	__DIRegs[DI_CMD_BUF_0]    = 0xa8000000;
+	__DIRegs[DI_CMD_BUF_1]    = offset / 4;
+	__DIRegs[DI_CMD_BUF_2]    = length;
+	__DIRegs[DI_DMA_MEM_ADDR] = (u32)addr;
+	__DIRegs[DI_DMA_LENGTH]   = length;
+	LastLength                = length;
+	__DIRegs[DI_CONTROL]      = 3;
 
-  Arguments:    callback  Callback when complete
-
-  Returns:      TRUE always
- *---------------------------------------------------------------------------*/
-BOOL DVDLowRequestError(void (*callback)(u32)) {
-    /* No drive errors on PC. */
-    if (callback) {
-        callback(0);  // No error
-    }
-    return TRUE;
+	if (length > 0xa00000) {
+		SetTimeoutAlarm(OSSecondsToTicks(20));
+	} else {
+		SetTimeoutAlarm(OSSecondsToTicks(10));
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DVDLowReset
-
-  Description:  Reset DVD drive.
-                
-                On GC/Wii: Sends reset command to DI
-                On PC: No-op
-
-  Arguments:    callback  Callback when complete
-
-  Returns:      TRUE always
- *---------------------------------------------------------------------------*/
-BOOL DVDLowReset(void (*callback)(u32)) {
-    if (callback) {
-        callback(0);
-    }
-    return TRUE;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000038
+ */
+void AudioBufferOn(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DVDLowBreak
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000A0 (Matching by size)
+ */
+BOOL HitCache(DVDBuffer* cur, DVDBuffer* prev)
+{
+	u32 uVar1 = (prev->offset + prev->length - 1) >> 15;
+	u32 uVar2 = (cur->offset >> 15);
+	u32 iVar3 = (DVDGetCurrentDiskID()->streaming ? TRUE : FALSE) ? 5 : 15;
 
-  Description:  Stop current operation immediately.
-                
-                On GC/Wii: Sends break command to DI
-                On PC: No-op
-
-  Arguments:    None
-
-  Returns:      TRUE always
- *---------------------------------------------------------------------------*/
-BOOL DVDLowBreak(void) {
-    return TRUE;
+	if ((uVar2 > uVar1 - 2) || (uVar2 < uVar1 + iVar3 + 3)) {
+		return TRUE;
+	}
+	return FALSE;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DVDLowClearCallback
-
-  Description:  Clear registered callback.
-
-  Arguments:    None
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void DVDLowClearCallback(void) {
-    /* Callbacks managed per-operation on PC, not globally. */
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000034 (Matching by size)
+ */
+static void DoJustRead(void* addr, u32 length, u32 offset, DVDLowCallback callback)
+{
+	CommandList[0].cmd = -1;
+	NextCommandNumber  = 0;
+	Read(addr, length, offset, callback);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __DVDLowTestAlarm
-
-  Description:  Test if alarm belongs to DVD low-level system.
-
-  Arguments:    alarm  Alarm to test
-
-  Returns:      FALSE always on PC (no DVD hardware alarms)
- *---------------------------------------------------------------------------*/
-BOOL __DVDLowTestAlarm(const OSAlarm* alarm) {
-    (void)alarm;
-    return FALSE;
+/**
+ * @TODO: Documentation
+ */
+static void SeekTwiceBeforeRead(void* addr, u32 length, u32 offset, DVDLowCallback callback)
+{
+	u32 newOffset = offset & ~0x7FFF;
+	if (!newOffset) {
+		newOffset = 0;
+	} else {
+		newOffset += WorkAroundSeekLocation;
+	}
+	CommandList[0].cmd      = 2;
+	CommandList[0].offset   = newOffset;
+	CommandList[0].callback = callback;
+	CommandList[1].cmd      = 1;
+	CommandList[1].addr     = addr;
+	CommandList[1].length   = length;
+	CommandList[1].offset   = offset;
+	CommandList[1].callback = callback;
+	CommandList[2].cmd      = -1;
+	NextCommandNumber       = 0;
+	DVDLowSeek(newOffset, callback);
 }
 
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00008C (Matching by size)
+ */
+static void WaitBeforeRead(void* addr, u32 length, u32 offset, DVDLowCallback callback, OSTime timeout)
+{
+	CommandList[0].cmd      = 1;
+	CommandList[0].addr     = addr;
+	CommandList[0].length   = length;
+	CommandList[0].offset   = offset;
+	CommandList[0].callback = callback;
+	CommandList[1].cmd      = -1;
+	NextCommandNumber       = 0;
+	OSCreateAlarm(&AlarmForWA);
+	OSSetAlarm(&AlarmForWA, timeout, AlarmHandler);
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL DVDLowRead(void* addr, u32 length, u32 offset, DVDLowCallback callback)
+{
+	OSTime diff;
+	u32 prev;
+
+	__DIRegs[DI_DMA_LENGTH] = length;
+	Curr.addr               = addr;
+	Curr.length             = length;
+	Curr.offset             = offset;
+
+	if (WorkAroundType == 0) {
+		DoJustRead(addr, length, offset, callback);
+	} else if (WorkAroundType == 1) {
+		if (FirstRead) {
+			SeekTwiceBeforeRead(addr, length, offset, callback);
+		} else {
+			if (!HitCache(&Curr, &Prev)) {
+				DoJustRead(addr, length, offset, callback);
+			} else {
+				prev = (Prev.offset + Prev.length - 1) >> 15;
+				if (prev == Curr.offset >> 15 || prev + 1 == Curr.offset >> 15) {
+					diff = __OSGetSystemTime() - LastReadFinished;
+					if (OSMillisecondsToTicks(5) < diff) {
+						DoJustRead(addr, length, offset, callback);
+					} else {
+						WaitBeforeRead(addr, length, offset, callback, OSMillisecondsToTicks(5) - diff + OSMicrosecondsToTicks(500));
+					}
+				} else {
+					SeekTwiceBeforeRead(addr, length, offset, callback);
+				}
+			}
+		}
+	}
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL DVDLowSeek(u32 offset, DVDLowCallback callback)
+{
+	StopAtNextInt          = FALSE;
+	Callback               = callback;
+	__DIRegs[DI_CMD_BUF_0] = 0xab000000;
+	__DIRegs[DI_CMD_BUF_1] = offset / 4;
+	__DIRegs[DI_CONTROL]   = 1;
+	SetTimeoutAlarm(OSSecondsToTicks(10));
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL DVDLowWaitCoverClose(DVDLowCallback callback)
+{
+	Callback                  = callback;
+	WaitingCoverClose         = TRUE;
+	StopAtNextInt             = FALSE;
+	__DIRegs[DI_COVER_STATUS] = 2;
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL DVDLowReadDiskID(DVDDiskID* diskID, DVDLowCallback callback)
+{
+	StopAtNextInt             = FALSE;
+	Callback                  = callback;
+	__DIRegs[DI_CMD_BUF_0]    = 0xa8000040;
+	__DIRegs[DI_CMD_BUF_1]    = 0;
+	__DIRegs[DI_CMD_BUF_2]    = sizeof(DVDDiskID);
+	__DIRegs[DI_DMA_MEM_ADDR] = (u32)diskID;
+	__DIRegs[DI_DMA_LENGTH]   = sizeof(DVDDiskID);
+	__DIRegs[DI_CONTROL]      = 3;
+	SetTimeoutAlarm(OSSecondsToTicks(10));
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL DVDLowStopMotor(DVDLowCallback callback)
+{
+	StopAtNextInt          = FALSE;
+	Callback               = callback;
+	__DIRegs[DI_CMD_BUF_0] = 0xe3000000;
+	__DIRegs[DI_CONTROL]   = 1;
+	SetTimeoutAlarm(OSSecondsToTicks(10));
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL DVDLowRequestError(DVDLowCallback callback)
+{
+	StopAtNextInt          = FALSE;
+	Callback               = callback;
+	__DIRegs[DI_CMD_BUF_0] = 0xe0000000;
+	__DIRegs[DI_CONTROL]   = 1;
+	SetTimeoutAlarm(OSSecondsToTicks(10));
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL DVDLowInquiry(DVDDriveInfo* info, DVDLowCallback callback)
+{
+	StopAtNextInt             = FALSE;
+	Callback                  = callback;
+	__DIRegs[DI_CMD_BUF_0]    = 0x12000000;
+	__DIRegs[DI_CMD_BUF_2]    = sizeof(DVDDriveInfo);
+	__DIRegs[DI_DMA_MEM_ADDR] = (u32)info;
+	__DIRegs[DI_DMA_LENGTH]   = sizeof(DVDDriveInfo);
+	__DIRegs[DI_CONTROL]      = 3;
+	SetTimeoutAlarm(OSSecondsToTicks(10));
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL DVDLowAudioStream(u32 subcmd, u32 length, u32 offset, DVDLowCallback callback)
+{
+	StopAtNextInt          = FALSE;
+	Callback               = callback;
+	__DIRegs[DI_CMD_BUF_0] = subcmd | 0xe1000000;
+	__DIRegs[DI_CMD_BUF_1] = offset >> 2;
+	__DIRegs[DI_CMD_BUF_2] = length;
+	__DIRegs[DI_CONTROL]   = 1;
+	SetTimeoutAlarm(OSSecondsToTicks(10));
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL DVDLowRequestAudioStatus(u32 subcmd, DVDLowCallback callback)
+{
+	StopAtNextInt          = FALSE;
+	Callback               = callback;
+	__DIRegs[DI_CMD_BUF_0] = subcmd | 0xe2000000;
+	__DIRegs[DI_CONTROL]   = 1;
+	SetTimeoutAlarm(OSSecondsToTicks(10));
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL DVDLowAudioBufferConfig(BOOL enable, u32 size, DVDLowCallback callback)
+{
+	StopAtNextInt          = FALSE;
+	Callback               = callback;
+	__DIRegs[DI_CMD_BUF_0] = 0xe4000000 | (enable != 0 ? 0x10000 : 0) | size;
+	__DIRegs[DI_CONTROL]   = 1;
+	SetTimeoutAlarm(OSSecondsToTicks(10));
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+void DVDLowReset()
+{
+	u32 reg;
+	OSTime resetStart;
+
+	__DIRegs[DI_COVER_STATUS] = 2;
+	reg                       = __PIRegs[PI_RESETCODE];
+	__PIRegs[PI_RESETCODE]    = (reg & ~4) | 1;
+
+	resetStart = __OSGetSystemTime();
+	while ((__OSGetSystemTime() - resetStart) < OSMicrosecondsToTicks(12))
+		;
+
+	__PIRegs[PI_RESETCODE] = reg | 5;
+	ResetOccurred          = TRUE;
+	LastResetEnd           = __OSGetSystemTime();
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000044
+ */
+void DVDLowSetResetCoverCallback(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00001C
+ */
+void DoBreak(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000074
+ */
+void AlarmHandlerForBreak(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000064
+ */
+void SetBreakAlarm(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL DVDLowBreak()
+{
+	StopAtNextInt = TRUE;
+	Breaking      = TRUE;
+	return TRUE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+DVDLowCallback DVDLowClearCallback()
+{
+	DVDLowCallback old;
+	__DIRegs[DI_COVER_STATUS] = 0;
+	old                       = Callback;
+	Callback                  = NULL;
+	return old;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000094
+ */
+void DVDLowGetCoverStatus(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ */
+void __DVDLowSetWAType(u32 type, u32 location)
+{
+	BOOL enabled;
+	enabled                = OSDisableInterrupts();
+	WorkAroundType         = type;
+	WorkAroundSeekLocation = location;
+	OSRestoreInterrupts(enabled);
+}

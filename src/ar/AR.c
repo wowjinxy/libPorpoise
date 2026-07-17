@@ -1,375 +1,452 @@
-/*---------------------------------------------------------------------------*
-  AR.c - ARAM (Auxiliary RAM / Audio RAM) Device Driver
-  
-  ARCHITECTURAL DIFFERENCES: GC/Wii vs PC
-  ========================================
-  
-  On GC/Wii (ARAM Hardware):
-  ---------------------------
-  - 16MB dedicated audio memory (separate from main RAM)
-  - Accessed via DMA transfers only (can't access directly)
-  - Connected to DSP for audio processing
-  - Used for storing audio samples, sound effects, music
-  - DMA transfers managed by DSP registers
-  - Requires 32-byte alignment for DMA
-  - Bottom 16KB reserved for OS use
-  
-  On PC (Simulated ARAM):
-  -----------------------
-  - Allocate 16MB from regular heap as "ARAM"
-  - DMA operations are just memcpy()
-  - No real separation from main RAM
-  - Audio data can be in regular memory
-  - Instant transfers (no DMA latency)
-  - Alignment still enforced for compatibility
-  
-  WHY SIMULATE:
-  - Games expect ARAM for audio data storage
-  - Audio libraries expect to DMA to/from ARAM
-  - Need address space separate from main RAM
-  - Maintains original memory layout for compatibility
-  
-  WHAT WE PRESERVE:
-  - Same API (ARInit, ARAlloc, ARStartDMA, etc.)
-  - 16MB size
-  - OS reserved area (16KB)
-  - Allocation/free system
-  - 32-byte alignment requirements
-  
-  WHAT'S DIFFERENT:
-  - No real hardware - just heap allocation
-  - DMA is instant memcpy (not asynchronous DMA)
-  - No DSP integration (PC audio uses different system)
- *---------------------------------------------------------------------------*/
-
 #include <dolphin/ar.h>
+#include <dolphin/hw_regs.h>
 #include <dolphin/os.h>
+#include <stddef.h>
 #include <string.h>
-#include <stdlib.h>
 
-/*---------------------------------------------------------------------------*
-    Internal State
- *---------------------------------------------------------------------------*/
+static ARCallback __AR_Callback;
+static u32 __AR_Size;
+#if OS_BUILD_VERSION >= 20011217L
+static u32 __AR_InternalSize;
+static u32 __AR_ExpansionSize;
+#endif
+static u32 __AR_StackPointer;
+static u32 __AR_FreeBlocks;
+static u32* __AR_BlockLength;
 
-static BOOL s_initialized = FALSE;
-static void* s_aramBase = NULL;              // Simulated ARAM memory
-static u32 s_aramSize = AR_INTERNAL_SIZE;    // 16MB
-static u32 s_aramAllocated = AR_OS_RESERVED; // Start after OS area
-static ARCallback s_dmaCallback = NULL;
-static volatile BOOL s_dmaBusy = FALSE;
+static volatile BOOL __AR_init_flag = FALSE;
 
-/*---------------------------------------------------------------------------*
-  Name:         ARInit
+static void __ARHandler(__OSInterrupt interrupt, OSContext* context);
+static void __ARChecksize(void);
 
-  Description:  Initialize ARAM subsystem. Allocates simulated ARAM from
-                heap and sets up allocation tracking.
-                
-                On GC/Wii: Probes ARAM size, sets up DSP registers
-                On PC: Allocates 16MB buffer from heap
-
-  Arguments:    stackIndexAddr  Pointer for allocation stack (can be NULL)
-                numEntries      Number of allocation entries (unused on PC)
-
-  Returns:      Base address of user ARAM (after OS reserved area)
- *---------------------------------------------------------------------------*/
-u32 ARInit(u32* stackIndexAddr, u32 numEntries) {
-    (void)stackIndexAddr;
-    (void)numEntries;
-    
-    if (s_initialized) {
-        return AR_OS_RESERVED;  // Return user base
-    }
-    
-    OSReport("AR: Initializing ARAM subsystem...\n");
-    
-    // Allocate simulated ARAM
-    s_aramBase = malloc(s_aramSize);
-    if (!s_aramBase) {
-        OSReport("AR: Failed to allocate ARAM!\n");
-        return 0;
-    }
-    
-    // Clear ARAM
-    memset(s_aramBase, 0, s_aramSize);
-    
-    s_aramAllocated = AR_OS_RESERVED;  // OS uses first 16KB
-    s_initialized = TRUE;
-    
-    OSReport("AR: ARAM initialized - %u bytes (%u MB)\n", 
-             s_aramSize, s_aramSize / (1024 * 1024));
-    OSReport("AR: User base address: 0x%08X\n", AR_OS_RESERVED);
-    
-    return AR_OS_RESERVED;
+/**
+ * @TODO: Documentation
+ */
+ARCallback ARRegisterDMACallback(ARCallback callback)
+{
+	ARCallback oldCb;
+	BOOL enabled;
+	oldCb         = __AR_Callback;
+	enabled       = OSDisableInterrupts();
+	__AR_Callback = callback;
+	OSRestoreInterrupts(enabled);
+	return oldCb;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARReset
-
-  Description:  Reset ARAM subsystem.
-
-  Arguments:    None
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void ARReset(void) {
-    if (s_aramBase) {
-        free(s_aramBase);
-        s_aramBase = NULL;
-    }
-    
-    s_initialized = FALSE;
-    s_aramAllocated = AR_OS_RESERVED;
-    s_dmaCallback = NULL;
-    s_dmaBusy = FALSE;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00003C
+ */
+void ARGetDMAStatus(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARGetSize
+/**
+ * @TODO: Documentation
+ */
+void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length)
+{
+	BOOL enabled;
 
-  Description:  Get total ARAM size.
+	enabled = OSDisableInterrupts();
 
-  Arguments:    None
+	// Set main mem address
+	__DSPRegs[DSP_ARAM_DMA_MM_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_MM_HI] & ~0x3ff) | (u16)(mainmem_addr >> 16);
+	__DSPRegs[DSP_ARAM_DMA_MM_LO] = (u16)(__DSPRegs[DSP_ARAM_DMA_MM_LO] & ~0xffe0) | (u16)(mainmem_addr & 0xffff);
 
-  Returns:      ARAM size in bytes (16MB)
- *---------------------------------------------------------------------------*/
-u32 ARGetSize(void) {
-    return s_aramSize;
+	// Set ARAM address
+	__DSPRegs[DSP_ARAM_DMA_ARAM_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_ARAM_HI] & ~0x3ff) | (u16)(aram_addr >> 16);
+	__DSPRegs[DSP_ARAM_DMA_ARAM_LO] = (u16)(__DSPRegs[DSP_ARAM_DMA_ARAM_LO] & ~0xffe0) | (u16)(aram_addr & 0xffff);
+
+	// Set DMA buffer size
+	__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)((__DSPRegs[DSP_ARAM_DMA_SIZE_HI] & ~0x8000) | (type << 15));
+	__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_HI] & ~0x3ff) | (u16)(length >> 16);
+	__DSPRegs[DSP_ARAM_DMA_SIZE_LO] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_LO] & ~0xffe0) | (u16)(length & 0xffff);
+
+	OSRestoreInterrupts(enabled);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARGetInternalSize
-
-  Description:  Get internal ARAM size (vs expansion ARAM).
-                GameCube has 16MB internal, no expansion on retail.
-
-  Arguments:    None
-
-  Returns:      Internal ARAM size in bytes
- *---------------------------------------------------------------------------*/
-u32 ARGetInternalSize(void) {
-    return s_aramSize;  // All internal on GameCube
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000068
+ */
+void ARAlloc(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARGetBaseAddress
-
-  Description:  Get base address of user ARAM (after OS reserved area).
-
-  Arguments:    None
-
-  Returns:      User ARAM base address (0x4000 = 16KB offset)
- *---------------------------------------------------------------------------*/
-u32 ARGetBaseAddress(void) {
-    return AR_OS_RESERVED;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000074
+ */
+void ARFree(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARCheckInit
-
-  Description:  Check if ARAM is initialized.
-
-  Arguments:    None
-
-  Returns:      TRUE if ARInit() has been called
- *---------------------------------------------------------------------------*/
-BOOL ARCheckInit(void) {
-    return s_initialized;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008
+ */
+void ARCheckInit(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARAlloc
+/**
+ * @TODO: Documentation
+ */
+u32 ARInit(u32* stack_index_addr, u32 num_entries)
+{
+	BOOL old;
+#if OS_BUILD_VERSION >= 20011217L
+#else
+	u16 refresh;
+#endif
 
-  Description:  Allocate ARAM space. Simple bump allocator.
-                
-                On GC/Wii: Allocates from ARAM address space
-                On PC: Allocates from simulated ARAM buffer
+	if (__AR_init_flag == TRUE) {
+		return __AR_ARAM_USR_BASE_ADDR;
+	}
 
-  Arguments:    length  Number of bytes to allocate
+	old = OSDisableInterrupts();
 
-  Returns:      ARAM address, or 0xFFFFFFFF if out of space
- *---------------------------------------------------------------------------*/
-u32 ARAlloc(u32 length) {
-    if (!s_initialized) {
-        return 0xFFFFFFFF;
-    }
-    
-    // Align to 32 bytes
-    length = (length + 31) & ~31;
-    
-    if (s_aramAllocated + length > s_aramSize) {
-        OSReport("AR: Out of ARAM space (requested %u bytes)\n", length);
-        return 0xFFFFFFFF;
-    }
-    
-    u32 addr = s_aramAllocated;
-    s_aramAllocated += length;
-    
-    return addr;
+	__AR_Callback = NULL;
+
+	__OSSetInterruptHandler(__OS_INTERRUPT_DSP_ARAM, __ARHandler);
+	__OSUnmaskInterrupts(OS_INTERRUPTMASK_DSP_ARAM);
+
+	__AR_StackPointer = __AR_ARAM_USR_BASE_ADDR;
+	__AR_FreeBlocks   = num_entries;
+	__AR_BlockLength  = stack_index_addr;
+
+#if OS_BUILD_VERSION >= 20011217L
+	// WHY?
+	__DSPRegs[DSP_ARAM_REFRESH] = __DSPRegs[DSP_ARAM_REFRESH] & 0xff | __DSPRegs[DSP_ARAM_REFRESH] & ~0xff;
+#else
+	refresh = 196.0f * (OS_BUS_CLOCK / 202500000.0f);
+
+	__DSPRegs[DSP_ARAM_REFRESH] = (u16)((__DSPRegs[DSP_ARAM_REFRESH] & ~0xFF) | (refresh & 0xFF));
+#endif
+
+	__ARChecksize();
+
+	__AR_init_flag = TRUE;
+
+	OSRestoreInterrupts(old);
+
+	return __AR_StackPointer;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARFree
-
-  Description:  Free ARAM space (simple stack-based free).
-                Only frees from top of allocation stack.
-
-  Arguments:    length  Pointer to receive size freed
-
-  Returns:      ARAM address that was freed
- *---------------------------------------------------------------------------*/
-u32 ARFree(u32* length) {
-    if (!s_initialized) {
-        if (length) *length = 0;
-        return 0;
-    }
-    
-    u32 freed = s_aramAllocated - AR_OS_RESERVED;
-    s_aramAllocated = AR_OS_RESERVED;
-    
-    if (length) {
-        *length = freed;
-    }
-    
-    return AR_OS_RESERVED;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00000C
+ */
+void ARReset(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARClear
-
-  Description:  Clear ARAM contents.
-
-  Arguments:    flag  Non-zero to perform clear
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void ARClear(u32 flag) {
-    if (!s_initialized || !flag || !s_aramBase) {
-        return;
-    }
-    
-    memset(s_aramBase, 0, s_aramSize);
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000004
+ */
+void ARSetSize(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARStartDMA
-
-  Description:  Start DMA transfer between ARAM and main RAM.
-                
-                On GC/Wii: Configures DSP DMA registers, starts transfer
-                On PC: Performs immediate memcpy, calls callback
-
-  Arguments:    type         DMA type (AR_MRAM_TO_ARAM or AR_ARAM_TO_MRAM)
-                mainmemAddr  Main memory address (must be 32-byte aligned)
-                aramAddr     ARAM address (must be 32-byte aligned)
-                length       Transfer length (must be multiple of 32)
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void ARStartDMA(u32 type, u32 mainmemAddr, u32 aramAddr, u32 length) {
-    if (!s_initialized || !s_aramBase) {
-        return;
-    }
-    
-    // Verify alignment
-    if ((mainmemAddr & 31) != 0 || (aramAddr & 31) != 0 || (length & 31) != 0) {
-        OSReport("AR: DMA addresses/length must be 32-byte aligned!\n");
-        return;
-    }
-    
-    // Verify ARAM bounds
-    if (aramAddr + length > s_aramSize) {
-        OSReport("AR: DMA would exceed ARAM bounds!\n");
-        return;
-    }
-    
-    s_dmaBusy = TRUE;
-    
-    // Perform DMA (instant memcpy on PC)
-    void* aramPtr = (u8*)s_aramBase + aramAddr;
-    void* mramPtr = (void*)mainmemAddr;
-    
-    if (type == AR_MRAM_TO_ARAM) {
-        // Copy from main RAM to ARAM
-        memcpy(aramPtr, mramPtr, length);
-    } else {
-        // Copy from ARAM to main RAM
-        memcpy(mramPtr, aramPtr, length);
-    }
-    
-    s_dmaBusy = FALSE;
-    
-    // Call callback if registered
-    if (s_dmaCallback) {
-        s_dmaCallback();
-    }
+/**
+ * @TODO: Documentation
+ */
+u32 ARGetBaseAddress()
+{
+	return __AR_ARAM_USR_BASE_ADDR;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARGetDMAStatus
-
-  Description:  Check if DMA operation is in progress.
-
-  Arguments:    None
-
-  Returns:      0 if idle, non-zero if busy
- *---------------------------------------------------------------------------*/
-u32 ARGetDMAStatus(void) {
-    return s_dmaBusy ? 1 : 0;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008
+ */
+void ARGetSize(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARRegisterDMACallback
+/**
+ * @TODO: Documentation
+ */
+void __ARHandler(__OSInterrupt interrupt, OSContext* context)
+{
+	OSContext exceptionContext;
+	u16 tmp;
 
-  Description:  Register callback to be called when DMA completes.
+	tmp                           = __DSPRegs[DSP_CONTROL_STATUS];
+	tmp                           = (u16)((tmp & ~(0x80 | 0x8)) | 0x20);
+	__DSPRegs[DSP_CONTROL_STATUS] = tmp;
 
-  Arguments:    callback  Callback function
+	OSClearContext(&exceptionContext);
+	OSSetCurrentContext(&exceptionContext);
 
-  Returns:      Previous callback
- *---------------------------------------------------------------------------*/
-ARCallback ARRegisterDMACallback(ARCallback callback) {
-    ARCallback prev = s_dmaCallback;
-    s_dmaCallback = callback;
-    return prev;
+	if (__AR_Callback) {
+		(*__AR_Callback)();
+	}
+
+	OSClearContext(&exceptionContext);
+	OSSetCurrentContext(context);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __ARClearInterrupt
-
-  Description:  Clear ARAM DMA interrupt flag.
-
-  Arguments:    None
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void __ARClearInterrupt(void) {
-    /* No hardware interrupts on PC */
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000018 (Matching by size)
+ */
+void __ARWaitForDMA(void)
+{
+	do {
+	} while ((__DSPRegs[DSP_CONTROL_STATUS] & 0x200));
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __ARGetInterruptStatus
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00009C
+ */
+void __ARWriteDMA(u32 mmem_addr, u32 aram_addr, u32 length)
+{
+	// Main mem address
+	__DSPRegs[DSP_ARAM_DMA_MM_HI] = (u16)((__DSPRegs[DSP_ARAM_DMA_MM_HI] & ~0x03ff) | (u16)(mmem_addr >> 16));
+	__DSPRegs[DSP_ARAM_DMA_MM_LO] = (u16)((__DSPRegs[DSP_ARAM_DMA_MM_LO] & ~0xffe0) | (u16)(mmem_addr & 0xffff));
 
-  Description:  Get ARAM interrupt status.
+	// ARAM address
+	__DSPRegs[DSP_ARAM_DMA_ARAM_HI] = (u16)((__DSPRegs[DSP_ARAM_DMA_ARAM_HI] & ~0x03ff) | (u16)(aram_addr >> 16));
+	__DSPRegs[DSP_ARAM_DMA_ARAM_LO] = (u16)((__DSPRegs[DSP_ARAM_DMA_ARAM_LO] & ~0xffe0) | (u16)(aram_addr & 0xffff));
 
-  Arguments:    None
+	// DMA buffer size
+	__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_HI] & ~0x8000);
 
-  Returns:      Interrupt status (0 on PC)
- *---------------------------------------------------------------------------*/
-u32 __ARGetInterruptStatus(void) {
-    return 0;  // No interrupts on PC
+	__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)((__DSPRegs[DSP_ARAM_DMA_SIZE_HI] & ~0x03ff) | (u16)(length >> 16));
+	__DSPRegs[DSP_ARAM_DMA_SIZE_LO] = (u16)((__DSPRegs[DSP_ARAM_DMA_SIZE_LO] & ~0xffe0) | (u16)(length & 0xffff));
+
+	__ARWaitForDMA();
+
+#if OS_BUILD_VERSION >= 20011217L
+	__DSPRegs[DSP_CONTROL_STATUS] = __DSPRegs[DSP_CONTROL_STATUS] & ~0x88 | 0x20;
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         ARSetSize
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00009C
+ */
+void __ARReadDMA(u32 mmem_addr, u32 aram_addr, u32 length)
+{
+	// Main mem address
+	__DSPRegs[DSP_ARAM_DMA_MM_HI] = (u16)((__DSPRegs[DSP_ARAM_DMA_MM_HI] & ~0x03ff) | (u16)(mmem_addr >> 16));
+	__DSPRegs[DSP_ARAM_DMA_MM_LO] = (u16)((__DSPRegs[DSP_ARAM_DMA_MM_LO] & ~0xffe0) | (u16)(mmem_addr & 0xffff));
 
-  Description:  Set ARAM size (obsolete - size is auto-detected).
+	// ARAM address
+	__DSPRegs[DSP_ARAM_DMA_ARAM_HI] = (u16)((__DSPRegs[DSP_ARAM_DMA_ARAM_HI] & ~0x03ff) | (u16)(aram_addr >> 16));
+	__DSPRegs[DSP_ARAM_DMA_ARAM_LO] = (u16)((__DSPRegs[DSP_ARAM_DMA_ARAM_LO] & ~0xffe0) | (u16)(aram_addr & 0xffff));
 
-  Arguments:    None
+	// DMA buffer size
+	__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_HI] | 0x8000);
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void ARSetSize(void) {
-    /* Obsolete function - ARAM size is fixed at 16MB.
-     * Exists for API compatibility only.
-     */
+	__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)((__DSPRegs[DSP_ARAM_DMA_SIZE_HI] & ~0x03ff) | (u16)(length >> 16));
+	__DSPRegs[DSP_ARAM_DMA_SIZE_LO] = (u16)((__DSPRegs[DSP_ARAM_DMA_SIZE_LO] & ~0xffe0) | (u16)(length & 0xffff));
+
+	__ARWaitForDMA();
+
+#if OS_BUILD_VERSION >= 20011217L
+	__DSPRegs[DSP_CONTROL_STATUS] = __DSPRegs[DSP_CONTROL_STATUS] & ~0x88 | 0x20;
+#endif
 }
 
+// Really repetitive changes to the following function that are better represented by macros.
+#if OS_BUILD_VERSION >= 20011217L
+#define __ARWaitForDMAToFinish(buffer, size) PPCSync()
+#define __ARSetExpansionSize(value)          (__AR_ExpansionSize = (value))
+#else
+#define __ARWaitForDMAToFinish(buffer, size) DCInvalidateRange(buffer, size)
+#define __ARSetExpansionSize(value)          ((void)0)
+#endif
+
+/**
+ * @TODO: Documentation
+ */
+void __ARChecksize(void)
+{
+	u8 test_data_pad[63];
+	u8 dummy_data_pad[63];
+	u8 buffer_pad[63];
+	u32* test_data;
+	u32* dummy_data;
+	u32* buffer;
+	u16 ARAM_mode;
+	u32 ARAM_size;
+	u32 i;
+
+#if OS_BUILD_VERSION >= 20011217L
+	do {
+	} while (!(__DSPRegs[DSP_ARAM_MODE] & 1));
+
+	ARAM_mode = 3;
+	ARAM_size = __AR_InternalSize = 0x1000000;
+
+	__DSPRegs[DSP_ARAM_SIZE] = ((__DSPRegs[DSP_ARAM_SIZE] & 0xFFFFFFC0) | ARAM_mode) | 0x20;
+#else
+	ARAM_mode = 0;
+	ARAM_size = 0;
+#endif
+
+	test_data  = (u32*)(OSRoundUp32B((u32)(test_data_pad)));
+	dummy_data = (u32*)(OSRoundUp32B((u32)(dummy_data_pad)));
+	buffer     = (u32*)(OSRoundUp32B((u32)(buffer_pad)));
+
+	for (i = 0; i < 8; i++) {
+		test_data[i]  = 0xDEADBEEF;
+		dummy_data[i] = 0xBAD0BAD0;
+	}
+
+	DCFlushRange(test_data, 0x20);
+	DCFlushRange(dummy_data, 0x20);
+
+#if OS_BUILD_VERSION >= 20011217L
+#else
+	do {
+	} while (!(__DSPRegs[DSP_ARAM_MODE] & 1));
+
+	__DSPRegs[DSP_ARAM_SIZE] = ((__DSPRegs[DSP_ARAM_SIZE] & 0xFFFFFFC0) | 4) | 0x20;
+
+	__ARWriteDMA((u32)dummy_data, ARAM_size + 0x0, 0x20U);
+	__ARWriteDMA((u32)dummy_data, ARAM_size + 0x200000, 0x20U);
+	__ARWriteDMA((u32)dummy_data, ARAM_size + 0x200, 0x20U);
+	__ARWriteDMA((u32)dummy_data, ARAM_size + 0x1000000, 0x20U);
+	__ARWriteDMA((u32)dummy_data, ARAM_size + 0x400000, 0x20U);
+
+	memset(buffer, 0, 0x20);
+	DCFlushRange(buffer, 0x20);
+	__ARWriteDMA((u32)test_data, 0U, 0x20U);
+	__ARReadDMA((u32)buffer, 0U, 0x20U);
+	DCInvalidateRange(buffer, 0x20);
+
+	if (*buffer == *test_data) {
+		memset(buffer, 0, 0x20);
+		DCFlushRange(buffer, 0x20);
+		__ARReadDMA((u32)buffer, 0x200000U, 0x20U);
+		DCInvalidateRange(buffer, 0x20);
+		if (*buffer == *test_data) {
+			ARAM_mode = 0;
+			ARAM_size = 0x200000;
+		} else {
+			memset(buffer, 0, 0x20);
+			DCFlushRange(buffer, 0x20);
+			__ARReadDMA((u32)buffer, 0x01000000U, 0x20U);
+			DCInvalidateRange(buffer, 0x20);
+
+			if (*buffer == *test_data) {
+				ARAM_mode = 1;
+				ARAM_size = 0x400000;
+
+			} else {
+				memset(buffer, 0, 0x20);
+				DCFlushRange(buffer, 0x20);
+				__ARReadDMA((u32)buffer, 0x200U, 0x20U);
+				DCInvalidateRange(buffer, 0x20);
+
+				if (*buffer == *test_data) {
+					ARAM_mode = 2;
+					ARAM_size = 0x800000;
+
+				} else {
+					memset(buffer, 0, 0x20);
+					DCFlushRange(buffer, 0x20);
+					__ARReadDMA((u32)buffer, 0x400000U, 0x20U);
+					DCInvalidateRange(buffer, 0x20);
+
+					if (*buffer == *test_data) {
+						ARAM_mode = 3;
+						ARAM_size = 0x01000000;
+
+					} else {
+						ARAM_mode = 4;
+						ARAM_size = 0x02000000;
+					}
+				}
+			}
+		}
+	}
+
+	__DSPRegs[DSP_ARAM_SIZE] = (u16)((__DSPRegs[DSP_ARAM_SIZE] & 0xFFFFFFC0) | 0x20) | ARAM_mode;
+#endif
+
+	__ARSetExpansionSize(0);
+
+	__ARWriteDMA((u32)dummy_data, ARAM_size, 0x20U);
+	__ARWriteDMA((u32)dummy_data, ARAM_size + 0x200000, 0x20U);
+	__ARWriteDMA((u32)dummy_data, ARAM_size + 0x01000000, 0x20U);
+	__ARWriteDMA((u32)dummy_data, ARAM_size + 0x200, 0x20U);
+	__ARWriteDMA((u32)dummy_data, ARAM_size + 0x400000, 0x20U);
+
+	memset(buffer, 0, 0x20);
+	DCFlushRange(buffer, 0x20);
+	__ARWriteDMA((u32)test_data, ARAM_size, 0x20U);
+#if OS_BUILD_VERSION >= 20011217L
+	DCInvalidateRange(buffer, 0x20U); // Probably related to the revisional difference in `__ARWaitForDMAToFinish`.
+#endif
+	__ARReadDMA((u32)buffer, ARAM_size, 0x20U);
+	__ARWaitForDMAToFinish(buffer, 0x20);
+
+	if (*buffer == *test_data) {
+		memset(buffer, 0, 0x20);
+		DCFlushRange(buffer, 0x20);
+		__ARReadDMA((u32)buffer, ARAM_size + 0x200000, 0x20U);
+		__ARWaitForDMAToFinish(buffer, 0x20);
+
+		if (*buffer == *test_data) {
+			ARAM_size += 0x200000;
+			__ARSetExpansionSize(0x200000);
+		} else {
+			memset(buffer, 0, 0x20);
+			DCFlushRange(buffer, 0x20);
+			__ARReadDMA((u32)buffer, ARAM_size + 0x01000000, 0x20U);
+			__ARWaitForDMAToFinish(buffer, 0x20);
+
+			if (*buffer == *test_data) {
+				ARAM_mode |= 8;
+				ARAM_size += 0x400000;
+				__ARSetExpansionSize(0x400000);
+			} else {
+				memset(buffer, 0, 0x20);
+				DCFlushRange(buffer, 0x20);
+				__ARReadDMA((u32)buffer, ARAM_size + 0x200, 0x20U);
+				__ARWaitForDMAToFinish(buffer, 0x20);
+
+				if (*buffer == *test_data) {
+					ARAM_mode |= 0x10;
+					ARAM_size += 0x800000;
+					__ARSetExpansionSize(0x800000);
+				} else {
+					memset(buffer, 0, 0x20);
+					DCFlushRange(buffer, 0x20);
+					__ARReadDMA((u32)buffer, ARAM_size + 0x400000, 0x20U);
+					__ARWaitForDMAToFinish(buffer, 0x20);
+
+					if (*buffer == *test_data) {
+						ARAM_mode |= 0x18;
+						ARAM_size += 0x01000000;
+						__ARSetExpansionSize(0x1000000);
+					} else {
+						ARAM_mode |= 0x20;
+						ARAM_size += 0x02000000;
+						__ARSetExpansionSize(0x2000000);
+					}
+				}
+			}
+		}
+		__DSPRegs[DSP_ARAM_SIZE] = ((u16)(__DSPRegs[DSP_ARAM_SIZE] & 0xFFFFFFC0) | ARAM_mode);
+	}
+	*(u32*)OSPhysicalToUncached(0xD0) = ARAM_size;
+	__AR_Size                         = ARAM_size;
+}
+
+#undef __ARWaitForDMAToFinish
+#undef __ARSetExpansionSize

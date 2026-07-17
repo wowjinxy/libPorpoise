@@ -1,44 +1,52 @@
-#ifndef DOLPHIN_OSALARM_H
-#define DOLPHIN_OSALARM_H
+#ifndef _DOLPHIN_OS_OSALARM_H
+#define _DOLPHIN_OS_OSALARM_H
 
+#include "dolphin/OS/OSContext.h"
+#include "dolphin/OS/OSTime.h"
+#include "dolphin/OS/OSUtil.h"
 #include <dolphin/types.h>
-#include <dolphin/os/OSContext.h>
-#include <dolphin/os/OSTime.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+BEGIN_SCOPE_EXTERN_C
 
-typedef struct OSAlarm  OSAlarm;
+/////////// ALARM TYPES //////////
+typedef struct OSAlarm OSAlarm;
+typedef struct OSAlarmQueue OSAlarmQueue;
+
+// Generic alarm handler function.
 typedef void (*OSAlarmHandler)(OSAlarm* alarm, OSContext* context);
 
-struct OSAlarm
-{
-    OSAlarmHandler  handler;
-    u32             tag;
-    OSTime          fire;
-    OSAlarm*        prev;
-    OSAlarm*        next;
-    OSTime          period;
-    OSTime          start;
-    void*           userData;
+// Struct for storing alarm information (size 0x28).
+struct OSAlarm {
+	OSAlarmHandler handler; // _00
+	u32 tag;                // _04
+	OSTime fire;            // _08
+	OSAlarm* prev;          // _10
+	OSAlarm* next;          // _14
+	OSTime period;          // _18, period of periodic alarm
+	OSTime start;           // _20, start of periodic alarm
 };
 
-void OSInitAlarm        (void);  // Initialize alarm subsystem
-void OSSetAlarm         (OSAlarm* alarm, OSTime tick, OSAlarmHandler handler);
-void OSSetAlarmTag      (OSAlarm* alarm, u32 tag);
-void OSSetAbsAlarm      (OSAlarm* alarm, OSTime time, OSAlarmHandler handler);
-void OSSetPeriodicAlarm (OSAlarm* alarm, OSTime start, OSTime period, OSAlarmHandler handler);
-void OSCreateAlarm      (OSAlarm* alarm);
-void OSCancelAlarm      (OSAlarm* alarm);
-void OSCancelAlarms     (u32 tag);
-BOOL OSCheckAlarmQueue  (void);
-void OSSetAlarmUserData (OSAlarm* alarm, void* data);
-void* OSGetAlarmUserData(const OSAlarm* alarm);
+// Queue struct for OSAlarm.
+struct OSAlarmQueue {
+	OSAlarm* head;
+	OSAlarm* tail;
+};
 
-#ifdef __cplusplus
-}
+// Alarm functions.
+void OSInitAlarm();
+void OSSetAlarm(OSAlarm* alarm, OSTime tick, OSAlarmHandler handler);
+void OSCreateAlarm(OSAlarm* alarm);
+void OSCancelAlarm(OSAlarm* alarm);
+
+// Unused/inlined in P2.
+BOOL OSCheckAlarmQueue();
+void OSSetAbsAlarm(OSAlarm* alarm, OSTime time, OSAlarmHandler handler);
+void OSSetPeriodicAlarm(OSAlarm* alarm, OSTime start, OSTime period, OSAlarmHandler handler);
+void OSSetAlarmTag(OSAlarm* alarm, u32 tag);
+void OSCancelAlarms(u32 tag);
+
+//////////////////////////////////
+
+END_SCOPE_EXTERN_C
+
 #endif
-
-#endif /* DOLPHIN_OSALARM_H */
-

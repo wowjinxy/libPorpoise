@@ -1,7 +1,6 @@
 libpad_srcs = files(
-    'PAD.c',
-    'PADClamp.c',
-    'PADConfig.c'
+    'Pad.c',
+    'Padclamp.c'
 )
 
 libpad = library('pad',

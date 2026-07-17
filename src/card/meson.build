@@ -4,12 +4,16 @@ libcard_srcs = files(
     'CARDCheck.c',
     'CARDCreate.c',
     'CARDDelete.c',
+	'CARDDir.c',
     'CARDFormat.c',
     'CARDMount.c',
+	'CARDNet.c',
     'CARDOpen.c',
+	'CARDRdwr.c',
     'CARDRead.c',
     'CARDRename.c',
     'CARDStat.c',
+	'CARDUnlock.c',
     'CARDWrite.c'
 )
 

@@ -1,97 +1,71 @@
-/*---------------------------------------------------------------------------*
-  DVDError.c - DVD Error Handling and Logging
-  
-  Handles DVD error codes and logging.
-  
-  On GC/Wii: Stores error codes in NAND flash for diagnostics
-  On PC: Logs to console only
- *---------------------------------------------------------------------------*/
+#include "Dolphin/dvd.h"
+#include "Dolphin/os.h"
 
-#include <dolphin/dvd.h>
-#include <dolphin/os.h>
+#if OS_BUILD_VERSION >= 20011217L
+u32 ErrorTable[18] = { 0x00000000, 0x00023A00, 0x00062800, 0x00030200, 0x00031100, 0x00052000, 0x00052001, 0x00052100, 0x00052400,
+	                   0x00052401, 0x00052402, 0x000B5A01, 0x00056300, 0x00020401, 0x00020400, 0x00040800, 0x00100007, 0x00000000 };
+#else
+u32 ErrorTable[16] = { 0x00000000, 0x00023A00, 0x00062800, 0x00030200, 0x00031100, 0x00052000, 0x00052001, 0x00052100,
+	                   0x00052400, 0x00052401, 0x00052402, 0x000B5A01, 0x00056300, 0x00020401, 0x00020400, 0x00040800 };
+#endif
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000E4
+ */
+u8 ErrorCode2Num(u32 errorCode)
+{
+	int i;
+	for (i = 0; i < ARRAY_SIZE(ErrorTable); i++) {
+		if (errorCode == ErrorTable[i]) {
+			return i;
+		}
+	}
 
-/*---------------------------------------------------------------------------*
-    Error Codes
- *---------------------------------------------------------------------------*/
+#if OS_BUILD_VERSION >= 20011217L
+	if ((errorCode >= 0x00100000) && (errorCode <= 0x00100008)) {
+		return 17;
+	}
+#endif
 
-#define DVD_INTERNALERROR_NO_ERROR                      0x000000
-#define DVD_INTERNALERROR_COVEROPEN_OR_NODISK           0x023A00
-#define DVD_INTERNALERROR_COVER_CLOSED                  0x020400
-#define DVD_INTERNALERROR_NO_SEEK_COMPLETE              0x030200
-#define DVD_INTERNALERROR_UNRECOVERED_READ              0x031100
-#define DVD_INTERNALERROR_INVALID_COMMAND               0x052000
-#define DVD_INTERNALERROR_AUDIOBUF_NOT_SET              0x052001
-#define DVD_INTERNALERROR_LBA_OUT_OF_RANGE              0x052100
-#define DVD_INTERNALERROR_INVALID_FIELD                 0x052400
-#define DVD_INTERNALERROR_INVALID_AUDIO_COMMAND         0x052401
-#define DVD_INTERNALERROR_AUDIOBUF_CONFIG_NOT_ALLOWED   0x052402
-#define DVD_INTERNALERROR_OP_DISK_RM_REQ                0x062800
-#define DVD_INTERNALERROR_END_OF_USER_AREA              0x063100
-#define DVD_INTERNALERROR_ID_NOT_READ                   0x020E00
-#define DVD_INTERNALERROR_MOTOR_STOPPED                 0x040800
-#define DVD_INTERNALERROR_PROTOCOL_ERROR                0x040100
-
-static BOOL s_errorLogged = FALSE;
-static u32 s_lastError = DVD_INTERNALERROR_NO_ERROR;
-
-/*---------------------------------------------------------------------------*
-  Name:         __DVDStoreErrorCode
-
-  Description:  Store DVD error code for diagnostics.
-                
-                On GC/Wii: Writes error to NAND flash with timestamp
-                On PC: Logs to console
-
-  Arguments:    errorCode  DVD error code
-                result     Operation result
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void __DVDStoreErrorCode(u32 errorCode, u32 result) {
-    s_lastError = errorCode;
-    s_errorLogged = TRUE;
-    
-    OSReport("DVD: Error logged - Code: 0x%06X, Result: 0x%08X\n", 
-             errorCode, result);
+	return 29;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __DVDGetLastError
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000128
+ */
+u8 Convert(u32 error)
+{
+	u32 statusCode;
+	u32 errorCode;
+	u8 errorNum;
 
-  Description:  Get last logged error code.
+	if (error == 0x01234567) {
+		return -1;
+	} else if (error == 0x01234568) {
+		return -2;
+	}
 
-  Arguments:    None
+	statusCode = (error >> 24) & 0xFF;
+	errorCode  = error & 0x00FFFFFF;
+	errorNum   = ErrorCode2Num(errorCode);
+	if (statusCode >= 6) {
+		statusCode = 6;
+	}
 
-  Returns:      Last error code
- *---------------------------------------------------------------------------*/
-u32 __DVDGetLastError(void) {
-    return s_lastError;
+	return statusCode * 30 + errorNum;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __DVDClearErrorLog
+/**
+ * @TODO: Documentation
+ */
+void __DVDStoreErrorCode(u32 error)
+{
+	OSSramEx* sram;
+	u8 num;
 
-  Description:  Clear error log.
-
-  Arguments:    None
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void __DVDClearErrorLog(void) {
-    s_errorLogged = FALSE;
-    s_lastError = DVD_INTERNALERROR_NO_ERROR;
+	num                = Convert(error);
+	sram               = __OSLockSramEx();
+	sram->dvdErrorCode = num;
+	__OSUnlockSramEx(TRUE);
 }
-
-/*---------------------------------------------------------------------------*
-  Name:         __DVDHasErrorLogged
-
-  Description:  Check if any error has been logged.
-
-  Arguments:    None
-
-  Returns:      TRUE if error logged, FALSE otherwise
- *---------------------------------------------------------------------------*/
-BOOL __DVDHasErrorLogged(void) {
-    return s_errorLogged;
-}
-

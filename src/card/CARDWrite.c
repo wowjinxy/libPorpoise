@@ -1,87 +1,140 @@
-/*---------------------------------------------------------------------------*
-  CARDWrite.c - File Write Operations
- *---------------------------------------------------------------------------*/
+#include "Dolphin/card.h"
+#include <stddef.h>
 
-#include <dolphin/card.h>
-#include <dolphin/card_internal.h>
-#include <dolphin/os.h>
-#include <dolphin/porpoise/Guard.h>
-#include <stdio.h>
+static void EraseCallback(s32 chan, s32 result);
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDWriteAsync
+/**
+ * @TODO: Documentation
+ */
+static void WriteCallback(s32 channel, s32 result)
+{
+	CARDControl* card;
+	CARDCallback callback;
+	CARDFatBlock* fat;
+	CARDDirectoryBlock* dir;
+	CARDDir* ent;
+	CARDFileInfo* fileInfo;
 
-  Description:  Write to file (asynchronous).
+	card = &__CARDBlock[channel];
+	if (result < CARD_RESULT_READY) {
+		goto error;
+	}
 
-  Arguments:    fileInfo  File info
-                buf       Source buffer
-                length    Bytes to write
-                offset    File offset
-                callback  Completion callback
+	fileInfo = card->fileInfo;
+	if (fileInfo->length < 0) {
+		result = CARD_RESULT_CANCELED;
+		goto error;
+	}
 
-  Returns:      Bytes written, or error
- *---------------------------------------------------------------------------*/
-s32 CARDWriteAsync(CARDFileInfo* fileInfo, const void* buf, s32 length,
-                   s32 offset, CARDCallback callback) {
-    PP_GUARD_PTR_RET(fileInfo, CARD_RESULT_FATAL_ERROR);
-    PP_GUARD_PTR_RET(buf, CARD_RESULT_FATAL_ERROR);
-    PP_GUARD_NONNEG_RET(length, CARD_RESULT_FATAL_ERROR);
-    PP_GUARD_NONNEG_RET(offset, CARD_RESULT_FATAL_ERROR);
-    
-    s32 chan = fileInfo->chan;
-    PP_GUARD_RET(chan >= 0 && chan < CARD_MAX_CHAN, CARD_RESULT_FATAL_ERROR, "invalid channel");
-    
-    if (!__CARDCards[chan].mounted) {
-        return CARD_RESULT_NOCARD;
-    }
-    
-    // Get filename from file number
-    s32 fileNo = fileInfo->fileNo;
-    PP_GUARD_RET(fileNo >= 0 && fileNo < 127 && __CARDCards[chan].openFiles[fileNo][0] != '\0',
-                 CARD_RESULT_FATAL_ERROR, "file is not open");
-    
-    const char* fileName = __CARDCards[chan].openFiles[fileNo];
-    char path[512];
-    __CARDBuildFilePath(chan, fileName, path, sizeof(path));
-    
-    // Write to actual file (read+write mode to preserve existing data)
-    FILE* file = fopen(path, "r+b");
-    if (!file) {
-        // Try creating if doesn't exist
-        file = fopen(path, "w+b");
-        if (!file) {
-            return CARD_RESULT_IOERROR;
-        }
-    }
-    
-    if (fseek(file, offset, SEEK_SET) != 0) {
-        fclose(file);
-        return CARD_RESULT_IOERROR;
-    }
-    
-    size_t bytesWritten = fwrite(buf, 1, length, file);
-    fclose(file);
-    
-    if (callback) {
-        callback(chan, (s32)bytesWritten);
-    }
-    
-    return (s32)bytesWritten;
+	fileInfo->length -= card->sectorSize;
+	if (fileInfo->length <= 0) {
+		dir               = __CARDGetDirBlock(card);
+		ent               = &dir->entries[fileInfo->fileNo];
+		ent->time         = (u32)OSTicksToSeconds(OSGetTime());
+		callback          = card->apiCallback;
+		card->apiCallback = NULL;
+		result            = __CARDUpdateDir(channel, callback);
+
+	} else {
+		fat = __CARDGetFatBlock(card);
+		fileInfo->offset += card->sectorSize;
+		fileInfo->iBlock = ((u16*)fat)[fileInfo->iBlock];
+		if (!CARDIsValidBlockNo(card, fileInfo->iBlock)) {
+			result = CARD_RESULT_BROKEN;
+			goto error;
+		}
+		result = __CARDEraseSector(channel, card->sectorSize * (u32)fileInfo->iBlock, EraseCallback);
+	}
+
+	if (result < CARD_RESULT_READY) {
+		goto error;
+	}
+	return;
+
+error:
+	callback          = card->apiCallback;
+	card->apiCallback = NULL;
+	__CARDPutControlBlock(card, result);
+	callback(channel, result);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDWrite
+/**
+ * @TODO: Documentation
+ */
+void EraseCallback(s32 channel, s32 result)
+{
+	CARDControl* card;
+	CARDCallback callback;
+	CARDFileInfo* fileInfo;
 
-  Description:  Write to file (synchronous).
+	card = &__CARDBlock[channel];
+	if (result < CARD_RESULT_READY) {
+		goto error;
+	}
 
-  Arguments:    fileInfo  File info
-                buf       Source buffer
-                length    Bytes to write
-                offset    File offset
+	fileInfo = card->fileInfo;
+	result   = __CARDWrite(channel, card->sectorSize * (u32)fileInfo->iBlock, card->sectorSize, card->buffer, WriteCallback);
+	if (result < CARD_RESULT_READY) {
+		goto error;
+	}
+	return;
 
-  Returns:      Bytes written, or error
- *---------------------------------------------------------------------------*/
-s32 CARDWrite(CARDFileInfo* fileInfo, const void* buf, s32 length, s32 offset) {
-    return CARDWriteAsync(fileInfo, buf, length, offset, NULL);
+error:
+	callback          = card->apiCallback;
+	card->apiCallback = NULL;
+	__CARDPutControlBlock(card, result);
+	callback(channel, result);
 }
 
+/**
+ * @TODO: Documentation
+ */
+s32 CARDWriteAsync(CARDFileInfo* fileInfo, void* buffer, s32 length, s32 offset, CARDCallback callback)
+{
+	CARDControl* card;
+	s32 result;
+	CARDDirectoryBlock* dir;
+	CARDDir* ent;
+
+	result = __CARDSeek(fileInfo, length, offset, &card);
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
+
+	if (OFFSET(offset, card->sectorSize) != 0 || OFFSET(length, card->sectorSize) != 0) {
+		return __CARDPutControlBlock(card, CARD_RESULT_FATAL_ERROR);
+	}
+
+	dir = __CARDGetDirBlock(card);
+	ent = &dir->entries[fileInfo->fileNo];
+#if OS_BUILD_VERSION >= 20011112L
+	result = __CARDAccess(card, ent);
+#else
+	result = __CARDAccess(ent);
+#endif
+	if (result < CARD_RESULT_READY) {
+		return __CARDPutControlBlock(card, result);
+	}
+
+	DCStoreRange(buffer, (u32)length);
+	card->apiCallback = callback ? callback : __CARDDefaultApiCallback;
+	card->buffer      = buffer;
+	result            = __CARDEraseSector(fileInfo->chan, card->sectorSize * (u32)fileInfo->iBlock, EraseCallback);
+	if (result < CARD_RESULT_READY) {
+		__CARDPutControlBlock(card, result);
+	}
+	return result;
+}
+
+/**
+ * @TODO: Documentation
+ */
+s32 CARDWrite(CARDFileInfo* fileInfo, void* buffer, s32 length, s32 offset)
+{
+	s32 result = CARDWriteAsync(fileInfo, buffer, length, offset, __CARDSyncCallback);
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
+
+	return __CARDSync(fileInfo->chan);
+}

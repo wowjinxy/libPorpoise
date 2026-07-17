@@ -1,183 +1,78 @@
-/**
- * @file exi.h
- * @brief EXI (External Interface) API for libPorpoise
- * 
- * On GameCube/Wii: Manages external devices (memory cards, serial ports, broadband adapter)
- * On PC: Stub implementation - devices simulated elsewhere (CARD module will handle save data)
- */
+#ifndef _DOLPHIN_EXI_H
+#define _DOLPHIN_EXI_H
 
-#ifndef DOLPHIN_EXI_H
-#define DOLPHIN_EXI_H
+#include "Dolphin/OS/OSExpansion.h"
+#include "Dolphin/OS/OSInterrupt.h"
+#include "Dolphin/OS/OSVersion.h"
+#include "Dolphin/hw_regs.h"
+#include "dolphin/types.h"
 
-#ifdef __cplusplus
-extern "C" {
+BEGIN_SCOPE_EXTERN_C
+
+/////////// EXI DEFINES //////////
+// Useful numbers.
+#define EXI_TX       0x800400u
+#define EXI_MAGIC    0xa5ff005a
+#define EXI_MAX_DEV  3
+#define EXI_MAX_CHAN 3
+#define EXI_REG_MAX  5
+
+// Useful macros.
+#define EXI_0CR(tstart, dma, rw, tlen) ((((u32)(tstart)) << 0) | (((u32)(dma)) << 1) | (((u32)(rw)) << 2) | (((u32)(tlen)) << 4))
+
+#define EXIREG(chan, idx) (__EXIRegs[((chan) * EXI_REG_MAX) + (idx)])
+
+#define EXI_CPR_CS(x)  ((1u << (x)) << 7)
+#define EXI_CPR_CLK(x) ((x) << 4)
+
+extern s32 __EXIProbeStartTime[2] AT_ADDRESS(OS_BASE_CACHED | 0x30C0);
+
+//////////////////////////////////
+
+/////////// EXI STRUCTS //////////
+// Struct for handling expansion information (size 0x40).
+typedef struct EXIControl {
+	EXICallback exiCallback; // _00
+	EXICallback tcCallback;  // _04
+	EXICallback extCallback; // _08
+	vu32 state;              // _0C
+	int immLen;              // _10
+	u8* immBuf;              // _14
+	u32 dev;                 // _18
+#if OS_BUILD_VERSION >= 20011112L
+	u32 id;
+	s32 idTime;
 #endif
+	int items; // _24
+	struct {
+		u32 dev;
+		EXICallback callback;
+	} queue[EXI_MAX_DEV]; // _28
+} EXIControl;
 
-#include <dolphin/types.h>
+//////////////////////////////////
 
-// Forward declarations
-typedef struct OSContext OSContext;
+////////// EXI FUNCTIONS /////////
+void EXIInit();
 
-/*---------------------------------------------------------------------------*
-    Constants
- *---------------------------------------------------------------------------*/
+BOOL EXIImm(s32 channel, void* buffer, s32 length, u32 type, EXICallback callback);
+BOOL EXIImmEx(s32 channel, void* buffer, s32 length, u32 type);
+BOOL EXIDma(s32 channel, void* buffer, s32 length, u32 type, EXICallback callback);
+BOOL EXISync(s32 channel);
+u32 EXIClearInterrupts(s32 channel, BOOL clearExiBit, BOOL clearTcBit, BOOL clearExtBit);
+EXICallback EXISetExiCallback(s32 channel, EXICallback callback);
+BOOL EXIAttach(s32 channel, EXICallback callback);
+BOOL EXIDetach(s32 channel);
+BOOL EXISelect(s32 channel, u32 device, u32 frequency);
+BOOL EXIDeselect(s32 channel);
 
-// EXI channels
-#define EXI_CHANNEL_0   0
-#define EXI_CHANNEL_1   1
-#define EXI_CHANNEL_2   2
-#define EXI_MAX_CHAN    3
+BOOL EXILock(s32 channel, u32 device, EXICallback callback);
+BOOL EXIUnlock(s32 channel);
+u32 EXIGetState(s32 channel);
+s32 EXIGetID(s32 channel, u32 device, u32* id);
 
-// EXI devices per channel
-#define EXI_DEVICE_0    0
-#define EXI_DEVICE_1    1
-#define EXI_DEVICE_2    2
-#define EXI_MAX_DEV     3
+//////////////////////////////////
 
-// EXI frequencies
-#define EXI_FREQ_1MHZ   0
-#define EXI_FREQ_2MHZ   1
-#define EXI_FREQ_4MHZ   2
-#define EXI_FREQ_8MHZ   3
-#define EXI_FREQ_16MHZ  4
-#define EXI_FREQ_32MHZ  5
+END_SCOPE_EXTERN_C
 
-// EXI transfer modes
-#define EXI_READ        0
-#define EXI_WRITE       1
-#define EXI_READ_WRITE  2
-
-/*---------------------------------------------------------------------------*
-    Types
- *---------------------------------------------------------------------------*/
-
-/**
- * @brief EXI callback function type
- */
-typedef void (*EXICallback)(s32 chan, OSContext* context);
-
-/*---------------------------------------------------------------------------*
-    Functions
- *---------------------------------------------------------------------------*/
-
-/**
- * @brief Attach to EXI device
- */
-BOOL EXIAttach(s32 chan, EXICallback detachCallback);
-
-/**
- * @brief Detach from EXI device
- */
-BOOL EXIDetach(s32 chan);
-
-/**
- * @brief Lock EXI channel for exclusive access
- */
-BOOL EXILock(s32 chan, u32 dev, EXICallback unlockCallback);
-
-/**
- * @brief Unlock EXI channel
- */
-BOOL EXIUnlock(s32 chan);
-
-/**
- * @brief Select EXI device
- */
-BOOL EXISelect(s32 chan, u32 dev, u32 freq);
-
-/**
- * @brief Deselect EXI device
- */
-BOOL EXIDeselect(s32 chan);
-
-/**
- * @brief Immediate data transfer (small amounts)
- */
-BOOL EXIImm(s32 chan, void* data, u32 len, u32 mode, EXICallback callback);
-
-/**
- * @brief Immediate data transfer (extended)
- */
-BOOL EXIImmEx(s32 chan, void* data, u32 len, u32 mode);
-
-/**
- * @brief DMA data transfer (large amounts)
- */
-BOOL EXIDma(s32 chan, void* buf, u32 len, u32 mode, EXICallback callback);
-
-/**
- * @brief Wait for transfer to complete
- */
-BOOL EXISync(s32 chan);
-
-/**
- * @brief Probe for device presence
- */
-BOOL EXIProbe(s32 chan);
-
-/**
- * @brief Extended probe
- */
-s32 EXIProbeEx(s32 chan);
-
-/**
- * @brief Get device ID
- */
-BOOL EXIGetID(s32 chan, u32 dev, u32* id);
-
-/**
- * @brief Get transfer state
- */
-u32 EXIGetState(s32 chan);
-
-/**
- * @brief Initialize EXI subsystem
- */
-void EXIInit(void);
-
-/**
- * @brief Clear interrupt flags
- */
-u32 EXIClearInterrupts(s32 chan, BOOL exi, BOOL tc, BOOL ext);
-
-/**
- * @brief Reset probe state
- */
-void EXIProbeReset(void);
-
-/**
- * @brief Get device type
- */
-s32 EXIGetType(s32 chan, u32 dev, u32* type);
-
-/**
- * @brief Select SD device
- */
-BOOL EXISelectSD(s32 chan, u32 dev, u32 freq);
-
-/**
- * @brief Get device ID (extended)
- */
-s32 EXIGetIDEx(s32 chan, u32 dev, u32* id);
-
-/**
- * @brief Get console type
- */
-u32 EXIGetConsoleType(void);
-
-/**
- * @brief Wait for EXI operation
- */
-void EXIWait(void);
-
-/**
- * @brief Set EXI interrupt callback
- */
-EXICallback EXISetExiCallback(s32 chan, EXICallback exiCallback);
-
-#ifdef __cplusplus
-}
 #endif
-
-#endif // DOLPHIN_EXI_H
-

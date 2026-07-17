@@ -1,43 +1,36 @@
-#ifndef DOLPHIN_OSMEMORY_H
-#define DOLPHIN_OSMEMORY_H
+#ifndef _DOLPHIN_OS_OSMEMORY_H
+#define _DOLPHIN_OS_OSMEMORY_H
 
+#include "dolphin/OS/OSContext.h"
 #include <dolphin/types.h>
 
-#ifdef __cplusplus
-extern "C" {
+BEGIN_SCOPE_EXTERN_C
+
+////////// PROTECT INFO //////////
+// Protect function.
+void OSProtectRange(u32 channel, void* addr, u32 numBytes, u32 control);
+
+// Channels.
+#define OS_PROTECT_CHAN0 0
+#define OS_PROTECT_CHAN1 1
+#define OS_PROTECT_CHAN2 2
+#define OS_PROTECT_CHAN3 3
+
+// Control codes.
+#define OS_PROTECT_CONTROL_NONE  0x00
+#define OS_PROTECT_CONTROL_READ  0x01 // Can read.
+#define OS_PROTECT_CONTROL_WRITE 0x02 // Can write.
+#define OS_PROTECT_CONTROL_RDWR  (OS_PROTECT_CONTROL_READ | OS_PROTECT_CONTROL_WRITE)
+
+// DSISR bits for mem error handler.
+#define OS_PROTECT0_BIT        0x00000001 // Channel 0.
+#define OS_PROTECT1_BIT        0x00000002 // Channel 1.
+#define OS_PROTECT2_BIT        0x00000004 // Channel 2.
+#define OS_PROTECT3_BIT        0x00000008 // Channel 3.
+#define OS_PROTECT_ADDRERR_BIT 0x00000010 // Other mem.
+
+//////////////////////////////////
+
+END_SCOPE_EXTERN_C
+
 #endif
-
-/* Memory size APIs */
-u32 OSGetPhysicalMemSize(void);
-u32 OSGetConsoleSimulatedMemSize(void);
-
-u32 OSGetPhysicalMem1Size(void);
-u32 OSGetPhysicalMem2Size(void);
-u32 OSGetConsoleSimulatedMem1Size(void);
-u32 OSGetConsoleSimulatedMem2Size(void);
-
-/* Memory protection APIs */
-#define OS_PROTECT_CHAN0            0
-#define OS_PROTECT_CHAN1            1
-#define OS_PROTECT_CHAN2            2
-#define OS_PROTECT_CHAN3            3
-
-#define OS_PROTECT_CONTROL_NONE     0x00
-#define OS_PROTECT_CONTROL_READ     0x01
-#define OS_PROTECT_CONTROL_WRITE    0x02
-#define OS_PROTECT_CONTROL_RDWR     (OS_PROTECT_CONTROL_READ | OS_PROTECT_CONTROL_WRITE)
-
-#define OS_PROTECT0_BIT             0x00000001
-#define OS_PROTECT1_BIT             0x00000002
-#define OS_PROTECT2_BIT             0x00000004
-#define OS_PROTECT3_BIT             0x00000008
-#define OS_PROTECT_ADDRERR_BIT      0x00000010
-
-void OSProtectRange(u32 chan, void* addr, u32 nBytes, u32 control);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* DOLPHIN_OSMEMORY_H */
-

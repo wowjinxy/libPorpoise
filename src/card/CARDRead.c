@@ -1,84 +1,171 @@
-/*---------------------------------------------------------------------------*
-  CARDRead.c - File Read Operations
- *---------------------------------------------------------------------------*/
+#include "Dolphin/card.h"
+#include <stddef.h>
 
-#include <dolphin/card.h>
-#include <dolphin/card_internal.h>
-#include <dolphin/os.h>
-#include <dolphin/porpoise/Guard.h>
-#include <stdio.h>
-#include <string.h>
+/**
+ * @TODO: Documentation
+ */
+s32 __CARDSeek(CARDFileInfo* fileInfo, s32 length, s32 offset, CARDControl** outCard)
+{
+	CARDControl* card;
+	CARDDirectoryBlock* dir;
+	CARDDir* ent;
+	s32 result;
+	CARDFatBlock* fat;
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDReadAsync
+	result = __CARDGetControlBlock(fileInfo->chan, &card);
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
 
-  Description:  Read from file (asynchronous).
+	if (!CARDIsValidBlockNo(card, fileInfo->iBlock) || card->cBlock * card->sectorSize <= fileInfo->offset) {
+		return __CARDPutControlBlock(card, CARD_RESULT_FATAL_ERROR);
+	}
 
-  Arguments:    fileInfo  File info
-                buf       Destination buffer
-                length    Bytes to read
-                offset    File offset
-                callback  Completion callback
+	dir = __CARDGetDirBlock(card);
+	ent = &dir->entries[fileInfo->fileNo];
+	if (ent->length * card->sectorSize <= offset || ent->length * card->sectorSize < offset + length) {
+		return __CARDPutControlBlock(card, CARD_RESULT_LIMIT);
+	}
 
-  Returns:      Bytes read, or error
- *---------------------------------------------------------------------------*/
-s32 CARDReadAsync(CARDFileInfo* fileInfo, void* buf, s32 length,
-                  s32 offset, CARDCallback callback) {
-    PP_GUARD_PTR_RET(fileInfo, CARD_RESULT_FATAL_ERROR);
-    PP_GUARD_PTR_RET(buf, CARD_RESULT_FATAL_ERROR);
-    PP_GUARD_NONNEG_RET(length, CARD_RESULT_FATAL_ERROR);
-    PP_GUARD_NONNEG_RET(offset, CARD_RESULT_FATAL_ERROR);
-    
-    s32 chan = fileInfo->chan;
-    PP_GUARD_RET(chan >= 0 && chan < CARD_MAX_CHAN, CARD_RESULT_FATAL_ERROR, "invalid channel");
-    
-    if (!__CARDCards[chan].mounted) {
-        return CARD_RESULT_NOCARD;
-    }
-    
-    // Get filename from file number
-    s32 fileNo = fileInfo->fileNo;
-    PP_GUARD_RET(fileNo >= 0 && fileNo < 127 && __CARDCards[chan].openFiles[fileNo][0] != '\0',
-                 CARD_RESULT_FATAL_ERROR, "file is not open");
-    
-    const char* fileName = __CARDCards[chan].openFiles[fileNo];
-    char path[512];
-    __CARDBuildFilePath(chan, fileName, path, sizeof(path));
-    
-    // Read from actual file
-    FILE* file = fopen(path, "rb");
-    if (!file) {
-        return CARD_RESULT_IOERROR;
-    }
-    
-    if (fseek(file, offset, SEEK_SET) != 0) {
-        fclose(file);
-        return CARD_RESULT_IOERROR;
-    }
-    
-    size_t bytesRead = fread(buf, 1, length, file);
-    fclose(file);
-    
-    if (callback) {
-        callback(chan, (s32)bytesRead);
-    }
-    
-    return (s32)bytesRead;
+	card->fileInfo   = fileInfo;
+	fileInfo->length = length;
+	if (offset < fileInfo->offset) {
+		fileInfo->offset = 0;
+		fileInfo->iBlock = ent->startBlock;
+		if (!CARDIsValidBlockNo(card, fileInfo->iBlock)) {
+			return __CARDPutControlBlock(card, CARD_RESULT_BROKEN);
+		}
+	}
+	fat = __CARDGetFatBlock(card);
+	while (fileInfo->offset < TRUNC(offset, card->sectorSize)) {
+		fileInfo->offset += card->sectorSize;
+		fileInfo->iBlock = ((u16*)fat)[fileInfo->iBlock];
+		if (!CARDIsValidBlockNo(card, fileInfo->iBlock)) {
+			return __CARDPutControlBlock(card, CARD_RESULT_BROKEN);
+		}
+	}
+
+	fileInfo->offset = offset;
+
+	*outCard = card;
+	return CARD_RESULT_READY;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDRead
+/**
+ * @TODO: Documentation
+ */
+static void ReadCallback(s32 channel, s32 result)
+{
+	CARDControl* card;
+	CARDCallback callback;
+	CARDFatBlock* fat;
+	CARDFileInfo* fileInfo;
+	s32 length;
 
-  Description:  Read from file (synchronous).
+	card = &__CARDBlock[channel];
+	if (result < CARD_RESULT_READY) {
+		goto error;
+	}
 
-  Arguments:    fileInfo  File info
-                buf       Destination buffer
-                length    Bytes to read
-                offset    File offset
+	fileInfo = card->fileInfo;
+	if (fileInfo->length < 0) {
+		result = CARD_RESULT_CANCELED;
+		goto error;
+	}
 
-  Returns:      Bytes read, or error
- *---------------------------------------------------------------------------*/
-s32 CARDRead(CARDFileInfo* fileInfo, void* buf, s32 length, s32 offset) {
-    return CARDReadAsync(fileInfo, buf, length, offset, NULL);
+	length = (s32)TRUNC(fileInfo->offset + card->sectorSize, card->sectorSize) - fileInfo->offset;
+	fileInfo->length -= length;
+	if (fileInfo->length <= 0) {
+		goto error;
+	}
+
+	fat = __CARDGetFatBlock(card);
+	fileInfo->offset += length;
+	fileInfo->iBlock = ((u16*)fat)[fileInfo->iBlock];
+	if (!CARDIsValidBlockNo(card, fileInfo->iBlock)) {
+		result = CARD_RESULT_BROKEN;
+		goto error;
+	}
+
+	result = __CARDRead(channel, card->sectorSize * (u32)fileInfo->iBlock,
+	                    (fileInfo->length < card->sectorSize) ? fileInfo->length : card->sectorSize, card->buffer, ReadCallback);
+	if (result < CARD_RESULT_READY) {
+		goto error;
+	}
+
+	return;
+
+error:
+	callback          = card->apiCallback;
+	card->apiCallback = NULL;
+	__CARDPutControlBlock(card, result);
+	callback(channel, result);
 }
 
+/**
+ * @TODO: Documentation
+ */
+s32 CARDReadAsync(CARDFileInfo* fileInfo, void* buffer, s32 length, s32 offset, CARDCallback callback)
+{
+	CARDControl* card;
+	s32 result;
+	CARDDirectoryBlock* dir;
+	CARDDir* ent;
+
+	if (OFFSET(offset, CARD_SEG_SIZE) != 0 || OFFSET(length, CARD_SEG_SIZE) != 0) {
+		return CARD_RESULT_FATAL_ERROR;
+	}
+	result = __CARDSeek(fileInfo, length, offset, &card);
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
+
+	dir = __CARDGetDirBlock(card);
+	ent = &dir->entries[fileInfo->fileNo];
+#if OS_BUILD_VERSION >= 20011112L
+	result = __CARDAccess(card, ent);
+#else
+	result = __CARDAccess(ent);
+#endif
+	if (result == CARD_RESULT_NOPERM) {
+		result = __CARDIsPublic(ent);
+	}
+
+	if (result < CARD_RESULT_READY) {
+		return __CARDPutControlBlock(card, result);
+	}
+
+	DCInvalidateRange(buffer, length);
+	card->apiCallback = callback ? callback : __CARDDefaultApiCallback;
+
+	offset = (s32)OFFSET(fileInfo->offset, card->sectorSize);
+	length = (length < card->sectorSize - offset) ? length : card->sectorSize - offset;
+	result = __CARDRead(fileInfo->chan, card->sectorSize * (u32)fileInfo->iBlock + offset, length, buffer, ReadCallback);
+	if (result < CARD_RESULT_READY) {
+		__CARDPutControlBlock(card, result);
+	}
+	return result;
+}
+
+/**
+ * @TODO: Documentation
+ */
+s32 CARDRead(CARDFileInfo* fileInfo, void* buffer, s32 length, s32 offset)
+{
+	s32 result = CARDReadAsync(fileInfo, buffer, length, offset, __CARDSyncCallback);
+
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
+
+	return __CARDSync(fileInfo->chan);
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00008C
+ */
+void CARDCancel(void)
+{
+	TRAP_UNIMPLEMENTED;
+}

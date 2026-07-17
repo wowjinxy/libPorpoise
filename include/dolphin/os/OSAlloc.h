@@ -1,38 +1,42 @@
-#ifndef DOLPHIN_OSALLOC_H
-#define DOLPHIN_OSALLOC_H
+#ifndef _DOLPHIN_OS_OSALLOC_H
+#define _DOLPHIN_OS_OSALLOC_H
 
+#include "dolphin/OS/OSUtil.h"
 #include <dolphin/types.h>
-#include <stddef.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+BEGIN_SCOPE_EXTERN_C
 
-typedef int  OSHeapHandle;
+/////////// HEAP TYPES ///////////
+// Useful typedef for heap locations.
+typedef int OSHeapHandle;
+
+// Alloc visitor function type.
 typedef void (*OSAllocVisitor)(void* obj, u32 size);
 
-void*        OSInitAlloc       (void* arenaStart, void* arenaEnd, int maxHeaps);
-void*        OSAllocLow4GB     (size_t size);  /* Allocate block in lower 4GB for u32-ptr games */
-OSHeapHandle OSCreateHeap      (void* start, void* end);
-void         OSDestroyHeap     (OSHeapHandle heap);
-void         OSAddToHeap       (OSHeapHandle heap, void* start, void* end);
-OSHeapHandle OSSetCurrentHeap  (OSHeapHandle heap);
-void*        OSAllocFromHeap   (OSHeapHandle heap, u32 size);
-void*        OSAllocFixed      (void** rstart, void** rend);
-void         OSFreeToHeap      (OSHeapHandle heap, void* ptr);
-long         OSCheckHeap       (OSHeapHandle heap);
-void         OSDumpHeap        (OSHeapHandle heap);
-u32          OSReferentSize    (void* ptr);
-void         OSVisitAllocated  (OSAllocVisitor visitor);
-
+// Current heap.
 extern volatile OSHeapHandle __OSCurrHeap;
 
-#define OSAlloc(size)   OSAllocFromHeap(__OSCurrHeap, (size))
-#define OSFree(ptr)     OSFreeToHeap(__OSCurrHeap, (ptr))
+//////////////////////////////////
 
-#ifdef __cplusplus
-}
+///////// HEAP FUNCTIONS /////////
+// Heap functions.
+void* OSInitAlloc(void* arenaStart, void* arenaEnd, int maxHeaps);
+OSHeapHandle OSCreateHeap(void* start, void* end);
+OSHeapHandle OSSetCurrentHeap(OSHeapHandle heap);
+void OSFreeToHeap(OSHeapHandle heap, void* ptr);
+void* OSAllocFromHeap(OSHeapHandle heap, u32 size);
+
+//////////////////////////////////
+
+////////// HEAP MACROS ///////////
+// Returns ptr to allocated space (32-aligned).
+#define OSAlloc(size) OSAllocFromHeap(__OSCurrHeap, (size))
+
+// Deallocates 'ptr' to current heap.
+#define OSFree(ptr) OSFreeToHeap(__OSCurrHeap, (ptr))
+
+//////////////////////////////////
+
+END_SCOPE_EXTERN_C
+
 #endif
-
-#endif /* DOLPHIN_OSALLOC_H */
-

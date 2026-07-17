@@ -1,167 +1,165 @@
-/**
- * @file si.h
- * @brief Serial Interface (SI) API for libPorpoise
- * 
- * Serial Interface handles communication with controller ports.
- * On PC, PAD module uses SDL2 directly, but SI provides compatibility
- * for games that access SI registers or use SI functions.
- */
+#ifndef _DOLPHIN_SI_H
+#define _DOLPHIN_SI_H
 
-#ifndef DOLPHIN_SI_H
-#define DOLPHIN_SI_H
+#include "Dolphin/OS/OSContext.h"
+#include "Dolphin/OS/OSInterrupt.h"
+#include "Dolphin/OS/OSTime.h"
+#include "Dolphin/OS/OSVersion.h"
+#include "dolphin/types.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+BEGIN_SCOPE_EXTERN_C
 
-#include <dolphin/types.h>
+///////////////// SI TYPES /////////////////
+// SI callback function type.
+typedef void (*SICallback)(s32 chan, u32 sr, OSContext* context);
+typedef void (*SITypeAndStatusCallback)(s32 chan, u32 type);
 
-/*---------------------------------------------------------------------------*
-    Constants
- *---------------------------------------------------------------------------*/
+// Struct for SI information transfer (size 0x20).
+typedef struct SIPacket {
+	s32 chan;            // _00
+	void* output;        // _04
+	u32 outputBytes;     // _08
+	void* input;         // _0C
+	u32 inputBytes;      // _10
+	SICallback callback; // _14
+	OSTime fire;         // _18
+} SIPacket;
 
-#define SI_MAX_CHAN    4  // Maximum number of SI channels (controllers)
+// Struct for 'Si' object in SIBios.c (size 0x14).
+typedef struct SIControl {
+	s32 chan;            // _00
+	u32 poll;            // _04
+	u32 inputBytes;      // _08
+	void* input;         // _0C
+	SICallback callback; // _10
+} SIControl;
 
-/*---------------------------------------------------------------------------*
-    Function Declarations
- *---------------------------------------------------------------------------*/
+// Struct to set and store flags (size 0x4).
+typedef struct SICommFlags {
+	u32 tcint : 1;
+	u32 tcintmsk : 1;
+	u32 comerr : 1;
+	u32 rdstint : 1;
+	u32 rdstintmsk : 1;
+	u32 pad0 : 4;
+	u32 outlngth : 7;
+	u32 pad1 : 1;
+	u32 inlngth : 7;
+	u32 pad2 : 5;
+	u32 channel : 2;
+	u32 tstart : 1;
+} SICommFlags;
 
-/**
- * @brief Initialize Serial Interface hardware
- * 
- * On GC/Wii: Initializes SI registers and interrupts
- * On PC: Initializes SI state tracking (PAD uses SDL2)
- */
-void SIInit(void);
+// Union to control setting flags or overall word value (size 0x4).
+typedef union SIComm {
+	u32 val;
+	SICommFlags flags;
+} SIComm;
 
-/**
- * @brief Get SI channel status register
- * 
- * @param chan  Channel number (0-3)
- * @return Status register value
- */
-u32 SIGetStatus(s32 chan);
+////////////////////////////////////////////
 
-/**
- * @brief Get response data from SI channel
- * 
- * @param chan  Channel number
- * @param data  Pointer to receive response (2 u32s)
- * @return TRUE if response available
- */
-BOOL SIGetResponse(s32 chan, u32* data);
-
-/**
- * @brief Set SI command for channel
- * 
- * @param chan  Channel number
- * @param cmd   Command value
- */
-void SISetCommand(s32 chan, u32 cmd);
-
-/**
- * @brief Transfer data to/from SI device
- * 
- * @param chan      Channel number
- * @param output    Output buffer
- * @param outBytes  Output size
- * @param input     Input buffer
- * @param inBytes   Input size
- * @param callback  Callback when complete
- * @param delay     Delay (unused)
- * @return TRUE if transfer started
- */
-BOOL SITransfer(s32 chan, void* output, u32 outBytes, void* input, u32 inBytes,
-                void (*callback)(s32, u32, void*), u32 delay);
-
-/**
- * @brief Get device type on SI channel
- * 
- * @param chan  Channel number
- * @return Device type (0x09000000 = standard controller)
- */
-u32 SIGetType(s32 chan);
-
-/**
- * @brief Get device type asynchronously
- * 
- * @param chan      Channel number
- * @param callback  Callback with type result
- * @return TRUE always
- */
-BOOL SIGetTypeAsync(s32 chan, void (*callback)(s32, u32));
-
-/**
- * @brief Enable automatic polling for channels
- * 
- * @param poll  Channel bits to enable
- */
-void SIEnablePolling(u32 poll);
-
-/**
- * @brief Disable automatic polling for channels
- * 
- * @param poll  Channel bits to disable
- */
-void SIDisablePolling(u32 poll);
-
-/**
- * @brief Check if SI is busy with transfer
- * 
- * @return FALSE always on PC (no hardware)
- */
-BOOL SIBusy(void);
-
-/**
- * @brief Check if specific channel is busy
- * 
- * @param chan  Channel number
- * @return FALSE always on PC
- */
+/////////////// SI FUNCTIONS ///////////////
+BOOL SIBusy();
 BOOL SIIsChanBusy(s32 chan);
 
-/**
- * @brief Set controller sampling rate
- * 
- * @param msec  Sampling rate in milliseconds
- */
-void SISetSamplingRate(u32 msec);
+BOOL SIRegisterPollingHandler(__OSInterruptHandler handler);
+BOOL SIUnregisterPollingHandler(__OSInterruptHandler handler);
 
-/**
- * @brief Refresh sampling rate based on video mode
- */
-void SIRefreshSamplingRate(void);
-
-/**
- * @brief Register handler called during SI polling
- * 
- * @param handler  Handler function
- */
-void SIRegisterPollingHandler(void (*handler)(void*, void*));
-
-/**
- * @brief Unregister polling handler
- * 
- * @param handler  Handler function
- */
-void SIUnregisterPollingHandler(void (*handler)(void*, void*));
-
-/**
- * @brief Execute queued SI commands
- */
+void SIInit(void);
+#if OS_BUILD_VERSION >= 20011002L && OS_BUILD_VERSION < 20011112L
+u32 SIGetStatus(void); // WHAT?
+#else
+u32 SIGetStatus(s32 chan);
+#endif
+void SISetCommand(s32 chan, u32 command);
+u32 SIGetCommand(s32 chan);
 void SITransferCommands(void);
-
-/**
- * @brief Set wireless controller ID
- * 
- * @param chan  Channel number
- * @param id    Wireless ID
- */
-void OSSetWirelessID(s32 chan, u16 id);
-
-#ifdef __cplusplus
-}
+u32 SISetXY(u32 x, u32 y);
+u32 SIEnablePolling(u32 poll);
+u32 SIDisablePolling(u32 poll);
+#if OS_BUILD_VERSION >= 20011002L
+BOOL SIGetResponse(s32 chan, void* data);
+#else
+void SIGetResponse(s32 chan, void* data);
+#endif
+BOOL SITransfer(s32 chan, void* output, u32 outputBytes, void* input, u32 inputBytes, SICallback callback, OSTime delay);
+u32 SIGetType(s32 chan);
+u32 SIGetTypeAsync(s32 chan, SITypeAndStatusCallback callback);
+u32 SIDecodeType(u32 type);
+u32 SIProbe(s32 chan);
+#if OS_BUILD_VERSION >= 20011217L
+void SISetSamplingRate(u32 msec);
+void SIRefreshSamplingRate(void);
 #endif
 
-#endif // DOLPHIN_SI_H
+////////////////////////////////////////////
 
+////////// SI DEFINES ////////////
+// Max settings.
+#define SI_MAX_CHAN            4
+#define SI_MAX_COMCSR_INLNGTH  128
+#define SI_MAX_COMCSR_OUTLNGTH 128
+
+// Serial error codes.
+#define SI_ERROR_UNDER_RUN   0x0001
+#define SI_ERROR_OVER_RUN    0x0002
+#define SI_ERROR_COLLISION   0x0004
+#define SI_ERROR_NO_RESPONSE 0x0008
+#define SI_ERROR_WRST        0x0010
+#define SI_ERROR_RDST        0x0020
+#define SI_ERROR_UNKNOWN     0x0040
+#define SI_ERROR_BUSY        0x0080
+
+// Channels.
+#define SI_CHAN0          0
+#define SI_CHAN1          1
+#define SI_CHAN2          2
+#define SI_CHAN3          3
+#define SI_CHAN0_BIT      0x80000000
+#define SI_CHAN1_BIT      0x40000000
+#define SI_CHAN2_BIT      0x20000000
+#define SI_CHAN3_BIT      0x10000000
+#define SI_CHAN_BIT(chan) (SI_CHAN0_BIT >> (chan))
+
+// Command type and status codes.
+#define SI_TYPE_MASK    0x18000000u
+#define SI_TYPE_N64     0x00000000u
+#define SI_TYPE_DOLPHIN 0x08000000u
+#define SI_TYPE_GC      SI_TYPE_DOLPHIN
+
+// GC-specific codes.
+#define SI_GC_WIRELESS 0x80000000
+#define SI_GC_NOMOTOR  0x20000000
+#define SI_GC_STANDARD 0x01000000
+
+// WaveBird codes.
+#define SI_WIRELESS_RECEIVED  0x40000000
+#define SI_WIRELESS_IR        0x04000000
+#define SI_WIRELESS_STATE     0x02000000
+#define SI_WIRELESS_ORIGIN    0x00200000
+#define SI_WIRELESS_FIX_ID    0x00100000
+#define SI_WIRELESS_TYPE      0x000f0000
+#define SI_WIRELESS_LITE_MASK 0x000c0000
+#define SI_WIRELESS_LITE      0x00040000
+#define SI_WIRELESS_CONT_MASK 0x00080000
+#define SI_WIRELESS_CONT      0x00000000
+#define SI_WIRELESS_ID        0x00c0ff00
+#define SI_WIRELESS_TYPE_ID   (SI_WIRELESS_TYPE | SI_WIRELESS_ID)
+
+// Other controller codes.
+#define SI_N64_CONTROLLER (SI_TYPE_N64 | 0x05000000)
+#define SI_N64_MIC        (SI_TYPE_N64 | 0x00010000)
+#define SI_N64_KEYBOARD   (SI_TYPE_N64 | 0x00020000)
+#define SI_N64_MOUSE      (SI_TYPE_N64 | 0x02000000)
+#define SI_GBA            (SI_TYPE_N64 | 0x00040000)
+#define SI_GC_CONTROLLER  (SI_TYPE_GC | SI_GC_STANDARD)
+#define SI_GC_RECEIVER    (SI_TYPE_GC | SI_GC_WIRELESS)
+#define SI_GC_WAVEBIRD    (SI_TYPE_GC | SI_GC_WIRELESS | SI_GC_STANDARD | SI_WIRELESS_STATE | SI_WIRELESS_FIX_ID)
+#define SI_GC_KEYBOARD    (SI_TYPE_GC | 0x00200000)
+#define SI_GC_STEERING    (SI_TYPE_GC | 0x00000000)
+
+//////////////////////////////////
+
+END_SCOPE_EXTERN_C
+
+#endif

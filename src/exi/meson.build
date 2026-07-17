@@ -1,5 +1,6 @@
 libexi_srcs = files(
-    'EXI.c'
+    'EXIBios.c',
+	'EXIUart.c'
 )
 
 libexi = library('exi',

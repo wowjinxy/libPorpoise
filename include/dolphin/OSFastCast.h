@@ -1,6 +1,0 @@
-#ifndef DOLPHIN_COMPAT_OSFASTCAST_H
-#define DOLPHIN_COMPAT_OSFASTCAST_H
-
-#include <dolphin/os/OSFastCast.h>
-
-#endif /* DOLPHIN_COMPAT_OSFASTCAST_H */

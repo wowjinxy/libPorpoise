@@ -1,78 +1,33 @@
-/*---------------------------------------------------------------------------*
-  db.h - Dolphin Debugger Interface for libPorpoise
-  
-  PC-compatible version of the Dolphin Debugger interface.
-  Provides debugger communication functions for development.
-  
-  On PC: Most functions output to console instead of serial debugger.
- *---------------------------------------------------------------------------*/
-
-#ifndef DOLPHIN_DB_H
-#define DOLPHIN_DB_H
+#ifndef _DOLPHIN_DB_H
+#define _DOLPHIN_DB_H
 
 #include <dolphin/types.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#define ExceptionHookDestination 0x80000048
+#define IsDebuggerPresent        0x80000040
 
-/*---------------------------------------------------------------------------*
-    DBInterface Structure
-    
-    Used to communicate with the Dolphin debugger kernel.
-    On PC, this is mostly unused but kept for API compatibility.
- *---------------------------------------------------------------------------*/
+typedef void (*MTRCallbackType)(int);
+
 typedef struct DBInterface {
-    u32     bPresent;       // non zero if debug kernel is loaded
-    u32     exceptionMask;  // bitmask of exceptions
-    
-    // ptr to the destination so it does not have to be in low
-    // memory, nor do we have to perform 2 loads
-    void    (*ExceptionDestination)(void);
-    
-    // Return address from DBExceptionDestination that debugger should
-    // jump to.
-    void    *exceptionReturn;
+	u8 filler0[4];
+	u32 unk4;
 } DBInterface;
 
-// Global debugger interface pointer
 extern DBInterface* __DBInterface;
-
-/*---------------------------------------------------------------------------*
-    Public Functions
- *---------------------------------------------------------------------------*/
-
-/* Initialize the debugger interface */
-void DBInit(void);
-
-/* Check if debugger is present */
-BOOL DBIsDebuggerPresent(void);
-
-/* Debug printf - outputs to console on PC */
-void DBPrintf(const char *format, ...);
-
-/* Verbose flag - controls debug output verbosity */
 extern BOOL DBVerbose;
 
-/*---------------------------------------------------------------------------*
-    Internal Functions (for exception handling)
- *---------------------------------------------------------------------------*/
+void DBInit(void);
+void DBInitComm(vu8**, MTRCallbackType);
+void DBInitInterrupts(void);
 
-/* Check if exception is marked for debugger */
-BOOL __DBIsExceptionMarked(int exception);
+int DBQueryData(void);
+BOOL DBRead(void*, int);
+BOOL DBWrite(const void*, int);
+void DBOpen(void);
+void DBClose(void);
 
-/* Exception destination (called from exception handlers) */
 void __DBExceptionDestination(void);
+int __DBIsExceptionMarked(u8);
+void DBPrintf(const char* format, ...);
 
-#ifdef _DEBUG
-/* Testing functions (debug builds only) */
-void __DBSetPresent(u32 value);
-void __DBMarkException(int exception, BOOL value);
 #endif
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* DOLPHIN_DB_H */
-
