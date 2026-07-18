@@ -3,7 +3,7 @@
 
 #include "types.h"
 
-#include "Dolphin/OS/OSVersion.h"
+#include <dolphin/os/OSVersion.h>
 
 BEGIN_SCOPE_EXTERN_C
 

@@ -1,7 +1,7 @@
 // This file also implements "OSUartExi.c" (`OS_BUILD_VERSION < 20011217L`). Don't break compatibility!
 
-#include "Dolphin/exi.h"
-#include "Dolphin/os.h"
+#include <dolphin/exi.h>
+#include <dolphin/os.h>
 
 // For ease of implementing multiple revisions, these magic numbers and variables that were turned
 // into variables and renamed (respectively) go by their final name everywhere in this file and are

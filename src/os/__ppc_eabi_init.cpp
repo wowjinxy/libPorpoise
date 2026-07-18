@@ -1,5 +1,5 @@
 #include <dolphin/base/PPCArch.h>
-#include "Dolphin/os.h"
+#include <dolphin/os.h>
 #include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C

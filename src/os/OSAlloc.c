@@ -1,6 +1,6 @@
-#include "Dolphin/OS/OSAlloc.h"
+#include <dolphin/os/OSAlloc.h>
 
-#include "Dolphin/os.h"
+#include <dolphin/os.h>
 #include <stddef.h>
 
 typedef struct HeapCell {

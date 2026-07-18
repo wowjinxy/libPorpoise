@@ -1,7 +1,7 @@
 #ifndef _DOLPHIN_OS_OSALLOC_H
 #define _DOLPHIN_OS_OSALLOC_H
 
-#include "dolphin/OS/OSUtil.h"
+#include <dolphin/os/OSUtil.h>
 #include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C

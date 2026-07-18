@@ -1,5 +1,5 @@
-#include "Dolphin/hw_regs.h"
-#include "Dolphin/os.h"
+#include <dolphin/hw_regs.h>
+#include <dolphin/os.h>
 #ifndef LIBPORPOISE_PORT
 #include "PowerPC_EABI_Support/Runtime/__ppc_eabi_linker.h"
 #endif

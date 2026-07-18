@@ -1,5 +1,5 @@
-#include "Dolphin/OS/OSError.h"
-#include "Dolphin/mtx.h"
+#include <dolphin/os/OSError.h>
+#include <dolphin/mtx.h>
 #include <math.h>
 
 // Technically not required, but "mtx.c" needs this pragma so I feel it belongs here too.

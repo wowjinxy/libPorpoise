@@ -1,10 +1,10 @@
 #ifndef _DOLPHIN_OS_OSINTERRUPT_H
 #define _DOLPHIN_OS_OSINTERRUPT_H
 
-#include "dolphin/OS/OSContext.h"
-#include "dolphin/OS/OSException.h"
-#include "dolphin/OS/OSTime.h"
-#include "dolphin/OS/OSUtil.h"
+#include <dolphin/os/OSContext.h>
+#include <dolphin/os/OSException.h>
+#include <dolphin/os/OSTime.h>
+#include <dolphin/os/OSUtil.h>
 #include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C

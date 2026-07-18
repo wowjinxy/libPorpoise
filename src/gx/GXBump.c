@@ -1,4 +1,4 @@
-#include "Dolphin/gx.h"
+#include <dolphin/gx.h>
 
 #if DEBUG
 #define GX_WRITE_SOME_REG5(a, b)                  \

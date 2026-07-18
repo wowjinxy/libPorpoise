@@ -1,7 +1,7 @@
 #ifndef _DOLPHIN_OS_OSCONTEXT_H
 #define _DOLPHIN_OS_OSCONTEXT_H
 
-#include "dolphin/OS/OSVersion.h"
+#include <dolphin/os/OSVersion.h>
 #include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C

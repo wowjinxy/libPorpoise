@@ -1,9 +1,9 @@
 #ifndef _DOLPHIN_DSP_H
 #define _DOLPHIN_DSP_H
 
-#include "dolphin/OS/OSContext.h"
-#include "dolphin/OS/OSInterrupt.h"
-#include "dolphin/OS/OSUtil.h"
+#include <dolphin/os/OSContext.h>
+#include <dolphin/os/OSInterrupt.h>
+#include <dolphin/os/OSUtil.h>
 #include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C

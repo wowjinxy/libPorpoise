@@ -1,8 +1,8 @@
 // This file also implements "OSExi.c" (`OS_BUILD_VERSION < 20011217L`). Don't break compatibility!
 
-#include "Dolphin/exi.h"
-#include "Dolphin/hw_regs.h"
-#include "Dolphin/os.h"
+#include <dolphin/exi.h>
+#include <dolphin/hw_regs.h>
+#include <dolphin/os.h>
 #include <string.h>
 
 // These formerly public interface functions got renamed when they became private implementation details.

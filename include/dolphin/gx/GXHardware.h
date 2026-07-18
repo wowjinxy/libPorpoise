@@ -1,7 +1,7 @@
 #ifndef _DOLPHIN_GXHARDWARE_H
 #define _DOLPHIN_GXHARDWARE_H
 
-#include "dolphin/GX/GXTypes.h"
+#include <dolphin/gx/GXTypes.h>
 #include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C

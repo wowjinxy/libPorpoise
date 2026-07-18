@@ -1,5 +1,5 @@
-#include "Dolphin/ai.h"
-#include "Dolphin/os.h"
+#include <dolphin/ai.h>
+#include <dolphin/os.h>
 #include <stddef.h>
 
 typedef void (*voidfunctionptr)(void); // pointer to function returning void

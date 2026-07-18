@@ -1,5 +1,5 @@
-#include "Dolphin/gx.h"
-#include "Dolphin/hw_regs.h"
+#include <dolphin/gx.h>
+#include <dolphin/hw_regs.h>
 
 GXRenderModeObj GXNtsc240Ds = {
 	1,

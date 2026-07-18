@@ -1,7 +1,7 @@
-#include "Dolphin/base/PPCArch.h"
-#include "Dolphin/gx.h"
-#include "Dolphin/hw_regs.h"
-#include "Dolphin/os.h"
+#include <dolphin/base/PPCArch.h>
+#include <dolphin/gx.h>
+#include <dolphin/hw_regs.h>
+#include <dolphin/os.h>
 #include <stddef.h>
 
 #if OS_BUILD_VERSION >= 20011002L

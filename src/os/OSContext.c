@@ -1,6 +1,6 @@
 #include <dolphin/base/PPCArch.h>
-#include "Dolphin/db.h"
-#include "Dolphin/os.h"
+#include <dolphin/db.h>
+#include <dolphin/os.h>
 #include <stddef.h>
 
 /**

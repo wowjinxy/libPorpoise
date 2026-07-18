@@ -1,8 +1,8 @@
-#include "Dolphin/vi.h"
-#include "Dolphin/gx.h"
-#include "Dolphin/hw_regs.h"
-#include "Dolphin/os.h"
-#include "Dolphin/si.h"
+#include <dolphin/vi.h>
+#include <dolphin/gx.h>
+#include <dolphin/hw_regs.h>
+#include <dolphin/os.h>
+#include <dolphin/si.h>
 #include <stddef.h>
 
 // Useful macros.

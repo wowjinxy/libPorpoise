@@ -3,8 +3,8 @@
 
 #include <dolphin/types.h>
 
-#include "dolphin/OS/OSVersion.h"
-#include "dolphin/vec.h"
+#include <dolphin/os/OSVersion.h>
+#include <dolphin/vec.h>
 
 BEGIN_SCOPE_EXTERN_C
 

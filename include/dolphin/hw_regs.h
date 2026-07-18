@@ -1,8 +1,8 @@
 #ifndef _DOLPHIN_HW_REGS_H
 #define _DOLPHIN_HW_REGS_H
 
-#include "dolphin/OS/OSUtil.h"
-#include "dolphin/types.h"
+#include <dolphin/os/OSUtil.h>
+#include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C
 

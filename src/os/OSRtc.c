@@ -1,7 +1,7 @@
-#include "Dolphin/OS/OSRtc.h"
+#include <dolphin/os/OSRtc.h>
 
-#include "Dolphin/exi.h"
-#include "Dolphin/os.h"
+#include <dolphin/exi.h>
+#include <dolphin/os.h>
 #include <stddef.h>
 
 // forward declarations.

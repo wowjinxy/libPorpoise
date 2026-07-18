@@ -1,5 +1,5 @@
-#include "Dolphin/pad.h"
-#include "Dolphin/si.h"
+#include <dolphin/pad.h>
+#include <dolphin/si.h>
 #include <math.h>
 
 typedef struct PADClampRegion {

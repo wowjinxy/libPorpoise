@@ -3,28 +3,28 @@
 
 #include <dolphin/types.h>
 
-#include "dolphin/OS/OSAlarm.h"
-#include "dolphin/OS/OSAlloc.h"
-#include "dolphin/OS/OSArena.h"
-#include "dolphin/OS/OSBootInfo.h"
-#include "dolphin/OS/OSCache.h"
-#include "dolphin/OS/OSContext.h"
-#include "dolphin/OS/OSError.h"
-#include "dolphin/OS/OSException.h"
-#include "dolphin/OS/OSExpansion.h"
-#include "dolphin/OS/OSFastCast.h"
-#include "dolphin/OS/OSFont.h"
-#include "dolphin/OS/OSInterrupt.h"
-#include "dolphin/OS/OSMemory.h"
-#include "dolphin/OS/OSMessage.h"
-#include "dolphin/OS/OSModule.h"
-#include "dolphin/OS/OSMutex.h"
-#include "dolphin/OS/OSReset.h"
-#include "dolphin/OS/OSRtc.h"
-#include "dolphin/OS/OSThread.h"
-#include "dolphin/OS/OSTime.h"
-#include "dolphin/OS/OSUtil.h"
-#include "dolphin/OS/OSVersion.h"
+#include <dolphin/os/OSAlarm.h>
+#include <dolphin/os/OSAlloc.h>
+#include <dolphin/os/OSArena.h>
+#include <dolphin/os/OSBootInfo.h>
+#include <dolphin/os/OSCache.h>
+#include <dolphin/os/OSContext.h>
+#include <dolphin/os/OSError.h>
+#include <dolphin/os/OSException.h>
+#include <dolphin/os/OSExpansion.h>
+#include <dolphin/os/OSFastCast.h>
+#include <dolphin/os/OSFont.h>
+#include <dolphin/os/OSInterrupt.h>
+#include <dolphin/os/OSMemory.h>
+#include <dolphin/os/OSMessage.h>
+#include <dolphin/os/OSModule.h>
+#include <dolphin/os/OSMutex.h>
+#include <dolphin/os/OSReset.h>
+#include <dolphin/os/OSRtc.h>
+#include <dolphin/os/OSThread.h>
+#include <dolphin/os/OSTime.h>
+#include <dolphin/os/OSUtil.h>
+#include <dolphin/os/OSVersion.h>
 
 BEGIN_SCOPE_EXTERN_C
 

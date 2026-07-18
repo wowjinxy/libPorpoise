@@ -3,8 +3,8 @@
 
 #include <dolphin/types.h>
 
-#include "dolphin/GX/GXTypes.h"
-#include "dolphin/vi/vitypes.h"
+#include <dolphin/gx/GXTypes.h>
+#include <dolphin/vi/vitypes.h>
 
 BEGIN_SCOPE_EXTERN_C
 

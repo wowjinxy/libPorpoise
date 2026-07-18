@@ -1,5 +1,5 @@
-#include "Dolphin/hw_regs.h"
-#include "Dolphin/os.h"
+#include <dolphin/hw_regs.h>
+#include <dolphin/os.h>
 #include <string.h>
 
 static void ExternalInterruptHandler(__OSException exception, OSContext* context);
