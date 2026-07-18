@@ -3,11 +3,11 @@
 
 #include <dolphin/types.h>
 
-#include "dolphin/GX/GXEnum.h"
-#include "dolphin/GX/GXFifo.h"
-#include "dolphin/GX/GXTexture.h"
-#include "dolphin/GX/GXTypes.h"
-#include "dolphin/os.h"
+#include <dolphin/gx/GXEnum.h>
+#include <dolphin/gx/GXFifo.h>
+#include <dolphin/gx/GXTexture.h>
+#include <dolphin/gx/GXTypes.h>
+#include <dolphin/os.h>
 
 BEGIN_SCOPE_EXTERN_C
 

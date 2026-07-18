@@ -1,8 +1,8 @@
-#include "Dolphin/GX/GXPerf.h"
+#include <dolphin/gx/GXPerf.h>
 
-#include "Dolphin/GX/GXData.h"
-#include "Dolphin/GX/GXMisc.h"
-#include "Dolphin/hw_regs.h"
+#include <dolphin/gx/GXData.h>
+#include <dolphin/gx/GXMisc.h>
+#include <dolphin/hw_regs.h>
 
 /**
  * @TODO: Documentation

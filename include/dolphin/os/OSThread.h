@@ -1,8 +1,8 @@
 #ifndef _DOLPHIN_OS_OSTHREAD_H
 #define _DOLPHIN_OS_OSTHREAD_H
 
-#include "dolphin/OS/OSContext.h"
-#include "dolphin/OS/OSUtil.h"
+#include <dolphin/os/OSContext.h>
+#include <dolphin/os/OSUtil.h>
 #include <dolphin/types.h>
 #include <stddef.h>
 

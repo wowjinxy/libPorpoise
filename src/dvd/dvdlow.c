@@ -1,6 +1,6 @@
-#include "Dolphin/dvd.h"
-#include "Dolphin/hw_regs.h"
-#include "Dolphin/os.h"
+#include <dolphin/dvd.h>
+#include <dolphin/hw_regs.h>
+#include <dolphin/os.h>
 #include <stddef.h>
 
 static BOOL FirstRead                    = TRUE;

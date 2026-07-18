@@ -1,5 +1,5 @@
-#include "Dolphin/dvd.h"
-#include "Dolphin/os.h"
+#include <dolphin/dvd.h>
+#include <dolphin/os.h>
 #include <string.h>
 
 struct bb2struct {

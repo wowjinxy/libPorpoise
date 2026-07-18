@@ -1,11 +1,11 @@
 #ifndef _DOLPHIN_SI_H
 #define _DOLPHIN_SI_H
 
-#include "Dolphin/OS/OSContext.h"
-#include "Dolphin/OS/OSInterrupt.h"
-#include "Dolphin/OS/OSTime.h"
-#include "Dolphin/OS/OSVersion.h"
-#include "dolphin/types.h"
+#include <dolphin/os/OSContext.h>
+#include <dolphin/os/OSInterrupt.h>
+#include <dolphin/os/OSTime.h>
+#include <dolphin/os/OSVersion.h>
+#include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C
 

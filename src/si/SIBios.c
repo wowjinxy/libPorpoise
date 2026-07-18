@@ -1,9 +1,9 @@
 // This file also implements "OSSerial.c" (`OS_BUILD_VERSION < 20011217L`). Don't break compatibility!
 
-#include "Dolphin/hw_regs.h"
-#include "Dolphin/os.h"
-#include "Dolphin/si.h"
-#include "Dolphin/vi.h"
+#include <dolphin/hw_regs.h>
+#include <dolphin/os.h>
+#include <dolphin/si.h>
+#include <dolphin/vi.h>
 #include <stddef.h>
 
 // For ease of implementing multiple revisions, this function that was renamed goes by its final

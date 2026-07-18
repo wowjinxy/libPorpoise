@@ -1,6 +1,6 @@
-#include "Dolphin/base/PPCArch.h"
-#include "Dolphin/gx.h"
-#include "Dolphin/hw_regs.h"
+#include <dolphin/base/PPCArch.h>
+#include <dolphin/gx.h>
+#include <dolphin/hw_regs.h>
 #include <stddef.h>
 
 static GXDrawSyncCallback TokenCB;

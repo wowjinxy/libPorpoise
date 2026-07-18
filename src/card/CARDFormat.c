@@ -1,5 +1,5 @@
-#include "Dolphin/card.h"
-#include "Dolphin/hw_regs.h"
+#include <dolphin/card.h>
+#include <dolphin/hw_regs.h>
 #include <stddef.h>
 #include <string.h>
 

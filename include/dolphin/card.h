@@ -1,8 +1,8 @@
 #ifndef _DOLPHIN_CARD_H
 #define _DOLPHIN_CARD_H
 
-#include "dolphin/dsp.h"
-#include "dolphin/os.h"
+#include <dolphin/dsp.h>
+#include <dolphin/os.h>
 #include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C

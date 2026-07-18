@@ -1,11 +1,11 @@
 #ifndef _DOLPHIN_EXI_H
 #define _DOLPHIN_EXI_H
 
-#include "Dolphin/OS/OSExpansion.h"
-#include "Dolphin/OS/OSInterrupt.h"
-#include "Dolphin/OS/OSVersion.h"
-#include "Dolphin/hw_regs.h"
-#include "dolphin/types.h"
+#include <dolphin/os/OSExpansion.h>
+#include <dolphin/os/OSInterrupt.h>
+#include <dolphin/os/OSVersion.h>
+#include <dolphin/hw_regs.h>
+#include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C
 

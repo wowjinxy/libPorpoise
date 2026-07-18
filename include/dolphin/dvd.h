@@ -1,7 +1,7 @@
 #ifndef _DOLPHIN_DVD_H
 #define _DOLPHIN_DVD_H
 
-#include "dolphin/OS/OSThread.h"
+#include <dolphin/os/OSThread.h>
 #include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C

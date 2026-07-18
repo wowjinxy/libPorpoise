@@ -1,7 +1,7 @@
-#include "Dolphin/db.h"
+#include <dolphin/db.h>
 
-#include "Dolphin/base/PPCArch.h"
-#include "Dolphin/os.h"
+#include <dolphin/base/PPCArch.h>
+#include <dolphin/os.h>
 
 DBInterface* __DBInterface = NULL;
 BOOL DBVerbose             = FALSE;

@@ -1,8 +1,8 @@
 #include <dolphin/types.h>
 
-#include "Dolphin/OS/OSError.h"
-#include "Dolphin/hw_regs.h"
-#include "Dolphin/os.h"
+#include <dolphin/os/OSError.h>
+#include <dolphin/hw_regs.h>
+#include <dolphin/os.h>
 
 #define TRUNC(n, a) (((u32)(n)) & ~((a) - 1))
 #define ROUND(n, a) (((u32)(n) + (a) - 1) & ~((a) - 1))

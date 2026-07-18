@@ -3,10 +3,10 @@
 
 #include <dolphin/types.h>
 
-#include "dolphin/GX/GXEnum.h"
-#include "dolphin/GX/GXFifo.h"
-#include "dolphin/GX/GXTypes.h"
-#include "dolphin/OS/OSInterrupt.h"
+#include <dolphin/gx/GXEnum.h>
+#include <dolphin/gx/GXFifo.h>
+#include <dolphin/gx/GXTypes.h>
+#include <dolphin/os/OSInterrupt.h>
 
 BEGIN_SCOPE_EXTERN_C
 

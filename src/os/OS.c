@@ -1,9 +1,9 @@
-#include "Dolphin/os.h"
+#include <dolphin/os.h>
 #include <dolphin/base/PPCArch.h>
-#include "Dolphin/db.h"
-#include "Dolphin/exi.h"
-#include "Dolphin/hw_regs.h"
-#include "Dolphin/si.h"
+#include <dolphin/db.h>
+#include <dolphin/exi.h>
+#include <dolphin/hw_regs.h>
+#include <dolphin/si.h>
 #ifndef LIBPORPOISE_PORT
 #include "PowerPC_EABI_Support/MetroTRK/trk.h"
 #include "PowerPC_EABI_Support/Runtime/__ppc_eabi_linker.h"

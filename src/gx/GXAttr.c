@@ -1,7 +1,7 @@
-#include "Dolphin/GX/GXAttr.h"
+#include <dolphin/gx/GXAttr.h>
 
-#include "Dolphin/gx.h"
-#include "Dolphin/os.h"
+#include <dolphin/gx.h>
+#include <dolphin/os.h>
 #include <stddef.h>
 
 #define CHECK_ATTRPTR(line, attrPtr) OSAssertMsgLine(line, (attrPtr) != NULL, "GXSetVtxDescv: attrPtr is NULL")

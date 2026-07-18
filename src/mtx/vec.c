@@ -1,5 +1,5 @@
-#include "Dolphin/vec.h"
-#include "Dolphin/os.h"
+#include <dolphin/vec.h>
+#include <dolphin/os.h>
 #include <math.h>
 
 /**

@@ -1,8 +1,8 @@
 #ifndef _DOLPHIN_GXATTR_H
 #define _DOLPHIN_GXATTR_H
 
-#include "dolphin/GX/GXEnum.h"
-#include "dolphin/GX/GXTypes.h"
+#include <dolphin/gx/GXEnum.h>
+#include <dolphin/gx/GXTypes.h>
 
 BEGIN_SCOPE_EXTERN_C
 

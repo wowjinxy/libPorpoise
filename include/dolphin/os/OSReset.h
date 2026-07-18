@@ -1,7 +1,7 @@
 #ifndef _DOLPHIN_OS_OSRESET_H
 #define _DOLPHIN_OS_OSRESET_H
 
-#include "dolphin/OS/OSContext.h"
+#include <dolphin/os/OSContext.h>
 #include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C

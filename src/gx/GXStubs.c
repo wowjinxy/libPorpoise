@@ -1,4 +1,4 @@
-#include "Dolphin/GX/GXStubs.h"
+#include <dolphin/gx/GXStubs.h>
 
 /**
  * @TODO: Documentation

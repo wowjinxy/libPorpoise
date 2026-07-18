@@ -12,7 +12,7 @@
  * ====================================================
  */
 
-#include "dolphin/types.h"
+#include <dolphin/types.h>
 
 BEGIN_SCOPE_EXTERN_C
 

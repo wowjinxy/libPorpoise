@@ -1,5 +1,5 @@
-#include "Dolphin/db.h"
-#include "Dolphin/os.h"
+#include <dolphin/db.h>
+#include <dolphin/os.h>
 #ifndef LIBPORPOISE_PORT
 #include "PowerPC_EABI_Support/MetroTRK/trk.h"
 #include "PowerPC_EABI_Support/Runtime/__ppc_eabi_init.h"

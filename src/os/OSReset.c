@@ -1,5 +1,5 @@
-#include "Dolphin/hw_regs.h"
-#include "Dolphin/os.h"
+#include <dolphin/hw_regs.h>
+#include <dolphin/os.h>
 #include <stddef.h>
 #include <string.h>
 

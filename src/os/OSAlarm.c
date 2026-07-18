@@ -1,5 +1,5 @@
 #include <dolphin/base/PPCArch.h>
-#include "Dolphin/os.h"
+#include <dolphin/os.h>
 #include <limits.h>
 #include <stddef.h>
 
