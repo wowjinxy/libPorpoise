@@ -19,6 +19,26 @@ typedef void (*OSErrorHandler)(OSError error, OSContext* context, ...);
 OSErrorHandler OSSetErrorHandler(OSError error, OSErrorHandler handler);
 void __OSUnhandledException(__OSException exception, OSContext* context, u32 dsisr, u32 dar);
 
+#define OSHalt(msg) OSPanic(__FILE__, __LINE__, msg)
+
+#ifndef ASSERT
+#define ASSERT(exp)                                             \
+    (void) ((exp) ||                                            \
+            (OSPanic(__FILE__, __LINE__, "Failed assertion " #exp), 0))
+#endif
+
+#ifndef ASSERTMSG
+#if defined(__MWERKS__)
+#define ASSERTMSG(exp, ...)                                     \
+    (void) ((exp) ||                                            \
+            (OSPanic(__FILE__, __LINE__, __VA_ARGS__), 0))
+#else
+#define ASSERTMSG(exp, msg)                                     \
+    (void) ((exp) ||                                            \
+            (OSPanic(__FILE__, __LINE__, (msg)), 0))
+#endif
+#endif
+
 // OS logging and reporting.
 void OSReport(const char* message, ...);
 void OSPanic(const char* file, int line, const char* message, ...);

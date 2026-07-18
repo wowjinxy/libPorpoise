@@ -1,6 +1,10 @@
 #ifndef DOLPHIN_H
 #define DOLPHIN_H
 
+#if defined(LIBPORPOISE_PORT) && !defined(LIBPORPOISE_MAIN_HANDLED)
+#define main DolphinMain
+#endif
+
 #include <dolphin/types.h>
 #include <dolphin/base/PPCArch.h>
 #include <dolphin/db.h>

@@ -592,6 +592,11 @@ static u32 __GXGetNumXfbLines(u32 efbHt, u32 iScale)
 	return realHt;
 }
 
+f32 GXGetYScaleFactor(u16 efbHeight, u16 xfbHeight) {
+	// TODO
+	return 0.0f;
+}
+
 /**
  * @TODO: Documentation
  */

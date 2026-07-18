@@ -85,8 +85,10 @@ typedef enum _GXCommand {
 	GX_CMD_LOAD_INDX_D = 0x38,
 
 	GX_CMD_LOAD_BP_REG = 0x61,
+	GX_LOAD_BP_REG = 0x61,
 	GX_CMD_LOAD_CP_REG = 0x08,
 	GX_CMD_LOAD_XF_REG = 0x10,
+	GX_LOAD_XF_REG = 0x10,
 
 	GX_CMD_CALL_DL = 0x40,
 	GX_CMD_INVL_VC = 0x48,
@@ -406,6 +408,7 @@ typedef enum _GXTexCoordID {
 // Texture generation types.
 typedef enum _GXTexGenType {
 	GX_TG_MTX2X4 = 0,
+	GX_TG_MTX2x4 = 0,
 	GX_TG_MTX3X4 = 1,
 
 	GX_TG_BUMP0 = 2,
