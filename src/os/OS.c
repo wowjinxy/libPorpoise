@@ -10,6 +10,9 @@
 #endif
 #include <stddef.h>
 #include <string.h>
+#ifdef LIBPORPOISE_PORT
+#include <stdlib.h>
+#endif
 
 // memory locations for important stuff
 #define OS_DBINTERFACE_ADDR     0x40
@@ -174,11 +177,21 @@ void OSInit(void)
 		BI2DebugFlag = 0;                           // debug flag from the DVD BI2 header
 		BootInfo     = (OSBootInfo*)OS_BASE_CACHED; // set pointer to BootInfo
 
+		#ifdef LIBPORPOISE_PORT
+		BootInfo = (OSBootInfo*)malloc(sizeof(OSBootInfo));
+		memset(BootInfo, 0, sizeof(OSBootInfo));
+		BootInfo->memorySize = 0x01800000;
+		#endif
+
 		__DVDLongFileNameFlag = FALSE;
 
 		// time to grab a bunch of debug info from the DVD
 		// the address for where the BI2 debug info is, is stored at OS_BI2_DEBUG_ADDRESS
+		#ifdef LIBPORPOISE_PORT
+		DebugInfo = NULL;
+		#else
 		DebugInfo = (BI2Debug*)*((u32*)OS_BI2_DEBUG_ADDRESS);
+		#endif
 
 		// if the debug info address exists, grab some debug info
 #if OS_BUILD_VERSION >= 20011002L
@@ -188,9 +201,11 @@ void OSInit(void)
 			*((u8*)DEBUGFLAG_ADDR)     = (u8)*BI2DebugFlag;         // store flag in mem
 			*((u8*)OS_DEBUG_ADDRESS_2) = (u8)__PADSpec;             // store other info in mem
 		} else if (BootInfo->arenaHi) {                             // if the top of the heap is already set
+			#ifndef LIBPORPOISE_PORT
 			BI2DebugFlagHolder = (u32*)*((u8*)DEBUGFLAG_ADDR);      // grab whatever's stored at 0x800030E8
 			BI2DebugFlag       = (u32*)&BI2DebugFlagHolder;         // flag is then address of flag holder
 			__PADSpec          = (u32) * ((u8*)OS_DEBUG_ADDRESS_2); // pad spec is whatever's at 0x800030E9
+			#endif
 		}
 
 		__DVDLongFileNameFlag = TRUE;
@@ -373,14 +388,16 @@ static void OSExceptionInit(void)
 
 	// Install the DB integrator, only if we are the first OSInit to be run
 	destAddr = (void*)OSPhysicalToCached(OS_DBJUMPPOINT_ADDR);
+	#ifndef LIBPORPOISE_PORT
+	// TODO: Maybe we could actually set this up on ported platforms and use signal handlers
+	// but, not important to just get things running
+
 	if (*(u32*)destAddr == 0) // Lomem should be zero cleared only once by BS2
 	{
 		DBPrintf("Installing OSDBIntegrator\n");
 		memcpy(destAddr, (void*)__OSDBINTSTART, (u32)__OSDBINTEND - (u32)__OSDBINTSTART);
 		DCFlushRangeNoSync(destAddr, (u32)__OSDBINTEND - (u32)__OSDBINTSTART);
-		#ifndef LIBPORPOISE_PORT
 		__mwerks_sync();
-		#endif
 		ICInvalidateRange(destAddr, (u32)__OSDBINTEND - (u32)__OSDBINTSTART);
 	}
 
@@ -413,14 +430,17 @@ static void OSExceptionInit(void)
 		destAddr = (void*)OSPhysicalToCached(__OSExceptionLocations[(u32)exception]);
 		memcpy(destAddr, handlerStart, handlerSize);
 		DCFlushRangeNoSync(destAddr, handlerSize);
-		#ifndef LIBPORPOISE_PORT
 		__mwerks_sync();
-		#endif
 		ICInvalidateRange(destAddr, handlerSize);
 	}
+	#endif
 
 	// initialize pointer to exception table
 	OSExceptionTable = OSPhysicalToCached(OS_EXCEPTIONTABLE_ADDR);
+
+	#ifdef LIBPORPOISE_PORT
+	OSExceptionTable = (void*)malloc(sizeof(void*) * __OS_EXCEPTION_MAX);
+	#endif
 
 	// install default exception handlers
 	for (exception = 0; exception < __OS_EXCEPTION_MAX; exception++) {
@@ -428,7 +448,9 @@ static void OSExceptionInit(void)
 	}
 
 	// restore the old opcode, so that we can re-start an application without downloading the text segments
+	#ifndef LIBPORPOISE_PORT
 	*opCodeAddr = oldOpCode;
+	#endif
 
 	DBPrintf("Exceptions initialized...\n");
 }

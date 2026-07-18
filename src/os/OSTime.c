@@ -2,6 +2,11 @@
 
 #include <dolphin/os.h>
 
+#ifdef LIBPORPOISE_PORT
+#include <time.h>
+#include <SDL2/SDL.h>
+#endif
+
 #define OS_TIME_MONTH_MAX    12
 #define OS_TIME_WEEK_DAY_MAX 7
 #define OS_TIME_YEAR_DAY_MAX 365
@@ -29,6 +34,10 @@ ASM OSTime OSGetTime(void) {
 
 	blr
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	OSTime result = (OSTime)time(NULL);
+	return result;
+#endif
 }
 
 /**
@@ -42,6 +51,9 @@ ASM u32 OSGetTick(void)
 	mftb  r3
 	blr
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	return OSMillisecondsToTicks(SDL_GetTicks());
+#endif
 }
 
 /**
@@ -72,7 +84,11 @@ OSTime __OSGetSystemTime(void)
 	OSTime result;
 
 	enabled = OSDisableInterrupts();
+	#ifdef LIBPORPOISE_PORT
+	result = OSGetTime();
+	#else
 	result  = *timeAdjustAddr + OSGetTime();
+	#endif
 	OSRestoreInterrupts(enabled);
 
 	return result;

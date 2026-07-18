@@ -1,6 +1,9 @@
 #include <dolphin/hw_regs.h>
 #include <dolphin/os.h>
 #include <string.h>
+#ifdef LIBPORPOISE_PORT
+#include <stdlib.h>
+#endif
 
 static void ExternalInterruptHandler(__OSException exception, OSContext* context);
 
@@ -99,6 +102,9 @@ __OSInterruptHandler __OSGetInterruptHandler(__OSInterrupt interrupt)
 void __OSInterruptInit(void)
 {
 	InterruptHandlerTable = OSPhysicalToCached(0x3040);
+	#ifdef LIBPORPOISE_PORT
+	InterruptHandlerTable = malloc(sizeof(void*) * __OS_INTERRUPT_MAX);
+	#endif
 	memset(InterruptHandlerTable, 0, __OS_INTERRUPT_MAX * sizeof(__OSInterruptHandler));
 
 	__OSPriorInterruptMask = 0;
@@ -325,9 +331,11 @@ OSInterruptMask __OSMaskInterrupts(OSInterruptMask global)
 	mask    = ~(prev | local) & global;
 	global |= prev;
 	__OSPriorInterruptMask = global;
+	#ifndef LIBPORPOISE_PORT
 	while (mask) {
 		mask = SetInterruptMask(mask, global | local);
 	}
+	#endif
 	OSRestoreInterrupts(enabled);
 	return prev;
 }
@@ -348,9 +356,11 @@ OSInterruptMask __OSUnmaskInterrupts(OSInterruptMask global)
 	mask                   = (prev | local) & global;
 	global                 = prev & ~global;
 	__OSPriorInterruptMask = global;
+	#ifndef LIBPORPOISE_PORT
 	while (mask) {
 		mask = SetInterruptMask(mask, global | local);
 	}
+	#endif
 	OSRestoreInterrupts(enabled);
 	return prev;
 }
