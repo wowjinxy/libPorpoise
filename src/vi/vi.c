@@ -353,7 +353,9 @@ void __VIInit(VITVMode mode)
 	nonInter = mode & 2;
 	tv       = (u32)mode >> 2;
 
+	#ifndef LIBPORPOISE_PORT
 	*(u32*)OSPhysicalToCached(0xCC) = tv;
+	#endif
 
 	tm = getTiming(mode);
 
@@ -536,9 +538,12 @@ void VIWaitForRetrace(void)
 
 	interrupt  = OSDisableInterrupts();
 	startCount = retraceCount;
+	#ifndef LIBPORPOISE_PORT
+	// TODO
 	do {
 		OSSleepThread(&retraceQueue);
 	} while (startCount == retraceCount);
+	#endif
 	OSRestoreInterrupts(interrupt);
 }
 
@@ -935,11 +940,13 @@ void VIFlush(void)
 #endif
 	shdwChanged |= changed;
 
+	#ifndef LIBPORPOISE_PORT
 	while (changed) {
 		regIndex           = cntlzd(changed);
 		shdwRegs[regIndex] = regs[regIndex];
 		changed &= ~VI_BITMASK(regIndex);
 	}
+	#endif
 
 	flushFlag = 1;
 	OSRestoreInterrupts(enabled);

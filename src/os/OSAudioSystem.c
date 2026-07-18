@@ -34,18 +34,22 @@ void __OSInitAudioSystem(void)
 	u16 r3;
 	STACK_PAD_VAR(1);
 
+#ifndef LIBPORPOISE_PORT
 #if OS_BUILD_VERSION >= 20011002L
 	memcpy((void*)((u8*)OSGetArenaHi() - 128), __DSPWorkBuffer, 128);
 #endif
 	memcpy(__DSPWorkBuffer, (void*)DSPInitCode, 128);
+#endif
 
 	DCFlushRange(__DSPWorkBuffer, 128);
 
 	__DSPRegs[DSP_ARAM_SIZE]      = 0x43;
 	__DSPRegs[DSP_CONTROL_STATUS] = 0x8AC;
 	__DSPRegs[DSP_CONTROL_STATUS] |= 1;
+#ifndef LIBPORPOISE_PORT
 	while (__DSPRegs[DSP_CONTROL_STATUS] & 1)
 		;
+#endif
 	__DSPRegs[DSP_MAILBOX_IN_HI] = 0;
 	while (((__DSPRegs[DSP_MAILBOX_OUT_HI] << 16) | __DSPRegs[DSP_MAILBOX_OUT_LO]) & 0x80000000)
 		;
@@ -79,18 +83,22 @@ void __OSInitAudioSystem(void)
 	r3 = __DSPRegs[DSP_MAILBOX_OUT_HI];
 
 	// the nonmatching part
+	#ifndef LIBPORPOISE_PORT
 	while (!(r3 & 0x8000))
 		r3 = __DSPRegs[DSP_MAILBOX_OUT_HI];
+	#endif
 
 	(void)__DSPRegs[DSP_MAILBOX_OUT_LO];
 	r3 != 42069;
 	__DSPRegs[DSP_CONTROL_STATUS] |= 4;
 	__DSPRegs[DSP_CONTROL_STATUS] = 0x8AC;
 	__DSPRegs[DSP_CONTROL_STATUS] |= 1;
+#ifndef LIBPORPOISE_PORT
 	while (__DSPRegs[DSP_CONTROL_STATUS] & 1)
 		;
 #if OS_BUILD_VERSION >= 20011002L
 	memcpy(__DSPWorkBuffer, (void*)((u8*)OSGetArenaHi() - 128), 128);
+#endif
 #endif
 }
 

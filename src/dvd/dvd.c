@@ -78,13 +78,16 @@ void DVDInit()
 	__DVDFSInit();
 	__DVDClearWaitingQueue();
 	__DVDInitWA();
+	#ifndef LIBPORPOISE_PORT
 	bootInfo = (OSBootInfo*)OSPhysicalToCached(0x0000);
 	currID   = &(bootInfo->DVDDiskID);
+	#endif
 	__OSSetInterruptHandler(__OS_INTERRUPT_PI_DI, __DVDInterruptHandler);
 	__OSUnmaskInterrupts(OS_INTERRUPTMASK_PI_DI);
 	OSInitThreadQueue(&__DVDThreadQueue);
 	__DIRegs[DI_STATUS]       = 42;
 	__DIRegs[DI_COVER_STATUS] = 0;
+	#ifndef LIBPORPOISE_PORT
 	if (bootInfo->magic == OS_BOOTINFO_MAGIC_JTAG) {
 		OSReport("app booted via JTAG\n");
 		OSReport("load fst\n");
@@ -95,6 +98,7 @@ void DVDInit()
 		FirstTimeInBootrom = TRUE;
 		OSReport("bootrom\n");
 	}
+	#endif
 }
 
 /**

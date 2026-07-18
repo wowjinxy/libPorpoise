@@ -47,8 +47,8 @@ void __OSThreadInit(void)
 	//TODO
 	thread->stackBase   = (void*)_stack_addr;
 	thread->stackEnd    = (void*)_stack_end;
-	#endif
 	*(thread->stackEnd) = OS_THREAD_STACK_MAGIC;
+	#endif
 
 	RunQueueBits      = 0;
 	__OSCurrentThread = thread;

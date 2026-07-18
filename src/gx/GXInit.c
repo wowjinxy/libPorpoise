@@ -104,10 +104,17 @@ GXFifoObj* GXInit(void* base, u32 size)
 	gx->tevTcEnab = GX_FALSE;
 #endif
 	gx->vNum = 0;
+	#ifdef LIBPORPOISE_PORT
+	__piReg = (void*)__PIRegs;
+	__cpReg = (void*)__CPRegs;
+	__peReg = (void*)__PERegs;
+	__memReg = (void*)__MEMRegs;
+	#else
 	__piReg  = OSPhysicalToUncached(0xC003000);
 	__cpReg  = OSPhysicalToUncached(0xC000000);
 	__peReg  = OSPhysicalToUncached(0xC001000);
 	__memReg = OSPhysicalToUncached(0xC004000);
+	#endif
 	__GXFifoInit();
 	GXInitFifoBase(&FifoObj, base, size);
 	GXSetCPUFifo(&FifoObj);

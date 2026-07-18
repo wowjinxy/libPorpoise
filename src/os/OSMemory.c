@@ -15,12 +15,20 @@ static OSResetFunctionInfo ResetFunctionInfo = {
 };
 u32 OSGetPhysicalMemSize()
 {
+	#ifdef LIBPORPOISE_PORT
+	return 0x01800000;
+	#else
 	return *(u32*)(OSPhysicalToCached(0x0028));
+	#endif
 }
 
 u32 OSGetConsoleSimulatedMemSize()
 {
+	#ifdef LIBPORPOISE_PORT
+	return 0x1800000;
+	#else
 	return *(u32*)(OSPhysicalToCached(0x00F0));
+	#endif
 }
 
 static BOOL OnReset(BOOL final)

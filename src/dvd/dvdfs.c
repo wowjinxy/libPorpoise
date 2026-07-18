@@ -31,6 +31,7 @@ static void cbForPrepareStreamSync(s32 result, DVDCommandBlock* block);
  */
 void __DVDFSInit()
 {
+	#ifndef LIBPORPOISE_PORT
 	BootInfo = (OSBootInfo*)OSPhysicalToCached(0);
 	FstStart = (FSTEntry*)BootInfo->FSTLocation;
 
@@ -38,6 +39,7 @@ void __DVDFSInit()
 		MaxEntryNum    = FstStart[0].nextEntryOrLength;
 		FstStringStart = (char*)&(FstStart[MaxEntryNum]);
 	}
+	#endif
 }
 
 /* For convenience */

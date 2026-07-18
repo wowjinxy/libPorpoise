@@ -205,6 +205,10 @@ BOOL EXIDma(s32 chan, void* buf, s32 len, u32 type, EXICallback callback)
  */
 BOOL EXISync(s32 chan)
 {
+	#ifdef LIBPORPOISE_PORT
+	// TODO: actually implement this
+	return TRUE;
+	#else
 	EXIControl* exi;
 	BOOL rc;
 	BOOL enabled;
@@ -229,6 +233,7 @@ BOOL EXISync(s32 chan)
 	}
 	OSAssertLine(0x1E9, !(exi->state & EXI_STATE_BUSY));
 	return rc;
+	#endif
 }
 
 /**

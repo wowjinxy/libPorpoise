@@ -1,7 +1,7 @@
 project('libporpoise', 'c', 'cpp',
     default_options: {
         'default_library': 'static',
-        'prefer_static':    true
+        'prefer_static':    false
     },
     meson_version: '>=1.2.0',
     version: '1.0'

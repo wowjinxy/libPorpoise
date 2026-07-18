@@ -35,11 +35,11 @@ entry __OSSystemCallVectorEnd
 void __OSInitSystemCall(void)
 {
 	void* handler = OS_SYS_CALL_HANDLER;
+	#ifndef LIBPORPOISE_PORT
 	memcpy(handler, __OSSystemCallVectorStart, (u32)__OSSystemCallVectorEnd - (u32)__OSSystemCallVectorStart);
 
 	DCFlushRangeNoSync(handler, OS_HANDLER_SLOT_SIZE);
-	#ifndef LIBPORPOISE_PORT
 	__mwerks_sync();
-	#endif
 	ICInvalidateRange(handler, OS_HANDLER_SLOT_SIZE);
+	#endif
 }
