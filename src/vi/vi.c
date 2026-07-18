@@ -4,6 +4,9 @@
 #include <dolphin/os.h>
 #include <dolphin/si.h>
 #include <stddef.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim.h>
+#endif
 
 // Useful macros.
 #define CLAMP(x, l, h)    (((x) > (h)) ? (h) : (((x) < (l)) ? (l) : (x)))
@@ -460,6 +463,10 @@ void VIInit(void)
 		__VIInit(VI_TVMODE_NTSC_INT);
 	}
 
+#ifdef LIBPORPOISE_PORT
+	SIM_VIInit();
+#endif
+
 	retraceCount = 0;
 	changed      = 0;
 	shdwChanged  = 0;
@@ -538,8 +545,9 @@ void VIWaitForRetrace(void)
 
 	interrupt  = OSDisableInterrupts();
 	startCount = retraceCount;
-	#ifndef LIBPORPOISE_PORT
-	// TODO
+	#ifdef LIBPORPOISE_PORT
+	SIM_Render();
+	#else
 	do {
 		OSSleepThread(&retraceQueue);
 	} while (startCount == retraceCount);

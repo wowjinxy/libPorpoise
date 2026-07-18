@@ -169,9 +169,12 @@ void GXWaitDrawDone(void)
 	CHECK_GXBEGIN(483, "GXWaitDrawDone");
 
 	enabled = OSDisableInterrupts();
+	#ifndef LIBPORPOISE_PORT
+	//TODO
 	while (!DrawDone) {
 		OSSleepThread(&FinishQueue);
 	}
+	#endif
 	OSRestoreInterrupts(enabled);
 }
 
