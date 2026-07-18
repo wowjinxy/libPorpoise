@@ -13,6 +13,11 @@ extern void GXSetGPMetric(GXPerf0 perf0, GXPerf1 perf1);
 extern void GXClearGPMetric();
 extern void GXReadXfRasMetric(u32* xfWaitIn, u32* xfWaitOut, u32* rasBusy, u32* clocks);
 
+#define GXSetGP0Metric(perf0)    GXSetGPMetric((perf0), GX_PERF1_NONE)
+#define GXClearGP0Metric()       GXClearGPMetric()
+#define GXSetGP1Metric(perf1)    GXSetGPMetric(GX_PERF0_NONE, (perf1))
+#define GXClearGP1Metric()       GXClearGPMetric()
+
 // Unused/inlined in P2.
 extern void GXReadGPMetric(u32* count0, u32* count1);
 extern u32 GXReadGP0Metric();

@@ -32,6 +32,9 @@ u32 OS_UNK_CODE;
 u32 OS_HOT_RESET_CODE;
 u16 __OSWirelessPadFixMode;
 u8 GameChoice;
+volatile int __OSTVMode;
+
+volatile PPCWGPipe GXWGFifo;
 
 // TODO: Move these to a stubs file or something like that
 void __OSEVStart(void) {}

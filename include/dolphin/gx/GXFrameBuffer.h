@@ -74,6 +74,9 @@ extern void GXClearBoundingBox();
 extern void GXAdjustForOverscan(GXRenderModeObj* rIn, GXRenderModeObj* rOut, u16 horiz, u16 vert);
 extern void GXReadBoundingBox(u16* left, u16* top, u16* right, u16* bottom);
 
+#define	GX_MAX_Z24	0x00ffffff
+#define	GX_MAX_Z16	0x00ffffff
+
 ////////////////////////////////////////////
 
 END_SCOPE_EXTERN_C

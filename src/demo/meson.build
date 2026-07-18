@@ -1,11 +1,11 @@
 libdemo_srcs = files(
-    'DEMOFont.cpp',
-    'DEMOInit.cpp',
-    'DEMOPad.cpp',
-    'DEMOPuts.cpp',
-    'DEMOStats.cpp',
-    'DEMOTpl.c',
-    'DEMOWin.cpp'
+    'DEMOAVX.c',
+    'DEMOFont.c',
+    'DEMOInit.c',
+    'DEMOPad.c',
+    'DEMOPuts.c',
+    'DEMOStats.c',
+    'DEMOWin.c'
 )
 
 libdemo = library('demo',

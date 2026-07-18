@@ -72,6 +72,12 @@ extern volatile PPCWGPipe GXWGFifo AT_ADDRESS(GXFIFO_ADDR);
 #define GX_WRITE_U32(val) (GXWGFifo.u32 = (u32)val)
 #define GX_WRITE_F32(val) (GXWGFifo.f32 = (f32)val)
 
+static inline void GXPosition1x8(const u8 x)
+{
+	//TODO: This might not be correct
+	GXWGFifo.u8 = x;
+}
+
 static inline void GXPosition2f32(const f32 x, const f32 y)
 {
 	GXWGFifo.f32 = x;
@@ -104,6 +110,12 @@ static inline void GXNormal3f32(const f32 x, const f32 y, const f32 z)
 	GXWGFifo.f32 = x;
 	GXWGFifo.f32 = y;
 	GXWGFifo.f32 = z;
+}
+
+static inline void GXColor1x8(const u8 x)
+{
+	//TODO: This might not be correct
+	GXWGFifo.u8 = x;
 }
 
 static inline void GXColor1u32(u32 c)
@@ -161,6 +173,24 @@ static inline void GXTexCoord2f32(const f32 u, const f32 v)
 	GXWGFifo.f32 = v;
 }
 
+static inline void GXCmd1u8(const u8 x)
+{
+	//TODO: This might not be correct
+	GXWGFifo.u8 = x;
+}
+
+static inline void GXParam1u16(const u16 x)
+{
+	//TODO: This might not be correct
+	GXWGFifo.u16 = x;
+}
+
+static inline void GXParam1u32(const u32 x)
+{
+	//TODO: This might not be correct
+	GXWGFifo.u32 = x;
+}
+
 static inline void GXEnd(void)
 {
 }
@@ -185,6 +215,9 @@ extern void GXSaveCPUFifo(GXFifoObj* obj);
 extern void GXGetGPStatus(GXBool* isOverHi, GXBool* isUnderLo, GXBool* isReadIdle, GXBool* isCmdIdle, GXBool* isHitBrkPt);
 extern GXFifoObj* GXGetCPUFifo();
 extern GXFifoObj* GXGetGPFifo();
+
+u32 GXGetOverflowCount();
+u32 GXResetOverflowCount();
 
 ////////////////////////////////////////////
 
