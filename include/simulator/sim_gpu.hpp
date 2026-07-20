@@ -42,8 +42,9 @@ class GPU {
   GPU();
   ~GPU() = default;
   void ProcessFifoDataU8(u8 data);
-  void ProcessFifoDataU16(u16 data);
-  void ProcessFifoDataU32(u32 data);
+
+  template <typename DataType>
+  void ProcessFifoData(DataType data);
 
  private:
   int GetOpcodeArgSize(Opcode code);

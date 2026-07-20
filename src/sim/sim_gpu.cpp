@@ -36,27 +36,18 @@ void GPU::ProcessFifoDataU8(u8 data) {
     }
 }
 
-void GPU::ProcessFifoDataU16(u16 data) {
-    if(mCurrentState == GPU::State::ReadArguments && mRemainingArgBytes >= sizeof(u16)) {
-        u16 * argsPointer16 = (u16*)mArgsBufferPointer;
-        *argsPointer16 = data;
-        mArgsBufferPointer += sizeof(u16);
-        mRemainingArgBytes -= sizeof(u16);
+template <typename DataType>
+void GPU::ProcessFifoData(DataType data) {
+    if(mCurrentState == GPU::State::ReadArguments && mRemainingArgBytes >= sizeof(DataType)) {
+        DataType * argsPointer = (DataType*)mArgsBufferPointer;
+        *argsPointer = data;
+        mArgsBufferPointer += sizeof(DataType);
+        mRemainingArgBytes -= sizeof(DataType);
         if(mRemainingArgBytes == 0) {
             ProcessOpcode();
         }
-    }
-}
-
-void GPU::ProcessFifoDataU32(u32 data) {
-    if(mCurrentState == GPU::State::ReadArguments && mRemainingArgBytes >= sizeof(u32)) {
-        u32 * argsPointer32 = (u32*)mArgsBufferPointer;
-        *argsPointer32 = data;
-        mArgsBufferPointer += sizeof(u32);
-        mRemainingArgBytes -= sizeof(u32);
-        if(mRemainingArgBytes == 0) {
-            ProcessOpcode();
-        }
+    } else {
+        OSReport("GPU: Arguments error. Current state %d. Remaining Arg Bytes %d.\n", mCurrentState, mRemainingArgBytes);
     }
 }
 
@@ -89,44 +80,44 @@ void GPU::ProcessOpcode() {
         case Opcode::LoadBpReg:
             {
                 u32 bpRegArgs = *(u32*)mArgsBufferPointer;
-                OSReport("LoadBpReg 0x%x\n", bpRegArgs);
+                //OSReport("LoadBpReg 0x%x\n", bpRegArgs);
             }
             break;
         case Opcode::LoadXfReg:
             {
                 u32 xfRegArgs = *(u32*)mArgsBufferPointer;
-                OSReport("LoadXfReg 0x%x\n", xfRegArgs);
+                //OSReport("LoadXfReg 0x%x\n", xfRegArgs);
             }
             break;
         case Opcode::LoadCpReg:
-            OSReport("LoadCpReg\n");
+            //OSReport("LoadCpReg\n");
             break;
         case Opcode::BeginTriangles:
-            OSReport("Begin Triangles\n");
+            //OSReport("Begin Triangles\n");
             break;
         case Opcode::BeginTriangleStrip:
-            OSReport("Begin Triangle strip\n");
+            //OSReport("Begin Triangle strip\n");
             break;
         case Opcode::BeginQuadStrip:
-            OSReport("Begin Quad Strip\n");
+            //OSReport("Begin Quad Strip\n");
             break;
         case Opcode::BeginTriangleFan:
-            OSReport("Begin Triangle fan\n");
+            //OSReport("Begin Triangle fan\n");
             break;
         case Opcode::BeginLines:
-            OSReport("Begin Lines\n");
+            //OSReport("Begin Lines\n");
             break;
         case Opcode::BeginLineStrip:
-            OSReport("Begin Line Strip\n");
+            //OSReport("Begin Line Strip\n");
             break;
         case Opcode::BeginPoints:
-            OSReport("Begin Points\n");
+            //OSReport("Begin Points\n");
             break;
         case Opcode::BeginQuads:
-            OSReport("Begin Quads\n");
+            //OSReport("Begin Quads\n");
             break;
         case Opcode::InvalidateVertexCache:
-            OSReport("InvalidateVertexCache\n");
+            //OSReport("InvalidateVertexCache\n");
             break;
         default:
             OSReport("Unknown opcode\n");
@@ -151,9 +142,21 @@ void SIM_GPU_FifoSendU8(u8 data) {
 }
 
 void SIM_GPU_FifoSendU16(u16 data) {
-    sGPU->ProcessFifoDataU16(data);
+    sGPU->ProcessFifoData<u16>(data);
+}
+
+void SIM_GPU_FifoSendS16(s16 data) {
+    sGPU->ProcessFifoData<s16>(data);
 }
 
 void SIM_GPU_FifoSendU32(u32 data) {
-    sGPU->ProcessFifoDataU32(data);
+    sGPU->ProcessFifoData<u32>(data);
+}
+
+void SIM_GPU_FifoSendF32(f32 data) {
+    sGPU->ProcessFifoData<f32>(data);
+}
+
+void SIM_GPU_FifoSendU64(u64 data) {
+    sGPU->ProcessFifoData<u64>(data);
 }
