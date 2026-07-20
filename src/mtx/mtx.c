@@ -208,6 +208,9 @@ ASM void PSMTXConcat(register const Mtx a, register const Mtx b, register Mtx ds
 
 	blr
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	C_MTXConcat(a, b, dst);
+#endif
 }
 
 /**
@@ -830,6 +833,9 @@ void PSMTXTrans(register Mtx m, register f32 xT, register f32 yT, register f32 z
 		stfs    zT, 44 (m)
 		stfs    c1,  0 (m)
 	}
+#endif
+#ifdef LIBPORPOISE_PORT
+	C_MTXTrans(m, xT, yT, zT);
 #endif
 }
 

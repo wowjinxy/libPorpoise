@@ -1,7 +1,8 @@
 libsim_srcs = files(
     'glad.c',
     'sim_main.cpp',
-    'sim_globals.c'
+    'sim_globals.c',
+    'sim_gpu.cpp'
 )
 
 libsim = library('sim',

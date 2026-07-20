@@ -14,8 +14,13 @@ BEGIN_SCOPE_EXTERN_C
 //////////////////////////////////
 
 // Macros for rounding to 32-alignment.
+#ifdef LIBPORPOISE_PORT
+#define OSRoundUp32B(x)   (((u64)(x) + 0x1F) & ~(0x1F))
+#define OSRoundDown32B(x) (((u64)(x)) & ~(0x1F))
+#else
 #define OSRoundUp32B(x)   (((u32)(x) + 0x1F) & ~(0x1F))
 #define OSRoundDown32B(x) (((u32)(x)) & ~(0x1F))
+#endif
 
 // Address conversions.
 #define OSPhysicalToCached(paddr)    ((void*)((u32)(paddr) + OS_BASE_CACHED))
