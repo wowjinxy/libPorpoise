@@ -74,13 +74,16 @@ extern volatile PPCWGPipe GXWGFifo AT_ADDRESS(GXFIFO_ADDR);
 #define GX_WRITE_U8(val) SIM_GPU_FifoSendU8(val)
 #define GX_WRITE_U16(val) SIM_GPU_FifoSendU16(val)
 #define GX_WRITE_U32(val) SIM_GPU_FifoSendU32(val)
+#define GX_WRITE_S16(val) SIM_GPU_FifoSendS16(val)
+#define GX_WRITE_F32(val) SIM_GPU_FifoSendF32(val)
 #else
 #define GX_WRITE_U8(val)  (GXWGFifo.u8 = val)
 #define GX_WRITE_U16(val) (GXWGFifo.u16 = val)
 #define GX_WRITE_U32(val) (GXWGFifo.u32 = (u32)val)
-#endif
 #define GX_WRITE_S16(val) (GXWGFifo.s16 = val)
 #define GX_WRITE_F32(val) (GXWGFifo.f32 = (f32)val)
+#endif
+
 
 static inline void GXPosition1x8(const u8 x)
 {

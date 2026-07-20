@@ -137,7 +137,21 @@ ASM void WriteMTXPS4x3(register const Mtx mtx, register volatile f32* dest) {
     psq_st  f3, 0 (dest), 0, 0
     psq_st  f4, 0 (dest), 0, 0
     psq_st  f5, 0 (dest), 0, 0
-	#endif // clang-format on
+#endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	GX_WRITE_F32(mtx[0][0]);
+	GX_WRITE_F32(mtx[0][1]);
+	GX_WRITE_F32(mtx[0][2]);
+	GX_WRITE_F32(mtx[0][3]);
+	GX_WRITE_F32(mtx[1][0]);
+	GX_WRITE_F32(mtx[1][1]);
+	GX_WRITE_F32(mtx[1][2]);
+	GX_WRITE_F32(mtx[1][3]);
+	GX_WRITE_F32(mtx[2][0]);
+	GX_WRITE_F32(mtx[2][1]);
+	GX_WRITE_F32(mtx[2][2]);
+	GX_WRITE_F32(mtx[2][3]);
+#endif
 }
 
 /**
