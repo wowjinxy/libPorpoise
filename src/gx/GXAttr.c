@@ -237,10 +237,10 @@ void __GXSetVCD(void)
 	static u8 tbl1[] = { 0, 4, 1, 2 };
 	static u8 tbl2[] = { 0, 8, 1, 2 };
 	static u8 tbl3[] = { 0, 12, 1, 2 };
-	unsigned long vlm;
-	unsigned long b;
-	unsigned long vl;
-	unsigned long vh;
+	u32 vlm;
+	u32 b;
+	u32 vl;
+	u32 vh;
 
 	GX_WRITE_SOME_REG4(8, 0x50, gx->vcdLo, -12);
 	GX_WRITE_SOME_REG4(8, 0x60, gx->vcdHi, -12);
@@ -732,7 +732,7 @@ void GXGetVtxAttrFmtv(GXVtxFmt fmt, GXVtxAttrFmtList* vat)
 void GXSetArray(GXAttr attr, void* base_ptr, u8 stride)
 {
 	GXAttr cpAttr;
-	unsigned long phyAddr;
+	u32 phyAddr;
 
 	attr; // needed to match
 

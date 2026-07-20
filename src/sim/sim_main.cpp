@@ -2,6 +2,7 @@
 #define SDL_MAIN_HANDLED
 #include <dolphin.h>
 #include <simulator/sim.h>
+#include <simulator/sim_gpu.h>
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
 
@@ -12,6 +13,8 @@ void DolphinMain();
 
 int main(int argc, char** argv) {
     SDL_Init( SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK );
+    
+    SIM_GPU_Init();
 
     DolphinMain();
 }

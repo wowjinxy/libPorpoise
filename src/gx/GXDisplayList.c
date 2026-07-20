@@ -37,7 +37,7 @@ void GXBeginDisplayList(void* list, u32 size)
 /**
  * @TODO: Documentation
  */
-unsigned long GXEndDisplayList(void)
+u32 GXEndDisplayList(void)
 {
 	u32 ov;
 	u32 reg;
@@ -92,6 +92,8 @@ void GXCallDisplayList(void* list, u32 nbytes)
 		__GXSendFlushPrim();
 	}
 	GX_WRITE_U8(0x40);
-	GX_WRITE_U32(list);
+	// TODO: make a special one to pass the pointer to the display list
+	// And hopefully, its not possible to call display lists from another display list or that will cause trouble...
+	//GX_WRITE_U32(list);
 	GX_WRITE_U32(nbytes);
 }

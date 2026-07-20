@@ -317,9 +317,9 @@ void __GXSaveCPUFifoAux(struct __GXFifoObj* realFifo)
 void GXSaveGPFifo(GXFifoObj* fifo)
 {
 	struct __GXFifoObj* realFifo = (struct __GXFifoObj*)fifo;
-	unsigned long cpStatus;
-	unsigned char readIdle;
-	unsigned long temp;
+	u32 cpStatus;
+	u8 readIdle;
+	u32 temp;
 
 	OSAssertMsgLine(0x36A, realFifo == GPFifo, "GXSaveGPFifo: fifo is not attached to GP");
 	cpStatus = __cpReg[CP_STATUS];

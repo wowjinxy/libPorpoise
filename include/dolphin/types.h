@@ -11,7 +11,11 @@ typedef signed long s32;
 typedef signed long long s64;
 typedef unsigned char u8;
 typedef unsigned short u16;
+#ifdef LIBPORPOISE_BUILD_LINUX
+typedef unsigned int u32;
+#else
 typedef unsigned long u32;
+#endif
 typedef unsigned long long u64;
 
 // Volatile types
