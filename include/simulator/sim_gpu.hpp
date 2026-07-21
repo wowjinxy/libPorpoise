@@ -10,6 +10,17 @@
 
 namespace SIM {
 
+struct Vertex {
+  float x;
+  float y;
+  float z;
+  float w;
+  float r;
+  float g;
+  float b;
+  float a;
+};
+
 class GPU {
  enum class Opcode
  {
@@ -59,11 +70,13 @@ class GPU {
   void ProcessFifoData(u8 * data, size_t len);
   template <typename DataType>
   void AddFifoData(DataType data);
+  void SetVertexArray(GXAttr attr, void * ptr, int stride);
 
  private:
   int GetOpcodeArgSize(Opcode code);
   int GetNumBytesPerVertex();
   void ProcessOpcode();
+  void ProcessGeometry();
   void ProcessCpReg(u8 regAddr, u32 value);
   static inline u32 GetRegValue(u32 reg, u32 size, u32 shift) { return reg >> shift & (1u << size) - 1; };
 
@@ -81,6 +94,10 @@ class GPU {
   GXCompCnt mColorComponent = GX_COMPCNT_NULL;
   GXCompCnt mTexCoordComponent = GX_COMPCNT_NULL;
   std::array<VertexAttributeType, GX_VA_MAX_ATTR> mVertexAttributes = {};
+                    /* ptr    stride */
+  std::array<std::pair<void*, int>, GX_VA_MAX_ATTR> mVertexArrays = {};
+  GXPrimitive mPrimitiveType;
+  std::vector<SIM::Vertex> mVertsOut;
 };
 
 
