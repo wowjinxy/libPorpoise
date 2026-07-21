@@ -134,6 +134,13 @@ void SIM_VIInit() {
 }
 
 void SIM_Render() {
+    SDL_Event Event;
+
+    while( SDL_PollEvent(&Event))
+    {
+        //TODO: add input/pad stuff
+    }
+
     DrawTestTriangle();
     SDL_GL_SwapWindow(window);
 }

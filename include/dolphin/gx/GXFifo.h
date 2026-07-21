@@ -88,7 +88,11 @@ extern volatile PPCWGPipe GXWGFifo AT_ADDRESS(GXFIFO_ADDR);
 static inline void GXPosition1x8(const u8 x)
 {
 	//TODO: This might not be correct
+	#ifdef LIBPORPOISE_PORT
+	SIM_GPU_FifoSendU8(x);
+	#else
 	GXWGFifo.u8 = x;
+	#endif
 }
 
 static inline void GXPosition2f32(const f32 x, const f32 y)
@@ -128,7 +132,11 @@ static inline void GXNormal3f32(const f32 x, const f32 y, const f32 z)
 static inline void GXColor1x8(const u8 x)
 {
 	//TODO: This might not be correct
+	#ifdef LIBPORPOISE_PORT
+	SIM_GPU_FifoSendU8(x);
+	#else
 	GXWGFifo.u8 = x;
+	#endif
 }
 
 static inline void GXColor1u32(u32 c)

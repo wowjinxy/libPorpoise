@@ -35,7 +35,8 @@ class GPU {
  enum class State
  {
    ReadOpcode,
-   ReadArguments
+   ReadArguments,
+   ReadGeometry,
  };
 
  public:
@@ -53,8 +54,12 @@ class GPU {
   State mCurrentState;
   Opcode mLastOpcode;
   int mRemainingArgBytes;
+  int mRemainingGeometryBytes;
+  int mTotalGeometryBytes;
   u8 mArgsBuffer[32];
   u8 * mArgsBufferPointer;
+  u8 * mGeometryBuf;
+  u8 * mGeometryBufPointer;
 };
 
 
