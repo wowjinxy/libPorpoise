@@ -3,6 +3,9 @@
 
 #include <dolphin/types.h>
 
+
+#include <dolphin/gx/GXAttr.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -15,6 +18,8 @@ void SIM_GPU_FifoSendS16(s16 data);
 void SIM_GPU_FifoSendU32(u32 data);
 void SIM_GPU_FifoSendF32(f32 data);
 void SIM_GPU_FifoSendU64(u64 data);
+
+void SIM_GPU_SetVertexArray(GXAttr attr, void * ptr, int stride);
 
 #ifdef __cplusplus
 }

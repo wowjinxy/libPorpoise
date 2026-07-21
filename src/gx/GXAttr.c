@@ -4,6 +4,10 @@
 #include <dolphin/os.h>
 #include <stddef.h>
 
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_gpu.h>
+#endif
+
 #define CHECK_ATTRPTR(line, attrPtr) OSAssertMsgLine(line, (attrPtr) != NULL, "GXSetVtxDescv: attrPtr is NULL")
 #define CHECK_ATTRNAME(line, attr) \
 	OSAssertMsgLine(line, (attr) >= GX_VA_PNMTXIDX && (attr) < GX_VA_MAX_ATTR, "GXSetVtxDesc: Invalid vertex attribute name")
@@ -731,6 +735,9 @@ void GXGetVtxAttrFmtv(GXVtxFmt fmt, GXVtxAttrFmtList* vat)
  */
 void GXSetArray(GXAttr attr, void* base_ptr, u8 stride)
 {
+	#ifdef LIBPORPOISE_PORT
+	SIM_GPU_SetVertexArray(attr, base_ptr, stride);
+	#else
 	GXAttr cpAttr;
 	u32 phyAddr;
 
@@ -745,6 +752,7 @@ void GXSetArray(GXAttr attr, void* base_ptr, u8 stride)
 	phyAddr = (u32)base_ptr & 0x3FFFFFFF;
 	GX_WRITE_SOME_REG2(8, cpAttr | 0xA0, phyAddr, cpAttr - 12);
 	GX_WRITE_SOME_REG3(8, cpAttr | 0xB0, stride, cpAttr - 12);
+	#endif
 }
 
 /**

@@ -1,10 +1,14 @@
 #include <dolphin.h>
+#include <simulator/glad/glad.h>
 #include <simulator/sim_gpu.h>
 #include <simulator/sim_gpu.hpp>
 #include <simulator/sim.h>
 #include <cstdlib>
 #include <string.h>
 
+
+static GLuint gpuVertexArray;
+static GLuint gpuVertexBuffer;
 
 namespace SIM {
 GPU::GPU() : mCurrentState(GPU::State::ReadOpcode),
@@ -51,6 +55,7 @@ void GPU::ProcessFifoData(u8 * data, size_t len) {
             }
 
             if(mRemainingGeometryBytes <= 0) {
+                ProcessGeometry();
                 mGeometryVec.clear();
                 mCurrentState = GPU::State::ReadOpcode;
             }
@@ -80,6 +85,12 @@ template <typename DataType>
 void GPU::AddFifoData(DataType data) {
     u8 * dataPtr = (u8*)&data;
     ProcessFifoData(dataPtr, sizeof(DataType));
+}
+
+
+void GPU::SetVertexArray(GXAttr attr, void * ptr, int stride) {
+    mVertexArrays[attr].first = ptr;
+    mVertexArrays[attr].second = stride;
 }
 
 
@@ -187,6 +198,7 @@ void GPU::ProcessOpcode() {
         case Opcode::BeginQuads:
             {
               u16 numVerts = *(u16*)mArgsVec.data();
+              mPrimitiveType = GX_QUADS;
               OSReport("Begin Quads %d\n", numVerts);
 
               mRemainingGeometryBytes = numVerts * GetNumBytesPerVertex();
@@ -203,6 +215,36 @@ void GPU::ProcessOpcode() {
             break;
     }
     mArgsVec.clear();
+}
+
+void GPU::ProcessGeometry() {
+    // TODO: Currently, this assumes all verts are s16 (vtx formats have not been implemented yet)
+    // This also assumes the verts are indexed not direct
+    // this makes a lot of assumptions currently...
+
+    int numVerts = mGeometryVec.size() / GetNumBytesPerVertex();
+
+    for(int i=0; i < numVerts; i++) {
+        Vertex vtx;
+        int arrayIdx = mGeometryVec[2*i];
+        int stride = mVertexArrays[GX_VA_POS].second;
+        u16 * array = (u16*)mVertexArrays[GX_VA_POS].first;
+        vtx.x = static_cast<float>(array[(arrayIdx * stride)]) / 32767.0f;
+        vtx.y = static_cast<float>(array[(arrayIdx * stride) + 1]) / 32767.0f;
+        vtx.z = static_cast<float>(array[(arrayIdx * stride) + 2]) / 32767.0f;
+        vtx.a = 1.0f;
+        mVertsOut.push_back(vtx);
+    }
+
+    glBindVertexArray(gpuVertexArray);
+    glBindBuffer(GL_ARRAY_BUFFER, gpuVertexBuffer);
+
+    glBufferData(GL_ARRAY_BUFFER, mVertsOut.size() * sizeof(SIM::Vertex), mVertsOut.data(), GL_STATIC_DRAW);
+    glDisable( GL_CULL_FACE );
+
+    glDrawArrays(GL_TRIANGLES,0, mVertsOut.size());
+
+    mVertsOut.clear();
 }
 
 void GPU::ProcessCpReg(u8 regAddr, u32 value) {
@@ -250,6 +292,16 @@ static SIM::GPU * sGPU;
 
 void SIM_GPU_Init() {
     sGPU = new SIM::GPU();
+
+    // TODO: the gl stuff might move to another file
+    glGenVertexArrays(1, &gpuVertexArray);
+    glBindVertexArray(gpuVertexArray);
+    glGenBuffers(1, &gpuVertexBuffer);
+
+    glBindVertexArray(gpuVertexArray);
+    glBindBuffer(GL_ARRAY_BUFFER, gpuVertexBuffer);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SIM::Vertex), (void*)offsetof(SIM::Vertex, x));
 }
 
 // C APIs for GPU FIFO
@@ -275,4 +327,8 @@ void SIM_GPU_FifoSendF32(f32 data) {
 
 void SIM_GPU_FifoSendU64(u64 data) {
     sGPU->AddFifoData<u64>(data);
+}
+
+void SIM_GPU_SetVertexArray(GXAttr attr, void * ptr, int stride) {
+    sGPU->SetVertexArray(attr, ptr, stride);
 }

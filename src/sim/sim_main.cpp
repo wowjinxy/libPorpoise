@@ -98,13 +98,7 @@ void DolphinMain();
 
 int main(int argc, char** argv) {
     SDL_Init( SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK );
-    
-    SIM_GPU_Init();
 
-    DolphinMain();
-}
-
-void SIM_VIInit() {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -129,8 +123,14 @@ void SIM_VIInit() {
     CompileVertexShader(gxVertexShader, SIM_GXVertexShader);
     CompileFragmentShader(gxFragmentShader, SIM_GXFragmentShader);
     LinkShader(gxShaderProgramId, gxVertexShader, gxFragmentShader);
-
     glUseProgram(gxShaderProgramId);
+    
+    SIM_GPU_Init();
+
+    DolphinMain();
+}
+
+void SIM_VIInit() {
 }
 
 void SIM_Render() {
@@ -141,6 +141,8 @@ void SIM_Render() {
         //TODO: add input/pad stuff
     }
 
-    DrawTestTriangle();
+    //DrawTestTriangle();
     SDL_GL_SwapWindow(window);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f );
+    glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT );
 }
