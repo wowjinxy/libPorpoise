@@ -2,7 +2,11 @@
 #define LIBPORPOISE_SIM_GPU_HPP
 
 #include <dolphin/types.h>
+
+#include <array>
 #include <vector>
+
+#include <dolphin/gx/GXAttr.h>
 
 namespace SIM {
 
@@ -41,6 +45,14 @@ class GPU {
    ReadXfRegData,
  };
 
+ enum class VertexAttributeType
+ {
+  None = 0,
+  Direct = 1,
+  Index8 = 2,
+  Index16 = 3,
+ };
+
  public:
   GPU();
   ~GPU() = default;
@@ -50,7 +62,10 @@ class GPU {
 
  private:
   int GetOpcodeArgSize(Opcode code);
+  int GetNumBytesPerVertex();
   void ProcessOpcode();
+  void ProcessCpReg(u8 regAddr, u32 value);
+  static inline u32 GetRegValue(u32 reg, u32 size, u32 shift) { return reg >> shift & (1u << size) - 1; };
 
   State mCurrentState;
   Opcode mLastOpcode;
@@ -61,6 +76,11 @@ class GPU {
   std::vector<u8> mArgsVec;
   std::vector<u8> mGeometryVec;
   std::vector<u8> mXfRegDataVec;
+  GXCompCnt mPositionComponent = GX_COMPCNT_NULL;
+  GXCompCnt mNormalComponent = GX_COMPCNT_NULL;
+  GXCompCnt mColorComponent = GX_COMPCNT_NULL;
+  GXCompCnt mTexCoordComponent = GX_COMPCNT_NULL;
+  std::array<VertexAttributeType, GX_VA_MAX_ATTR> mVertexAttributes = {};
 };
 
 
