@@ -109,6 +109,21 @@ int GPU::GetOpcodeArgSize(Opcode code) {
     }
 }
 
+int GPU::GetNumBytesPerVertex() {
+    int totalBytes = 0;
+    for(auto attribute : mVertexAttributes) {
+        if(attribute != VertexAttributeType::None) {
+            if(attribute == VertexAttributeType::Direct) {
+                OSReport("Direct verts currently not implemented.\n");
+            } else {
+                totalBytes += (attribute == VertexAttributeType::Index16) ? 2
+                                                                          : 1;
+            }
+        }
+    }
+    return totalBytes;
+}
+
 void GPU::ProcessOpcode() {
     switch(mLastOpcode) {
         case Opcode::NoOp:
@@ -137,6 +152,7 @@ void GPU::ProcessOpcode() {
                 mArgsVec.erase(mArgsVec.begin());
                 u32 value = *(u32*)mArgsVec.data();
                 OSReport("LoadCpReg 0x%x : %x\n", addr, value);
+                ProcessCpReg(addr, value);
                 mCurrentState = State::ReadOpcode;
             }
             break;
@@ -170,15 +186,11 @@ void GPU::ProcessOpcode() {
             break;
         case Opcode::BeginQuads:
             {
-              u16 quadsArgs = *(u16*)mArgsVec.data();
-              OSReport("Begin Quads %d\n", quadsArgs);
-              //mCurrentState = State::ReadGeometry;
+              u16 numVerts = *(u16*)mArgsVec.data();
+              OSReport("Begin Quads %d\n", numVerts);
 
-              //mTotalGeometryBytes = mRemainingGeometryBytes = quadsArgs;
-              //mGeometryBuf = (u8*)malloc(mTotalGeometryBytes);
-              //mGeometryBufPointer = mGeometryBuf;
-              //TODO: Fix the geometry stuff
-              mCurrentState = State::ReadOpcode;
+              mRemainingGeometryBytes = numVerts * GetNumBytesPerVertex();
+              mCurrentState = State::ReadGeometry;
             }
             break;
         case Opcode::InvalidateVertexCache:
@@ -192,6 +204,46 @@ void GPU::ProcessOpcode() {
     }
     mArgsVec.clear();
 }
+
+void GPU::ProcessCpReg(u8 regAddr, u32 value) {
+    switch(regAddr) {
+
+        // VCD low
+        case 0x50: {
+            mVertexAttributes[GX_VA_PNMTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 0));
+            mVertexAttributes[GX_VA_TEX0MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 1));
+            mVertexAttributes[GX_VA_TEX1MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 2));
+            mVertexAttributes[GX_VA_TEX2MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 3));
+            mVertexAttributes[GX_VA_TEX3MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 4));
+            mVertexAttributes[GX_VA_TEX4MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 5));
+            mVertexAttributes[GX_VA_TEX5MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 6));
+            mVertexAttributes[GX_VA_TEX6MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 7));
+            mVertexAttributes[GX_VA_TEX7MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 8));
+            mVertexAttributes[GX_VA_POS] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 9));
+            mVertexAttributes[GX_VA_NRM] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 11));
+            mVertexAttributes[GX_VA_CLR0] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 13));
+            mVertexAttributes[GX_VA_CLR1] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 15));
+        }
+        break;
+
+        // VCD high
+        case 0x60: {
+            mVertexAttributes[GX_VA_TEX0] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 0));
+            mVertexAttributes[GX_VA_TEX1] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 2));
+            mVertexAttributes[GX_VA_TEX2] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 4));
+            mVertexAttributes[GX_VA_TEX3] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 6));
+            mVertexAttributes[GX_VA_TEX4] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 8));
+            mVertexAttributes[GX_VA_TEX5] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 10));
+            mVertexAttributes[GX_VA_TEX6] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 12));
+            mVertexAttributes[GX_VA_TEX7] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 14));
+        }
+        break;
+
+        default:
+            break;
+    }
+}
+
 }
 
 static SIM::GPU * sGPU;
