@@ -10,81 +10,86 @@ namespace SIM {
 GPU::GPU() : mCurrentState(GPU::State::ReadOpcode),
              mLastOpcode(GPU::Opcode::NoOp),
              mRemainingArgBytes(0){
-    memset(mArgsBuffer, 0, sizeof(mArgsBuffer));
-    mArgsBufferPointer = &mArgsBuffer[0];
 }
 
-void GPU::ProcessFifoDataU8(u8 data) {
-    if(mCurrentState == GPU::State::ReadOpcode) {
-        GPU::Opcode code = static_cast<GPU::Opcode>(data);
-        int numArgs = GetOpcodeArgSize(code);
-        mLastOpcode = code;
-        if(numArgs == 0) {
-            ProcessOpcode();
-        } else {
-            mCurrentState = GPU::State::ReadArguments;
-            mRemainingArgBytes = numArgs;
-        }
-    } else if(mCurrentState == GPU::State::ReadArguments) {
-        if(mRemainingArgBytes == 0 ) {
-            OSReport("GPU: Arguments error.\n");
-        }
+void GPU::ProcessFifoData(u8 * data, size_t len) {
+    while(len > 0) {
+        if(mCurrentState == GPU::State::ReadOpcode) {
+            GPU::Opcode code = static_cast<GPU::Opcode>(*data);
+            data++;
+            len--;
+            int numArgs = GetOpcodeArgSize(code);
+            mLastOpcode = code;
+            if(numArgs <= 0) {
+                ProcessOpcode();
+            } else {
+                mCurrentState = GPU::State::ReadArguments;
+                mRemainingArgBytes = numArgs;
+            }
+        } else if(mCurrentState == GPU::State::ReadArguments) {
+            size_t argsLen = std::min<size_t>(mRemainingArgBytes, len);
+            for(auto i = 0; i < argsLen; i++) {
+                mArgsVec.push_back(*data);
+                data++;
+                len--;
+                mRemainingArgBytes--;
+            }
+            if(mRemainingArgBytes <= 0) {
+                ProcessOpcode();
+            }
+        } else if(mCurrentState == GPU::State::ReadGeometry) {
+            if(mRemainingGeometryBytes <= 0 ) {
+                OSReport("GPU: Geometry error.\n");
+            }
 
-        *mArgsBufferPointer = data;
-        mArgsBufferPointer++;
+            size_t geometryLen = std::min<size_t>(mRemainingGeometryBytes, len);
+            for(auto i = 0; i < geometryLen; i++) {
+                mGeometryVec.push_back(*data);
+                data++;
+                len--;
+                mRemainingGeometryBytes--;
+            }
 
-        mRemainingArgBytes -= 1;
-    } else if(mCurrentState == GPU::State::ReadGeometry) {
-        if(mRemainingGeometryBytes <= 0 ) {
-            OSReport("GPU: Geometry error.\n");
-        }
-        *mGeometryBufPointer = data;
-        mGeometryBufPointer++;
-        mRemainingGeometryBytes--;
+            if(mRemainingGeometryBytes <= 0) {
+                mGeometryVec.clear();
+                mCurrentState = GPU::State::ReadOpcode;
+            }
+        } else if(mCurrentState == State::ReadXfRegData) {
+            if(mRemainingXfRegData <= 0 ) {
+                OSReport("GPU: XfRegData error.\n");
+            }
 
-        if(mRemainingGeometryBytes == 0) {
-            mCurrentState = GPU::State::ReadOpcode;
-            free(mGeometryBuf);
-            mGeometryBufPointer = nullptr;
+            size_t xfRegDataLen = std::min<size_t>(mRemainingXfRegData, len);
+            for(auto i = 0; i < xfRegDataLen; i++) {
+                mXfRegDataVec.push_back(*data);
+                data++;
+                len--;
+                mRemainingXfRegData--;
+            }
+
+            if(mRemainingXfRegData <= 0 ) {
+                //todo: process the xf reg data
+                mCurrentState = State::ReadOpcode;
+                mXfRegDataVec.clear();
+            }
         }
     }
 }
 
 template <typename DataType>
-void GPU::ProcessFifoData(DataType data) {
-    if(mCurrentState == GPU::State::ReadArguments && mRemainingArgBytes >= sizeof(DataType)) {
-        DataType * argsPointer = (DataType*)mArgsBufferPointer;
-        *argsPointer = data;
-        mArgsBufferPointer += sizeof(DataType);
-        mRemainingArgBytes -= sizeof(DataType);
-        if(mRemainingArgBytes == 0) {
-            ProcessOpcode();
-        }
-    } else if(mCurrentState == GPU::State::ReadGeometry && mRemainingGeometryBytes >= sizeof(DataType)) {
-        if(mRemainingGeometryBytes <= 0 ) {
-            OSReport("GPU: Geometry error.\n");
-        }
-        *mGeometryBufPointer = data;
-        mGeometryBufPointer+= sizeof(DataType);
-        mRemainingGeometryBytes-= sizeof(DataType);
-
-        if(mRemainingGeometryBytes == 0) {
-            mCurrentState = GPU::State::ReadOpcode;
-            free(mGeometryBuf);
-            mGeometryBufPointer = nullptr;
-        } else {
-            OSReport("GPU: Arguments error. Current state %d. Remaining Arg Bytes %d.\n", mCurrentState, mRemainingArgBytes);
-        }
-    }
+void GPU::AddFifoData(DataType data) {
+    u8 * dataPtr = (u8*)&data;
+    ProcessFifoData(dataPtr, sizeof(DataType));
 }
 
 
 int GPU::GetOpcodeArgSize(Opcode code) {
     switch(code) {
+        case Opcode::LoadXfReg:
+            return 4;
         case Opcode::LoadCpReg:
             return 5;
         case Opcode::LoadBpReg:
-        case Opcode::LoadXfReg:
             return 4;
         case Opcode::BeginTriangles:
         case Opcode::BeginTriangleStrip:
@@ -95,32 +100,45 @@ int GPU::GetOpcodeArgSize(Opcode code) {
         case Opcode::BeginLineStrip:
         case Opcode::BeginPoints:
             return 2;
+        case Opcode::InvalidateVertexCache:
         case Opcode::NoOp:
+            return 0;
         default:
+            OSReport("Unknown opcode\n");
             return 0;
     }
 }
 
 void GPU::ProcessOpcode() {
-    mArgsBufferPointer = &mArgsBuffer[0];
     switch(mLastOpcode) {
+        case Opcode::NoOp:
+            mCurrentState = State::ReadOpcode;
+            break;
         case Opcode::LoadBpReg:
             {
-                u32 bpRegArgs = *(u32*)mArgsBufferPointer;
-                //OSReport("LoadBpReg 0x%x\n", bpRegArgs);
+                u32 bpRegArgs = *(u32*)mArgsVec.data();
+                OSReport("LoadBpReg 0x%x\n", bpRegArgs);
                 mCurrentState = State::ReadOpcode;
             }
             break;
         case Opcode::LoadXfReg:
             {
-                u32 xfRegArgs = *(u32*)mArgsBufferPointer;
-                //OSReport("LoadXfReg 0x%x\n", xfRegArgs);
-                mCurrentState = State::ReadOpcode;
+                u32 xfRegArgs = *(u32*)mArgsVec.data();
+                u32 xfRegDataCount = ((xfRegArgs >> 16) & 0xFFFF) + 1;
+                mXfRegAddr = (xfRegArgs & 0xFFFF);
+                mRemainingXfRegData = xfRegDataCount * 4;
+                
+                mCurrentState = State::ReadXfRegData;
             }
             break;
         case Opcode::LoadCpReg:
-            //OSReport("LoadCpReg\n");
-            mCurrentState = State::ReadOpcode;
+            {
+                u8 addr = mArgsVec[0];
+                mArgsVec.erase(mArgsVec.begin());
+                u32 value = *(u32*)mArgsVec.data();
+                OSReport("LoadCpReg 0x%x : %x\n", addr, value);
+                mCurrentState = State::ReadOpcode;
+            }
             break;
         case Opcode::BeginTriangles:
             //OSReport("Begin Triangles\n");
@@ -152,7 +170,7 @@ void GPU::ProcessOpcode() {
             break;
         case Opcode::BeginQuads:
             {
-              u16 quadsArgs = *(u16*)mArgsBufferPointer;
+              u16 quadsArgs = *(u16*)mArgsVec.data();
               OSReport("Begin Quads %d\n", quadsArgs);
               //mCurrentState = State::ReadGeometry;
 
@@ -164,7 +182,7 @@ void GPU::ProcessOpcode() {
             }
             break;
         case Opcode::InvalidateVertexCache:
-            //OSReport("InvalidateVertexCache\n");
+            OSReport("InvalidateVertexCache\n");
             mCurrentState = State::ReadOpcode;
             break;
         default:
@@ -172,8 +190,7 @@ void GPU::ProcessOpcode() {
             mCurrentState = State::ReadOpcode;
             break;
     }
-
-    memset(mArgsBuffer, 0, sizeof(mArgsBuffer));
+    mArgsVec.clear();
 }
 }
 
@@ -185,25 +202,25 @@ void SIM_GPU_Init() {
 
 // C APIs for GPU FIFO
 void SIM_GPU_FifoSendU8(u8 data) {
-    sGPU->ProcessFifoDataU8(data);
+    sGPU->AddFifoData<u8>(data);
 }
 
 void SIM_GPU_FifoSendU16(u16 data) {
-    sGPU->ProcessFifoData<u16>(data);
+    sGPU->AddFifoData<u16>(data);
 }
 
 void SIM_GPU_FifoSendS16(s16 data) {
-    sGPU->ProcessFifoData<s16>(data);
+    sGPU->AddFifoData<s16>(data);
 }
 
 void SIM_GPU_FifoSendU32(u32 data) {
-    sGPU->ProcessFifoData<u32>(data);
+    sGPU->AddFifoData<u32>(data);
 }
 
 void SIM_GPU_FifoSendF32(f32 data) {
-    sGPU->ProcessFifoData<f32>(data);
+    sGPU->AddFifoData<f32>(data);
 }
 
 void SIM_GPU_FifoSendU64(u64 data) {
-    sGPU->ProcessFifoData<u64>(data);
+    sGPU->AddFifoData<u64>(data);
 }

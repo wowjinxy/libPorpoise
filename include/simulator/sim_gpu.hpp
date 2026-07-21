@@ -2,6 +2,7 @@
 #define LIBPORPOISE_SIM_GPU_HPP
 
 #include <dolphin/types.h>
+#include <vector>
 
 namespace SIM {
 
@@ -37,15 +38,15 @@ class GPU {
    ReadOpcode,
    ReadArguments,
    ReadGeometry,
+   ReadXfRegData,
  };
 
  public:
   GPU();
   ~GPU() = default;
-  void ProcessFifoDataU8(u8 data);
-
+  void ProcessFifoData(u8 * data, size_t len);
   template <typename DataType>
-  void ProcessFifoData(DataType data);
+  void AddFifoData(DataType data);
 
  private:
   int GetOpcodeArgSize(Opcode code);
@@ -55,11 +56,11 @@ class GPU {
   Opcode mLastOpcode;
   int mRemainingArgBytes;
   int mRemainingGeometryBytes;
-  int mTotalGeometryBytes;
-  u8 mArgsBuffer[32];
-  u8 * mArgsBufferPointer;
-  u8 * mGeometryBuf;
-  u8 * mGeometryBufPointer;
+  int mRemainingXfRegData;
+  u32 mXfRegAddr;
+  std::vector<u8> mArgsVec;
+  std::vector<u8> mGeometryVec;
+  std::vector<u8> mXfRegDataVec;
 };
 
 
