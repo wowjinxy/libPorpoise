@@ -2,7 +2,7 @@
 #define SDL_MAIN_HANDLED
 #include <dolphin.h>
 #include <simulator/sim.h>
-#include <simulator/sim_gpu.h>
+#include <simulator/sim_gx_CommandProcessor.h>
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
 
@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
     LinkShader(gxShaderProgramId, gxVertexShader, gxFragmentShader);
     glUseProgram(gxShaderProgramId);
     
-    SIM_GPU_Init();
+    SIM_GX_CommandProcessor_Init();
 
     DolphinMain();
 }

@@ -1,7 +1,8 @@
 #include <dolphin.h>
 #include <simulator/glad/glad.h>
-#include <simulator/sim_gpu.h>
-#include <simulator/sim_gpu.hpp>
+#include <simulator/sim_gx_CommandProcessor.h>
+#include <simulator/sim_gx_CommandProcessor.hpp>
+#include <simulator/sim_gx_State.hpp>
 #include <simulator/sim.h>
 #include <cstdlib>
 #include <string.h>
@@ -10,16 +11,16 @@
 static GLuint gpuVertexArray;
 static GLuint gpuVertexBuffer;
 
-namespace SIM {
-GPU::GPU() : mCurrentState(GPU::State::ReadOpcode),
-             mLastOpcode(GPU::Opcode::NoOp),
+namespace SIM::GX {
+CommandProcessor::CommandProcessor() : mCurrentState(CommandProcessor::State::ReadOpcode),
+             mLastOpcode(CommandProcessor::Opcode::NoOp),
              mRemainingArgBytes(0){
 }
 
-void GPU::ProcessFifoData(u8 * data, size_t len) {
+void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
     while(len > 0) {
-        if(mCurrentState == GPU::State::ReadOpcode) {
-            GPU::Opcode code = static_cast<GPU::Opcode>(*data);
+        if(mCurrentState == CommandProcessor::State::ReadOpcode) {
+            CommandProcessor::Opcode code = static_cast<CommandProcessor::Opcode>(*data);
             data++;
             len--;
             int numArgs = GetOpcodeArgSize(code);
@@ -27,10 +28,10 @@ void GPU::ProcessFifoData(u8 * data, size_t len) {
             if(numArgs <= 0) {
                 ProcessOpcode();
             } else {
-                mCurrentState = GPU::State::ReadArguments;
+                mCurrentState = CommandProcessor::State::ReadArguments;
                 mRemainingArgBytes = numArgs;
             }
-        } else if(mCurrentState == GPU::State::ReadArguments) {
+        } else if(mCurrentState == CommandProcessor::State::ReadArguments) {
             size_t argsLen = std::min<size_t>(mRemainingArgBytes, len);
             for(auto i = 0; i < argsLen; i++) {
                 mArgsVec.push_back(*data);
@@ -41,7 +42,7 @@ void GPU::ProcessFifoData(u8 * data, size_t len) {
             if(mRemainingArgBytes <= 0) {
                 ProcessOpcode();
             }
-        } else if(mCurrentState == GPU::State::ReadGeometry) {
+        } else if(mCurrentState == CommandProcessor::State::ReadGeometry) {
             if(mRemainingGeometryBytes <= 0 ) {
                 OSReport("GPU: Geometry error.\n");
             }
@@ -57,7 +58,7 @@ void GPU::ProcessFifoData(u8 * data, size_t len) {
             if(mRemainingGeometryBytes <= 0) {
                 ProcessGeometry();
                 mGeometryVec.clear();
-                mCurrentState = GPU::State::ReadOpcode;
+                mCurrentState = CommandProcessor::State::ReadOpcode;
             }
         } else if(mCurrentState == State::ReadXfRegData) {
             if(mRemainingXfRegData <= 0 ) {
@@ -82,19 +83,20 @@ void GPU::ProcessFifoData(u8 * data, size_t len) {
 }
 
 template <typename DataType>
-void GPU::AddFifoData(DataType data) {
+void CommandProcessor::AddFifoData(DataType data) {
     u8 * dataPtr = (u8*)&data;
     ProcessFifoData(dataPtr, sizeof(DataType));
 }
 
 
-void GPU::SetVertexArray(GXAttr attr, void * ptr, int stride) {
-    mVertexArrays[attr].first = ptr;
-    mVertexArrays[attr].second = stride;
+void CommandProcessor::SetVertexArray(GXAttr attr, void * ptr, int stride) {
+    //TODO: Move to GX global state
+    //mVertexArrays[attr].first = ptr;
+    //  mVertexArrays[attr].second = stride;
 }
 
 
-int GPU::GetOpcodeArgSize(Opcode code) {
+int CommandProcessor::GetOpcodeArgSize(Opcode code) {
     switch(code) {
         case Opcode::LoadXfReg:
             return 4;
@@ -120,22 +122,7 @@ int GPU::GetOpcodeArgSize(Opcode code) {
     }
 }
 
-int GPU::GetNumBytesPerVertex() {
-    int totalBytes = 0;
-    for(auto attribute : mVertexAttributes) {
-        if(attribute != VertexAttributeType::None) {
-            if(attribute == VertexAttributeType::Direct) {
-                OSReport("Direct verts currently not implemented.\n");
-            } else {
-                totalBytes += (attribute == VertexAttributeType::Index16) ? 2
-                                                                          : 1;
-            }
-        }
-    }
-    return totalBytes;
-}
-
-void GPU::ProcessOpcode() {
+void CommandProcessor::ProcessOpcode() {
     switch(mLastOpcode) {
         case Opcode::NoOp:
             mCurrentState = State::ReadOpcode;
@@ -201,7 +188,7 @@ void GPU::ProcessOpcode() {
               mPrimitiveType = GX_QUADS;
               OSReport("Begin Quads %d\n", numVerts);
 
-              mRemainingGeometryBytes = numVerts * GetNumBytesPerVertex();
+              mRemainingGeometryBytes = numVerts * GetGlobalState().GetNumBytesPerVertex();
               mCurrentState = State::ReadGeometry;
             }
             break;
@@ -217,67 +204,70 @@ void GPU::ProcessOpcode() {
     mArgsVec.clear();
 }
 
-void GPU::ProcessGeometry() {
+void CommandProcessor::ProcessGeometry() {
     // TODO: Currently, this assumes all verts are s16 (vtx formats have not been implemented yet)
     // This also assumes the verts are indexed not direct
     // this makes a lot of assumptions currently...
 
-    int numVerts = mGeometryVec.size() / GetNumBytesPerVertex();
-
-    for(int i=0; i < numVerts; i++) {
-        Vertex vtx;
-        int arrayIdx = mGeometryVec[2*i];
-        int stride = mVertexArrays[GX_VA_POS].second;
-        u16 * array = (u16*)mVertexArrays[GX_VA_POS].first;
-        vtx.x = static_cast<float>(array[(arrayIdx * stride)]) / 32767.0f;
-        vtx.y = static_cast<float>(array[(arrayIdx * stride) + 1]) / 32767.0f;
-        vtx.z = static_cast<float>(array[(arrayIdx * stride) + 2]) / 32767.0f;
-        vtx.a = 1.0f;
-        mVertsOut.push_back(vtx);
-    }
-
-    glBindVertexArray(gpuVertexArray);
-    glBindBuffer(GL_ARRAY_BUFFER, gpuVertexBuffer);
-
-    glBufferData(GL_ARRAY_BUFFER, mVertsOut.size() * sizeof(SIM::Vertex), mVertsOut.data(), GL_STATIC_DRAW);
-    glDisable( GL_CULL_FACE );
-
-    glDrawArrays(GL_TRIANGLES,0, mVertsOut.size());
-
-    mVertsOut.clear();
+    //int numVerts = mGeometryVec.size() / GetNumBytesPerVertex();
+//
+    //for(int i=0; i < numVerts; i++) {
+    //    Vertex vtx;
+    //    int arrayIdx = mGeometryVec[2*i];
+    //    int stride = mVertexArrays[GX_VA_POS].second;
+    //    u16 * array = (u16*)mVertexArrays[GX_VA_POS].first;
+    //    vtx.x = static_cast<float>(array[(arrayIdx * stride)]) / 32767.0f;
+    //    vtx.y = static_cast<float>(array[(arrayIdx * stride) + 1]) / 32767.0f;
+    //    vtx.z = static_cast<float>(array[(arrayIdx * stride) + 2]) / 32767.0f;
+    //    vtx.a = 1.0f;
+    //    mVertsOut.push_back(vtx);
+    //}
+//
+    //glBindVertexArray(gpuVertexArray);
+    //glBindBuffer(GL_ARRAY_BUFFER, gpuVertexBuffer);
+//
+    //glBufferData(GL_ARRAY_BUFFER, mVertsOut.size() * sizeof(SIM::Vertex), mVertsOut.data(), GL_STATIC_DRAW);
+    //glDisable( GL_CULL_FACE );
+//
+    //glDrawArrays(GL_TRIANGLES,0, mVertsOut.size());
+//
+    //mVertsOut.clear();
 }
 
-void GPU::ProcessCpReg(u8 regAddr, u32 value) {
+void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
     switch(regAddr) {
 
         // VCD low
         case 0x50: {
-            mVertexAttributes[GX_VA_PNMTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 0));
-            mVertexAttributes[GX_VA_TEX0MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 1));
-            mVertexAttributes[GX_VA_TEX1MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 2));
-            mVertexAttributes[GX_VA_TEX2MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 3));
-            mVertexAttributes[GX_VA_TEX3MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 4));
-            mVertexAttributes[GX_VA_TEX4MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 5));
-            mVertexAttributes[GX_VA_TEX5MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 6));
-            mVertexAttributes[GX_VA_TEX6MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 7));
-            mVertexAttributes[GX_VA_TEX7MTXIDX] = static_cast<VertexAttributeType>(GetRegValue(value, 1, 8));
-            mVertexAttributes[GX_VA_POS] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 9));
-            mVertexAttributes[GX_VA_NRM] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 11));
-            mVertexAttributes[GX_VA_CLR0] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 13));
-            mVertexAttributes[GX_VA_CLR1] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 15));
+            auto& gxState = GetGlobalState();
+            gxState.SetVertexDescriptor(GX_VA_PNMTXIDX, static_cast<GXAttrType>(GetRegValue(value, 1, 0)));
+            gxState.SetVertexDescriptor(GX_VA_TEX0MTXIDX, static_cast<GXAttrType>(GetRegValue(value, 1, 1)));
+            gxState.SetVertexDescriptor(GX_VA_TEX1MTXIDX, static_cast<GXAttrType>(GetRegValue(value, 1, 2)));
+            gxState.SetVertexDescriptor(GX_VA_TEX2MTXIDX, static_cast<GXAttrType>(GetRegValue(value, 1, 3)));
+            gxState.SetVertexDescriptor(GX_VA_TEX3MTXIDX, static_cast<GXAttrType>(GetRegValue(value, 1, 4)));
+            gxState.SetVertexDescriptor(GX_VA_TEX4MTXIDX, static_cast<GXAttrType>(GetRegValue(value, 1, 5)));
+            gxState.SetVertexDescriptor(GX_VA_TEX5MTXIDX, static_cast<GXAttrType>(GetRegValue(value, 1, 6)));
+            gxState.SetVertexDescriptor(GX_VA_TEX6MTXIDX, static_cast<GXAttrType>(GetRegValue(value, 1, 7)));
+            gxState.SetVertexDescriptor(GX_VA_TEX7MTXIDX, static_cast<GXAttrType>(GetRegValue(value, 1, 8)));
+            gxState.SetVertexDescriptor(GX_VA_POS, static_cast<GXAttrType>(GetRegValue(value, 2, 9)));
+            gxState.SetVertexDescriptor(GX_VA_NRM, static_cast<GXAttrType>(GetRegValue(value, 2, 11)));
+            gxState.SetVertexDescriptor(GX_VA_CLR0, static_cast<GXAttrType>(GetRegValue(value, 2, 13)));
+            gxState.SetVertexDescriptor(GX_VA_CLR1, static_cast<GXAttrType>(GetRegValue(value, 2, 15)));
         }
         break;
 
         // VCD high
         case 0x60: {
-            mVertexAttributes[GX_VA_TEX0] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 0));
-            mVertexAttributes[GX_VA_TEX1] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 2));
-            mVertexAttributes[GX_VA_TEX2] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 4));
-            mVertexAttributes[GX_VA_TEX3] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 6));
-            mVertexAttributes[GX_VA_TEX4] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 8));
-            mVertexAttributes[GX_VA_TEX5] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 10));
-            mVertexAttributes[GX_VA_TEX6] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 12));
-            mVertexAttributes[GX_VA_TEX7] = static_cast<VertexAttributeType>(GetRegValue(value, 2, 14));
+            //TODO: use global state instead
+            auto& gxState = GetGlobalState();
+            gxState.SetVertexDescriptor(GX_VA_TEX0, static_cast<GXAttrType>(GetRegValue(value, 2, 0)));
+            gxState.SetVertexDescriptor(GX_VA_TEX1, static_cast<GXAttrType>(GetRegValue(value, 2, 2)));
+            gxState.SetVertexDescriptor(GX_VA_TEX2, static_cast<GXAttrType>(GetRegValue(value, 2, 4)));
+            gxState.SetVertexDescriptor(GX_VA_TEX3, static_cast<GXAttrType>(GetRegValue(value, 2, 6)));
+            gxState.SetVertexDescriptor(GX_VA_TEX4, static_cast<GXAttrType>(GetRegValue(value, 2, 8)));
+            gxState.SetVertexDescriptor(GX_VA_TEX5, static_cast<GXAttrType>(GetRegValue(value, 2, 10)));
+            gxState.SetVertexDescriptor(GX_VA_TEX6, static_cast<GXAttrType>(GetRegValue(value, 2, 12)));
+            gxState.SetVertexDescriptor(GX_VA_TEX7, static_cast<GXAttrType>(GetRegValue(value, 2, 14)));
         }
         break;
 
@@ -288,47 +278,50 @@ void GPU::ProcessCpReg(u8 regAddr, u32 value) {
 
 }
 
-static SIM::GPU * sGPU;
+static SIM::GX::CommandProcessor * sCommandProcessor;
 
-void SIM_GPU_Init() {
-    sGPU = new SIM::GPU();
+void SIM_GX_CommandProcessor_Init() {
+    sCommandProcessor = new SIM::GX::CommandProcessor();
 
     // TODO: the gl stuff might move to another file
-    glGenVertexArrays(1, &gpuVertexArray);
-    glBindVertexArray(gpuVertexArray);
-    glGenBuffers(1, &gpuVertexBuffer);
+    //glGenVertexArrays(1, &gpuVertexArray);
+    //glBindVertexArray(gpuVertexArray);
+    //glGenBuffers(1, &gpuVertexBuffer);
 
-    glBindVertexArray(gpuVertexArray);
-    glBindBuffer(GL_ARRAY_BUFFER, gpuVertexBuffer);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SIM::Vertex), (void*)offsetof(SIM::Vertex, x));
+    //glBindVertexArray(gpuVertexArray);
+    //glBindBuffer(GL_ARRAY_BUFFER, gpuVertexBuffer);
+    //glEnableVertexAttribArray(0);
+    //glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SIM::Vertex), (void*)offsetof(SIM::Vertex, x));
 }
 
-// C APIs for GPU FIFO
-void SIM_GPU_FifoSendU8(u8 data) {
-    sGPU->AddFifoData<u8>(data);
+// C APIs for GX CommandProcessor
+void SIM_GX_CommandProcessor_SendU8(u8 data) {
+    sCommandProcessor->AddFifoData<u8>(data);
 }
 
-void SIM_GPU_FifoSendU16(u16 data) {
-    sGPU->AddFifoData<u16>(data);
+void SIM_GX_CommandProcessor_SendU16(u16 data) {
+    sCommandProcessor->AddFifoData<u16>(data);
 }
 
-void SIM_GPU_FifoSendS16(s16 data) {
-    sGPU->AddFifoData<s16>(data);
+void SIM_GX_CommandProcessor_SendS16(s16 data) {
+    sCommandProcessor->AddFifoData<s16>(data);
 }
 
-void SIM_GPU_FifoSendU32(u32 data) {
-    sGPU->AddFifoData<u32>(data);
+void SIM_GX_CommandProcessor_SendU32(u32 data) {
+    sCommandProcessor->AddFifoData<u32>(data);
 }
 
-void SIM_GPU_FifoSendF32(f32 data) {
-    sGPU->AddFifoData<f32>(data);
+void SIM_GX_CommandProcessor_SendF32(f32 data) {
+    sCommandProcessor->AddFifoData<f32>(data);
 }
 
-void SIM_GPU_FifoSendU64(u64 data) {
-    sGPU->AddFifoData<u64>(data);
+void SIM_GX_CommandProcessor_SendU64(u64 data) {
+    sCommandProcessor->AddFifoData<u64>(data);
 }
 
-void SIM_GPU_SetVertexArray(GXAttr attr, void * ptr, int stride) {
-    sGPU->SetVertexArray(attr, ptr, stride);
+void SIM_GX_CommandProcessor_SetVertexArray(GXAttr attr, void * ptr, int stride) {
+    SIM::GX::VertexArray vtxArray;
+    vtxArray.mArrayPtr = ptr;
+    vtxArray.mStride = stride;
+    SIM::GX::GetGlobalState().SetVertexArray(attr, vtxArray);
 }
