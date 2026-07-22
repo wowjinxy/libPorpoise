@@ -5,7 +5,7 @@
 #include <stddef.h>
 
 #ifdef LIBPORPOISE_PORT
-#include <simulator/sim_gpu.h>
+#include <simulator/sim_gx_CommandProcessor.h>
 #endif
 
 #define CHECK_ATTRPTR(line, attrPtr) OSAssertMsgLine(line, (attrPtr) != NULL, "GXSetVtxDescv: attrPtr is NULL")
@@ -736,7 +736,7 @@ void GXGetVtxAttrFmtv(GXVtxFmt fmt, GXVtxAttrFmtList* vat)
 void GXSetArray(GXAttr attr, void* base_ptr, u8 stride)
 {
 	#ifdef LIBPORPOISE_PORT
-	SIM_GPU_SetVertexArray(attr, base_ptr, stride);
+	SIM_GX_CommandProcessor_SetVertexArray(attr, base_ptr, stride);
 	#else
 	GXAttr cpAttr;
 	u32 phyAddr;

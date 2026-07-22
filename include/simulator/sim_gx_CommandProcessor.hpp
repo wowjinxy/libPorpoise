@@ -1,5 +1,5 @@
-#ifndef LIBPORPOISE_SIM_GPU_HPP
-#define LIBPORPOISE_SIM_GPU_HPP
+#ifndef LIBPORPOISE_SIM_GX_COMMANDPROCESSOR_HPP
+#define LIBPORPOISE_SIM_GX_COMMANDPROCESSOR_HPP
 
 #include <dolphin/types.h>
 
@@ -8,20 +8,9 @@
 
 #include <dolphin/gx/GXAttr.h>
 
-namespace SIM {
+namespace SIM::GX {
 
-struct Vertex {
-  float x;
-  float y;
-  float z;
-  float w;
-  float r;
-  float g;
-  float b;
-  float a;
-};
-
-class GPU {
+class CommandProcessor {
  enum class Opcode
  {
    NoOp = 0x00,
@@ -56,17 +45,9 @@ class GPU {
    ReadXfRegData,
  };
 
- enum class VertexAttributeType
- {
-  None = 0,
-  Direct = 1,
-  Index8 = 2,
-  Index16 = 3,
- };
-
  public:
-  GPU();
-  ~GPU() = default;
+  CommandProcessor();
+  ~CommandProcessor() = default;
   void ProcessFifoData(u8 * data, size_t len);
   template <typename DataType>
   void AddFifoData(DataType data);
@@ -93,11 +74,7 @@ class GPU {
   GXCompCnt mNormalComponent = GX_COMPCNT_NULL;
   GXCompCnt mColorComponent = GX_COMPCNT_NULL;
   GXCompCnt mTexCoordComponent = GX_COMPCNT_NULL;
-  std::array<VertexAttributeType, GX_VA_MAX_ATTR> mVertexAttributes = {};
-                    /* ptr    stride */
-  std::array<std::pair<void*, int>, GX_VA_MAX_ATTR> mVertexArrays = {};
   GXPrimitive mPrimitiveType;
-  std::vector<SIM::Vertex> mVertsOut;
 };
 
 
