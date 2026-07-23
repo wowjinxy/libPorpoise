@@ -1,12 +1,15 @@
 #ifndef LIBPORPOISE_SIM_GX_COMMANDPROCESSOR_HPP
 #define LIBPORPOISE_SIM_GX_COMMANDPROCESSOR_HPP
 
+#include "dolphin/gx/GXEnum.h"
 #include <dolphin/types.h>
 
 #include <array>
 #include <vector>
 
 #include <dolphin/gx/GXAttr.h>
+
+#include "simulator/sim_gx_Geometry.hpp"
 
 namespace SIM::GX {
 
@@ -51,20 +54,20 @@ class CommandProcessor {
   void ProcessFifoData(u8 * data, size_t len);
   template <typename DataType>
   void AddFifoData(DataType data);
-  void SetVertexArray(GXAttr attr, void * ptr, int stride);
 
  private:
   int GetOpcodeArgSize(Opcode code);
-  int GetNumBytesPerVertex();
+  void HandleBeginPrimitive(GXPrimitive primitive, size_t numVerts);
   void ProcessOpcode();
-  void ProcessGeometry();
   void ProcessCpReg(u8 regAddr, u32 value);
   static inline u32 GetRegValue(u32 reg, u32 size, u32 shift) { return reg >> shift & (1u << size) - 1; };
 
+  GeometryProcessor mGeometryProcessor;
   State mCurrentState;
   Opcode mLastOpcode;
   int mRemainingArgBytes;
   int mRemainingGeometryBytes;
+  int mTotalGeometryBytes;
   int mRemainingXfRegData;
   u32 mXfRegAddr;
   std::vector<u8> mArgsVec;
@@ -74,7 +77,7 @@ class CommandProcessor {
   GXCompCnt mNormalComponent = GX_COMPCNT_NULL;
   GXCompCnt mColorComponent = GX_COMPCNT_NULL;
   GXCompCnt mTexCoordComponent = GX_COMPCNT_NULL;
-  GXPrimitive mPrimitiveType;
+  GXVtxFmt mLastVertexFormatIdx;
 };
 
 

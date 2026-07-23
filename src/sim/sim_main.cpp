@@ -3,6 +3,7 @@
 #include <dolphin.h>
 #include <simulator/sim.h>
 #include <simulator/sim_gx_CommandProcessor.h>
+#include <simulator/sim_gx_State.hpp>
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
 
@@ -125,6 +126,7 @@ int main(int argc, char** argv) {
     LinkShader(gxShaderProgramId, gxVertexShader, gxFragmentShader);
     glUseProgram(gxShaderProgramId);
     
+    SIM::GX::InitGlobalState();
     SIM_GX_CommandProcessor_Init();
 
     DolphinMain();

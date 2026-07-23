@@ -1,3 +1,4 @@
+#include "dolphin/gx/GXEnum.h"
 #include <dolphin.h>
 #include <simulator/glad/glad.h>
 #include <simulator/sim_gx_CommandProcessor.h>
@@ -12,7 +13,8 @@ static GLuint gpuVertexArray;
 static GLuint gpuVertexBuffer;
 
 namespace SIM::GX {
-CommandProcessor::CommandProcessor() : mCurrentState(CommandProcessor::State::ReadOpcode),
+CommandProcessor::CommandProcessor() : mGeometryProcessor(GeometryProcessor()),
+             mCurrentState(CommandProcessor::State::ReadOpcode),
              mLastOpcode(CommandProcessor::Opcode::NoOp),
              mRemainingArgBytes(0){
 }
@@ -20,7 +22,13 @@ CommandProcessor::CommandProcessor() : mCurrentState(CommandProcessor::State::Re
 void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
     while(len > 0) {
         if(mCurrentState == CommandProcessor::State::ReadOpcode) {
-            CommandProcessor::Opcode code = static_cast<CommandProcessor::Opcode>(*data);
+            u8 currentByte = *data;
+            if(currentByte >= 0x80) {
+                //This is a beginPrimitive opcode, extract out the Vtx Format
+                mLastVertexFormatIdx = static_cast<GXVtxFmt>(currentByte & GX_VTXFMT7);
+                currentByte = currentByte & ~(GX_VTXFMT7);
+            }
+            CommandProcessor::Opcode code = static_cast<CommandProcessor::Opcode>(currentByte);
             data++;
             len--;
             int numArgs = GetOpcodeArgSize(code);
@@ -56,7 +64,7 @@ void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
             }
 
             if(mRemainingGeometryBytes <= 0) {
-                ProcessGeometry();
+                mGeometryProcessor.ProcessByteStream(mGeometryVec);
                 mGeometryVec.clear();
                 mCurrentState = CommandProcessor::State::ReadOpcode;
             }
@@ -89,13 +97,6 @@ void CommandProcessor::AddFifoData(DataType data) {
 }
 
 
-void CommandProcessor::SetVertexArray(GXAttr attr, void * ptr, int stride) {
-    //TODO: Move to GX global state
-    //mVertexArrays[attr].first = ptr;
-    //  mVertexArrays[attr].second = stride;
-}
-
-
 int CommandProcessor::GetOpcodeArgSize(Opcode code) {
     switch(code) {
         case Opcode::LoadXfReg:
@@ -120,6 +121,16 @@ int CommandProcessor::GetOpcodeArgSize(Opcode code) {
             OSReport("Unknown opcode\n");
             return 0;
     }
+}
+
+void CommandProcessor::HandleBeginPrimitive(GXPrimitive primitive, size_t numVerts) {
+    auto& gxState = GetGlobalState();
+    gxState.SetCurrentPrimitive(primitive);
+    gxState.SetCurrentVertexFormat(mLastVertexFormatIdx);
+
+    mRemainingGeometryBytes = numVerts * GetGlobalState().GetNumBytesPerVertex();
+    mTotalGeometryBytes = mRemainingGeometryBytes;
+    mCurrentState = State::ReadGeometry;
 }
 
 void CommandProcessor::ProcessOpcode() {
@@ -155,41 +166,60 @@ void CommandProcessor::ProcessOpcode() {
             }
             break;
         case Opcode::BeginTriangles:
-            //OSReport("Begin Triangles\n");
-            mCurrentState = State::ReadOpcode;
+            {
+              u16 numVerts = *(u16*)mArgsVec.data();
+              HandleBeginPrimitive(GX_TRIANGLES, numVerts);
+              OSReport("Begin Triangles %d\n", numVerts);
+            }
             break;
         case Opcode::BeginTriangleStrip:
-            //OSReport("Begin Triangle strip\n");
-            mCurrentState = State::ReadOpcode;
+            {
+              u16 numVerts = *(u16*)mArgsVec.data();
+              HandleBeginPrimitive(GX_TRIANGLESTRIP, numVerts);
+              OSReport("Begin Triangle strip %d\n", numVerts);
+            }
             break;
         case Opcode::BeginQuadStrip:
-            OSReport("Begin Quad Strip\n");
-            mCurrentState = State::ReadOpcode;
+            {
+              u16 numVerts = *(u16*)mArgsVec.data();
+              //NOTE: GX_QUADSTRIP does not exist??
+              HandleBeginPrimitive(GX_QUADS, numVerts);
+              OSReport("Begin Quad strip %d\n", numVerts);
+            }
             break;
         case Opcode::BeginTriangleFan:
-            //OSReport("Begin Triangle fan\n");
-            mCurrentState = State::ReadOpcode;
+            {
+              u16 numVerts = *(u16*)mArgsVec.data();
+              HandleBeginPrimitive(GX_TRIANGLEFAN, numVerts);
+              OSReport("Begin Triangle Fan %d\n", numVerts);
+            }
             break;
         case Opcode::BeginLines:
-            //OSReport("Begin Lines\n");
-            mCurrentState = State::ReadOpcode;
+            {
+              u16 numVerts = *(u16*)mArgsVec.data();
+              HandleBeginPrimitive(GX_LINES, numVerts);
+              OSReport("Begin Lines %d\n", numVerts);
+            }
             break;
         case Opcode::BeginLineStrip:
-            //OSReport("Begin Line Strip\n");
-            mCurrentState = State::ReadOpcode;
+            {
+              u16 numVerts = *(u16*)mArgsVec.data();
+              HandleBeginPrimitive(GX_LINESTRIP, numVerts);
+              OSReport("Begin Line Strip %d\n", numVerts);
+            }
             break;
         case Opcode::BeginPoints:
-            //OSReport("Begin Points\n");
-            mCurrentState = State::ReadOpcode;
+            {
+              u16 numVerts = *(u16*)mArgsVec.data();
+              HandleBeginPrimitive(GX_POINTS, numVerts);
+              OSReport("Begin Points %d\n", numVerts);
+            }
             break;
         case Opcode::BeginQuads:
             {
               u16 numVerts = *(u16*)mArgsVec.data();
-              mPrimitiveType = GX_QUADS;
+              HandleBeginPrimitive(GX_QUADS, numVerts);
               OSReport("Begin Quads %d\n", numVerts);
-
-              mRemainingGeometryBytes = numVerts * GetGlobalState().GetNumBytesPerVertex();
-              mCurrentState = State::ReadGeometry;
             }
             break;
         case Opcode::InvalidateVertexCache:
@@ -197,41 +227,11 @@ void CommandProcessor::ProcessOpcode() {
             mCurrentState = State::ReadOpcode;
             break;
         default:
-            OSReport("Unknown opcode\n");
+            OSReport("Unknown opcode 0x%x\n", mLastOpcode);
             mCurrentState = State::ReadOpcode;
             break;
     }
     mArgsVec.clear();
-}
-
-void CommandProcessor::ProcessGeometry() {
-    // TODO: Currently, this assumes all verts are s16 (vtx formats have not been implemented yet)
-    // This also assumes the verts are indexed not direct
-    // this makes a lot of assumptions currently...
-
-    //int numVerts = mGeometryVec.size() / GetNumBytesPerVertex();
-//
-    //for(int i=0; i < numVerts; i++) {
-    //    Vertex vtx;
-    //    int arrayIdx = mGeometryVec[2*i];
-    //    int stride = mVertexArrays[GX_VA_POS].second;
-    //    u16 * array = (u16*)mVertexArrays[GX_VA_POS].first;
-    //    vtx.x = static_cast<float>(array[(arrayIdx * stride)]) / 32767.0f;
-    //    vtx.y = static_cast<float>(array[(arrayIdx * stride) + 1]) / 32767.0f;
-    //    vtx.z = static_cast<float>(array[(arrayIdx * stride) + 2]) / 32767.0f;
-    //    vtx.a = 1.0f;
-    //    mVertsOut.push_back(vtx);
-    //}
-//
-    //glBindVertexArray(gpuVertexArray);
-    //glBindBuffer(GL_ARRAY_BUFFER, gpuVertexBuffer);
-//
-    //glBufferData(GL_ARRAY_BUFFER, mVertsOut.size() * sizeof(SIM::Vertex), mVertsOut.data(), GL_STATIC_DRAW);
-    //glDisable( GL_CULL_FACE );
-//
-    //glDrawArrays(GL_TRIANGLES,0, mVertsOut.size());
-//
-    //mVertsOut.clear();
 }
 
 void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
@@ -272,6 +272,22 @@ void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
         break;
 
         default:
+            {
+                if(regAddr >= 0x70 && regAddr <= 0x77) {
+                    GXVtxFmt formatIndex = (GXVtxFmt)(regAddr - 0x70);
+                    auto& gxState = GetGlobalState();
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_POS, static_cast<GXCompCnt>(GetRegValue(value, 1, 0)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_POS, static_cast<GXCompType>(GetRegValue(value, 3, 1)));
+                    //TODO: Normal component
+
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_CLR0, static_cast<GXCompCnt>(GetRegValue(value, 1, 13)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_CLR1, static_cast<GXCompType>(GetRegValue(value, 3, 14)));
+                } else if(regAddr >= 0x80 && regAddr <= 0x87) {
+
+                } else if(regAddr >= 0x90 && regAddr <= 0x97) {
+
+                }
+            }
             break;
     }
 }
