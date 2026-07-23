@@ -7,9 +7,6 @@
 #include <dolphin/types.h>
 #include <dolphin/gx/GXAttr.h>
 
-//NOTES: this should probably move to src/gx and be kept internal to GX
-
-
 namespace SIM::GX {
 
 struct VertexAttributes {
@@ -31,7 +28,16 @@ class GlobalState {
   GlobalState();
   ~GlobalState() = default;
 
+  static GlobalState& GetInstance();
+
+  size_t GetDescriptorSize(GXAttrType descriptorType, GXCompType dataType, bool isColorType = false);
   size_t GetNumBytesPerVertex();
+  size_t GetNumPositionComponents(GXCompCnt compType);
+
+  GXAttrType GetVertexDescriptor(GXAttr attr);
+  const VertexFormat& GetCurrentVertexFormat();
+  const VertexArray& GetVertexArray(GXAttr attr);
+  const VertexFormat& GetVertexFormat(GXVtxFmt formatIdx);
 
   void SetCurrentPrimitive(GXPrimitive primitive);
   void SetCurrentVertexFormat(GXVtxFmt format);
