@@ -60,16 +60,18 @@ class CommandProcessor {
   void HandleBeginPrimitive(GXPrimitive primitive, size_t numVerts);
   void ProcessOpcode();
   void ProcessCpReg(u8 regAddr, u32 value);
-  static inline u32 GetRegValue(u32 reg, u32 size, u32 shift) { return reg >> shift & (1u << size) - 1; };
+  static inline u32 GetRegValue(u32 reg, u32 size, u32 shift) {
+    return (reg >> shift) & ((1u << size) - 1u);
+  }
 
   GeometryProcessor mGeometryProcessor;
   State mCurrentState;
   Opcode mLastOpcode;
   int mRemainingArgBytes;
-  int mRemainingGeometryBytes;
-  int mTotalGeometryBytes;
-  int mRemainingXfRegData;
-  u32 mXfRegAddr;
+  int mRemainingGeometryBytes = 0;
+  int mTotalGeometryBytes = 0;
+  int mRemainingXfRegData = 0;
+  u32 mXfRegAddr = 0;
   std::vector<u8> mArgsVec;
   std::vector<u8> mGeometryVec;
   std::vector<u8> mXfRegDataVec;
@@ -77,7 +79,7 @@ class CommandProcessor {
   GXCompCnt mNormalComponent = GX_COMPCNT_NULL;
   GXCompCnt mColorComponent = GX_COMPCNT_NULL;
   GXCompCnt mTexCoordComponent = GX_COMPCNT_NULL;
-  GXVtxFmt mLastVertexFormatIdx;
+  GXVtxFmt mLastVertexFormatIdx = GX_VTXFMT0;
 };
 
 

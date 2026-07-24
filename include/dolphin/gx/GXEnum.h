@@ -61,6 +61,7 @@ typedef enum _GXPrimitive {
 	GX_TRIANGLESTRIP = 0x98,
 	GX_TRIANGLEFAN   = 0xa0,
 	GX_QUADS         = 0x80,
+	GX_QUADSTRIP     = 0x88,
 } GXPrimitive;
 
 // Position-normal matrix sizes/types.

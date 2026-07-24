@@ -32,7 +32,7 @@ typedef struct Quaternion {
 
 /////////////// MATRIX FUNCTION ALIAS MACROS //////////////////////////////////////////////////////////////////////////////////////////////
 
-#if DEBUG
+#if DEBUG || defined(LIBPORPOISE_PORT)
 
 #define MTXIdentity         C_MTXIdentity
 #define MTXCopy             C_MTXCopy
