@@ -9,6 +9,9 @@ void OSInitMutex(OSMutex* mutex)
 	OSInitThreadQueue(&mutex->queue);
 	mutex->thread = NULL;
 	mutex->count  = 0;
+	#ifdef LIBPORPOISE_PORT
+	mutex->sdlMutex = SDL_CreateMutex();
+	#endif
 }
 
 /**
@@ -16,6 +19,9 @@ void OSInitMutex(OSMutex* mutex)
  */
 void OSLockMutex(OSMutex* mutex)
 {
+	#ifdef LIBPORPOISE_PORT
+	SDL_LockMutex(mutex->sdlMutex);
+	#else
 	BOOL enabled            = OSDisableInterrupts();
 	OSThread* currentThread = OSGetCurrentThread();
 	OSThread* ownerThread;
@@ -38,6 +44,7 @@ void OSLockMutex(OSMutex* mutex)
 		}
 	}
 	OSRestoreInterrupts(enabled);
+	#endif
 }
 
 /**
@@ -45,6 +52,9 @@ void OSLockMutex(OSMutex* mutex)
  */
 void OSUnlockMutex(OSMutex* mutex)
 {
+	#ifdef LIBPORPOISE_PORT
+	SDL_UnlockMutex(mutex->sdlMutex);
+	#else
 	BOOL enabled            = OSDisableInterrupts();
 	OSThread* currentThread = OSGetCurrentThread();
 
@@ -58,6 +68,7 @@ void OSUnlockMutex(OSMutex* mutex)
 		OSWakeupThread(&mutex->queue);
 	}
 	OSRestoreInterrupts(enabled);
+	#endif
 }
 
 /**
@@ -89,7 +100,11 @@ BOOL OSTryLockMutex(OSMutex* mutex)
  */
 void OSInitCond(OSCond* cond)
 {
+	#ifdef LIBPORPOISE_PORT
+	cond->sdlSemaphore = SDL_CreateSemaphore(0);
+	#else
 	OSInitThreadQueue(&cond->queue);
+	#endif
 }
 
 /**
@@ -97,6 +112,9 @@ void OSInitCond(OSCond* cond)
  */
 void OSWaitCond(OSCond* cond, OSMutex* mutex)
 {
+	#ifdef LIBPORPOISE_PORT
+	SDL_SemWait(cond->sdlSemaphore);
+	#else
 	BOOL enabled            = OSDisableInterrupts();
 	OSThread* currentThread = OSGetCurrentThread();
 	s32 count;
@@ -120,6 +138,7 @@ void OSWaitCond(OSCond* cond, OSMutex* mutex)
 	}
 
 	OSRestoreInterrupts(enabled);
+	#endif
 }
 
 /**
@@ -127,7 +146,11 @@ void OSWaitCond(OSCond* cond, OSMutex* mutex)
  */
 void OSSignalCond(OSCond* cond)
 {
+	#ifdef LIBPORPOISE_PORT
+	SDL_SemPost(cond->sdlSemaphore);
+	#else
 	OSWakeupThread(&cond->queue);
+	#endif
 }
 
 /**

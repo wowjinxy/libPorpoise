@@ -5,6 +5,9 @@
 #include <dolphin/os/OSUtil.h>
 #include <dolphin/types.h>
 #include <stddef.h>
+#ifdef LIBPORPOISE_PORT
+#include <SDL2/SDL_thread.h>
+#endif
 
 BEGIN_SCOPE_EXTERN_C
 
@@ -69,6 +72,14 @@ struct OSThread {
 	u8* stackBase;           // _304, stack high addr.
 	u32* stackEnd;           // _308, stack low addr (last word).
 	s32 error;               // _30C
+#ifdef LIBPORPOISE_PORT
+	const char * name; /* Name of the function the thread runs */
+	const char * fileName; /* File name of the code that created the thread */
+	int lineNo; /* Line number of the code that created the thread */
+	OSThreadStartFunction func; /* Function that the thread will run. */
+	void * param; /* Parameter passed to OSCreateThread */
+	SDL_Thread * sdlThread; /* Pointer to SDL thread object that actually runs the thread */
+#endif
 };
 
 // Thread global addresses.
@@ -91,7 +102,16 @@ s32 OSEnableScheduler();
 
 // Thread manip functions.
 void OSYieldThread();
+#ifdef LIBPORPOISE_PORT
+// Debug wrapper for OSCreateThread
+// Allows threads to be named based on their function
+// stores the file name and line number of the location where the thread was created
+BOOL OSCreateThreadDebug(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr, const char * name, const char * file, int lineNo);
+#define OSCreateThread(_thread,_func,_param,_stack,_stackSize,_priority,_attr) OSCreateThreadDebug(_thread,_func,_param,_stack,_stackSize,_priority,_attr,#_func,__FILE__,__LINE__)
+BOOL OSCreateThreadReal(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr);
+#else
 BOOL OSCreateThread(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr);
+#endif
 void OSExitThread(void* val);
 void OSCancelThread(OSThread* thread);
 void OSDetachThread(OSThread* thread);

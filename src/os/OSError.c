@@ -5,6 +5,9 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim.h>
+#endif
 
 #if OS_BUILD_VERSION >= 20011112L
 OSErrorHandler __OSErrorTable[OS_ERROR_MAX];
@@ -42,6 +45,7 @@ void OSPanic(const char* file, int line, const char* msg, ...)
 	OSReport(" in \"%s\" on line %d.\n", file, line);
 
 	// Print stack trace
+	#ifndef LIBPORPOISE_PORT
 	OSReport("\nAddress:      Back Chain    LR Save\n");
 	i  = 0;
 	sp = (u32*)OSGetStackPointer();
@@ -50,6 +54,9 @@ void OSPanic(const char* file, int line, const char* msg, ...)
 		sp = (u32*)sp[0];
 	}
 	PPCHalt();
+	#else
+	SIM_DebugBreak();
+	#endif
 }
 
 /**

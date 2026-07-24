@@ -151,7 +151,9 @@ extern f64 scalb __P((f64, int));
 extern f64 scalb __P((f64, f64));
 #endif
 
+#ifndef LIBPORPOISE_PORT
 extern int matherr __P((struct exception*));
+#endif
 
 /*
  * IEEE Test Vector

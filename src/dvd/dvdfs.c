@@ -201,6 +201,21 @@ BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo)
  */
 BOOL DVDOpen(const char* fileName, DVDFileInfo* fileInfo)
 {
+	#ifdef LIBPORPOISE_PORT
+	fileInfo->pcFilePtr = fopen(fileName, "rb");
+
+	if(!fileInfo->pcFilePtr) {
+		OSReport("Warning: DVDOpen(): file %s could not be opened.\n", fileName);
+	}
+
+	fseek(fileInfo->pcFilePtr, 0, SEEK_END);
+	fileInfo->startAddr = 0x1337; /* Dummy address. DVD files are accessed from the host file system as loose files*/
+	fileInfo->length = ftell(fileInfo->pcFilePtr);
+	fileInfo->callback = (DVDCallback)NULL;
+	fileInfo->cBlock.state = DVD_STATE_END;
+	fseek(fileInfo->pcFilePtr, 0, SEEK_SET);
+	return TRUE;
+	#else
 	s32 entry;
 	char currentDir[128];
 
@@ -222,6 +237,7 @@ BOOL DVDOpen(const char* fileName, DVDFileInfo* fileInfo)
 	fileInfo->cBlock.state = DVD_STATE_END;
 
 	return TRUE;
+	#endif
 }
 
 /**
@@ -229,6 +245,11 @@ BOOL DVDOpen(const char* fileName, DVDFileInfo* fileInfo)
  */
 BOOL DVDClose(DVDFileInfo* fileInfo)
 {
+	#ifdef LIBPORPOISE_PORT
+	if(fileInfo->pcFilePtr) {
+		fclose(fileInfo->pcFilePtr);
+	}
+	#endif
 	DVDCancel(&(fileInfo->cBlock));
 	return TRUE;
 }
@@ -374,6 +395,15 @@ static void cbForReadAsync(s32 result, DVDCommandBlock* block)
  */
 s32 DVDReadPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset, s32 prio)
 {
+#ifdef LIBPORPOISE_PORT
+	s32 bytesRead = 0;
+	if(fileInfo->pcFilePtr) {
+		fseek(fileInfo->pcFilePtr, offset, SEEK_SET);
+		bytesRead = fread(addr, 1, length, fileInfo->pcFilePtr);
+	}
+
+	return bytesRead;
+#else
 	BOOL result;
 	DVDCommandBlock* block;
 	s32 state;
@@ -427,6 +457,7 @@ s32 DVDReadPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset, s32 p
 
 	OSRestoreInterrupts(enabled);
 	return retVal;
+#endif
 }
 
 /**

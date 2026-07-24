@@ -9,6 +9,8 @@ void SIM_VIInit();
 
 void SIM_Render();
 
+void SIM_DebugBreak();
+
 #ifdef __cplusplus
 }
 #endif

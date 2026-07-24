@@ -6,6 +6,9 @@
 #include <simulator/sim_gx_State.hpp>
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
+#ifdef LIBPORPOISE_BUILD_LINUX
+#include <signal.h>
+#endif
 
 static SDL_GLContext context;
 static SDL_Window * window;
@@ -174,4 +177,14 @@ void SIM_Render() {
     SDL_GL_SwapWindow(window);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f );
     glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT );
+}
+
+void SIM_DebugBreak() {
+#ifdef LIBPORPOISE_BUILD_LINUX
+    raise(SIGTRAP);
+#elif LIBPORPOISE_BUILD_WIN64
+    __debugbreak();
+#else
+    OSReport("Warning: SIM_DebugBreak called but it is not supported on this platform!\n");
+#endif
 }

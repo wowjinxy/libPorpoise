@@ -4,6 +4,9 @@
 #include <dolphin/os/OSThread.h>
 #include <dolphin/os/OSUtil.h>
 #include <dolphin/types.h>
+#ifdef LIBPORPOISE_PORT
+#include <SDL2/SDL_mutex.h>
+#endif
 
 BEGIN_SCOPE_EXTERN_C
 
@@ -14,11 +17,17 @@ struct OSMutex {
 	OSThread* thread;    // _08, current owner.
 	int count;           // _0C, lock count.
 	OSMutexLink link;    // _10
+#ifdef LIBPORPOISE_PORT
+	SDL_mutex * sdlMutex; /* SDL Mutex used to implement OSMutex on ported platforms */
+#endif
 };
 
 // Cond struct (?) (size 0x8).
 typedef struct OSCond {
 	OSThreadQueue queue; // _00
+#ifdef LIBPORPOISE_PORT
+	SDL_sem * sdlSemaphore; /* SDL Semaphore used to implement OSCond */
+#endif
 } OSCond;
 
 //////////////////////////////////

@@ -3,6 +3,9 @@
 
 #include <dolphin/os/OSThread.h>
 #include <dolphin/types.h>
+#ifdef LIBPORPOISE_PORT
+#include <stdio.h>
+#endif
 
 BEGIN_SCOPE_EXTERN_C
 
@@ -58,6 +61,9 @@ struct DVDFileInfo {
 	u32 startAddr;          // _30
 	u32 length;             // _34
 	DVDCallback callback;   // _38
+#ifdef LIBPORPOISE_PORT
+	FILE * pcFilePtr; /* File descriptor used for ported platforms */
+#endif
 };
 
 // Struct for directory information (size 0xC).
@@ -107,11 +113,15 @@ typedef struct DVDBB2 {
 
 ///////// DVD FUNCTIONS //////////
 // Basic DVD functions.
+#define DVDGetLength(fileInfo) ((fileInfo)->length)
+
 void DVDInit();
 BOOL DVDOpen(const char* filename, DVDFileInfo* fileInfo);
 BOOL DVDFastOpen(s32 entryNum, DVDFileInfo* fileInfo);
 s32 DVDReadPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset, s32 prio);
 BOOL DVDReadAsyncPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset, DVDCallback callback, s32 prio);
+#define DVDRead(fileInfo, addr, length, offset) DVDReadPrio((fileInfo), (addr), (length), (offset), 2)
+#define DVDReadAsync(fileInfo, addr, length, offset, callback) DVDReadAsyncPrio((fileInfo), (addr), (length), (offset), (callback), 2)
 BOOL DVDReadAbsAsyncPrio(DVDCommandBlock* block, void* addr, s32 length, s32 offset, DVDCBCallback callback, s32 prio);
 BOOL DVDClose(DVDFileInfo* fileInfo);
 BOOL DVDPrepareStreamAsync(DVDFileInfo* fileInfo, u32 length, u32 offset, DVDCallback callback);

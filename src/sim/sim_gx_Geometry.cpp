@@ -193,6 +193,12 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
             }
         }
 
+        //const GXAttrTypr normalDescriptor = gxState.GetVertexDescriptor(GX_VA_NRM);
+        //if(normalDescriptor != GX_NONE) {
+        //    const auto& normalFormat = format.mAttributes[GX_VA_NRM];
+        //    OSReport("GX: Normals are not currently implemented.\n");
+        //}
+
         const GXAttrType colorDescriptor = gxState.GetVertexDescriptor(GX_VA_CLR0);
         if (colorDescriptor != GX_NONE) {
             const auto& colorFormat = format.mAttributes[GX_VA_CLR0];
