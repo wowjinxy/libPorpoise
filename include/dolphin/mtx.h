@@ -12,6 +12,8 @@ BEGIN_SCOPE_EXTERN_C
 
 #define MTXDegToRad(a) ((a) * (3.1415927f / 180.0f))
 #define MTXRowCol(m,r,c) ((m)[(r)][(c)])
+#define MTXRotDeg(m, axis, deg) \
+    MTXRotRad((m), (axis), MTXDegToRad(deg))
 
 typedef f32 Mtx[3][4];
 typedef f32 Mtx23[2][3];
