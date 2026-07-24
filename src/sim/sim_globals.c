@@ -1,5 +1,11 @@
 #include <dolphin.h>
 
+#ifdef LIBPORPOISE_BUILD_LINUX
+#include <signal.h>
+#elif defined(LIBPORPOISE_BUILD_WIN64)
+#include <intrin.h>
+#endif
+
 vu32 __AIRegs[8];
 vu16 __CPRegs[51];
 vu32 __DIRegs[16];
@@ -55,3 +61,14 @@ void __OSSystemCallVectorEnd() {}
 u8 __ArenaLo[2];
 u8 s_SIM_main_mem_buf[24 * 1024 * 1024];
 u8 __ArenaHi[2];
+
+void SIM_DebugBreak(void)
+{
+#ifdef LIBPORPOISE_BUILD_LINUX
+	raise(SIGTRAP);
+#elif defined(LIBPORPOISE_BUILD_WIN64)
+	__debugbreak();
+#else
+	OSReport("Warning: SIM_DebugBreak called but it is not supported on this platform!\n");
+#endif
+}

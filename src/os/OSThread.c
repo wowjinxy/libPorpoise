@@ -1,3 +1,4 @@
+#include "dolphin/os/OSThread.h"
 #include <dolphin/hw_regs.h>
 #include <dolphin/os.h>
 #ifndef LIBPORPOISE_PORT
@@ -367,10 +368,31 @@ void OSYieldThread(void)
 	OSRestoreInterrupts(enabled);
 }
 
+#ifdef LIBPORPOISE_PORT
+BOOL OSCreateThreadDebug(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr, const char * name, const char * file, int lineNo) {
+	thread->name = name;
+	thread->fileName = file;
+	thread->lineNo = lineNo;
+	return OSCreateThreadReal(thread, func, param, stack, stackSize, priority, attr);
+}
+
+// Wrapper function to run OSThreads in SDL Threads
+static int OSRunThread(void * threadPtr) {
+	OSThread * thread = (OSThread*)threadPtr;
+	thread->state = OS_THREAD_STATE_RUNNING;
+	thread->func(thread->param);
+	thread->state = OS_THREAD_STATE_MORIBUND;
+}
+#endif
+
 /**
  * @TODO: Documentation
  */
+#ifdef LIBPORPOISE_PORT
+BOOL OSCreateThreadReal(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr)
+#else
 BOOL OSCreateThread(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr)
+#endif
 {
 	BOOL enable;
 	u32 stackThing;
@@ -390,21 +412,29 @@ BOOL OSCreateThread(OSThread* thread, OSThreadStartFunction func, void* param, v
 	thread->mutex    = NULL;
 	OSInitThreadQueue(&thread->queueJoin);
 	InitMutexQueue(&thread->queueMutex);
+	#ifndef LIBPORPOISE_PORT
 	*(u32*)(stackThing - 8) = 0;
 	*(u32*)(stackThing - 4) = 0;
+	#endif
 
 	OSInitContext(&thread->context, (u32)func, (u32)(stackThing - 8));
 
+	#ifndef LIBPORPOISE_PORT
 	thread->context.lr     = (u32)&OSExitThread;
 	thread->context.gpr[3] = (u32)param;
 	thread->stackBase      = stack;
 	thread->stackEnd       = (u32*)((u32)stack - stackSize);
 	*(thread->stackEnd)    = OS_THREAD_STACK_MAGIC;
+	#endif
 
 	enable = OSDisableInterrupts();
 
 	AddTail(&__OSActiveThreadQueue, thread, linkActive);
 	OSRestoreInterrupts(enable);
+#ifdef LIBPORPOISE_PORT
+	thread->func = func;
+	thread->param = param;
+#endif
 	return TRUE;
 }
 
@@ -537,6 +567,13 @@ void OSDetachThread(OSThread* thread)
  */
 s32 OSResumeThread(OSThread* thread)
 {
+#ifdef LIBPORPOISE_PORT
+	if(thread->func) {
+		thread->sdlThread = SDL_CreateThread(OSRunThread, thread->name, (void*)thread);
+	} else {
+		thread->state = OS_THREAD_STATE_MORIBUND;
+	}
+#else
 	BOOL enabled;
 	s32 suspendCount;
 
@@ -567,6 +604,7 @@ s32 OSResumeThread(OSThread* thread)
 	}
 	OSRestoreInterrupts(enabled);
 	return suspendCount;
+#endif
 }
 
 /**

@@ -5,6 +5,9 @@
 #include <dolphin/os/OSException.h>
 #include <dolphin/os/OSUtil.h>
 #include <dolphin/types.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim.h>
+#endif
 
 BEGIN_SCOPE_EXTERN_C
 
@@ -19,7 +22,13 @@ typedef void (*OSErrorHandler)(OSError error, OSContext* context, ...);
 OSErrorHandler OSSetErrorHandler(OSError error, OSErrorHandler handler);
 void __OSUnhandledException(__OSException exception, OSContext* context, u32 dsisr, u32 dar);
 
+#ifdef LIBPORPOISE_PORT
+#define OSHalt(msg) \
+    OSReport(msg); \
+    exit(0);
+#else
 #define OSHalt(msg) OSPanic(__FILE__, __LINE__, msg)
+#endif
 
 #ifndef ASSERT
 #define ASSERT(exp)                                             \

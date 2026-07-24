@@ -6,7 +6,6 @@
 #include <simulator/sim_gx_State.hpp>
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
-
 static SDL_GLContext context;
 static SDL_Window * window;
 
