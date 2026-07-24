@@ -355,6 +355,26 @@ BOOL DVDChangeDir(const char* dirName)
  */
 BOOL DVDReadAsyncPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset, DVDCallback callback, s32 prio)
 {
+#ifdef LIBPORPOISE_PORT
+	fileInfo->callback = callback;
+	s32 bytesRead = 0;
+	s32 result = DVD_RESULT_GOOD;
+	if(fileInfo->pcFilePtr) {
+		fseek(fileInfo->pcFilePtr, offset, SEEK_SET);
+		bytesRead = fread(addr, 1, length, fileInfo->pcFilePtr);
+	}
+
+	if(bytesRead == 0) {
+		// Failed to read data
+		result = DVD_RESULT_FATAL_ERROR;
+	}
+
+	if (fileInfo->callback) {
+		(fileInfo->callback)(result, fileInfo);
+	}
+
+	return TRUE;
+#else
 	if (!((0 <= offset) && (offset < fileInfo->length))) {
 #if OS_BUILD_VERSION >= 20011002L
 		OSErrorLine(739, "DVDReadAsync(): specified area is out of the file  ");
@@ -375,6 +395,7 @@ BOOL DVDReadAsyncPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset,
 	DVDReadAbsAsyncPrio(&(fileInfo->cBlock), addr, length, (s32)(fileInfo->startAddr + offset), cbForReadAsync, prio);
 
 	return TRUE;
+#endif
 }
 
 /**
