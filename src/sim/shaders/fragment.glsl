@@ -1,9 +1,10 @@
 R""(
-#version 420 core
-smooth in vec4 coords;
+#version 330 core
+smooth in vec4 color0;
 out vec4 color;
+
 void main()
 {
-    color = vec4(1.0, 0.0, 0.0, 1.0);
+    color = color0;
 }
 )""

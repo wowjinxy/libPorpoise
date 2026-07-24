@@ -87,129 +87,116 @@ extern volatile PPCWGPipe GXWGFifo AT_ADDRESS(GXFIFO_ADDR);
 
 static inline void GXPosition1x8(const u8 x)
 {
-	//TODO: This might not be correct
-	#ifdef LIBPORPOISE_PORT
-	SIM_GX_CommandProcessor_SendU8(x);
-	#else
-	GXWGFifo.u8 = x;
-	#endif
+	GX_WRITE_U8(x);
 }
 
 static inline void GXPosition2f32(const f32 x, const f32 y)
 {
-	GXWGFifo.f32 = x;
-	GXWGFifo.f32 = y;
+	GX_WRITE_F32(x);
+	GX_WRITE_F32(y);
 }
 
 static inline void GXPosition3s16(const s16 x, const s16 y, const s16 z)
 {
-	GXWGFifo.s16 = x;
-	GXWGFifo.s16 = y;
-	GXWGFifo.s16 = z;
+	GX_WRITE_S16(x);
+	GX_WRITE_S16(y);
+	GX_WRITE_S16(z);
 }
 
 static inline void GXPosition3u16(const u16 x, const u16 y, const u16 z)
 {
-	GXWGFifo.u16 = x;
-	GXWGFifo.u16 = y;
-	GXWGFifo.u16 = z;
+	GX_WRITE_U16(x);
+	GX_WRITE_U16(y);
+	GX_WRITE_U16(z);
 }
 
 static inline void GXPosition3f32(f32 x, f32 y, f32 z)
 {
-	GXWGFifo.f32 = x;
-	GXWGFifo.f32 = y;
-	GXWGFifo.f32 = z;
+	GX_WRITE_F32(x);
+	GX_WRITE_F32(y);
+	GX_WRITE_F32(z);
 }
 
 static inline void GXNormal3f32(const f32 x, const f32 y, const f32 z)
 {
-	GXWGFifo.f32 = x;
-	GXWGFifo.f32 = y;
-	GXWGFifo.f32 = z;
+	GX_WRITE_F32(x);
+	GX_WRITE_F32(y);
+	GX_WRITE_F32(z);
 }
 
 static inline void GXColor1x8(const u8 x)
 {
-	//TODO: This might not be correct
-	#ifdef LIBPORPOISE_PORT
-	SIM_GX_CommandProcessor_SendU8(x);
-	#else
-	GXWGFifo.u8 = x;
-	#endif
+	GX_WRITE_U8(x);
 }
 
 static inline void GXColor1u32(u32 c)
 {
-	GXWGFifo.u32 = c;
+	GX_WRITE_U32(c);
 }
 
 static inline void GXColor4u8(const u8 r, const u8 g, const u8 b, const u8 a)
 {
-	GXWGFifo.u8 = r;
-	GXWGFifo.u8 = g;
-	GXWGFifo.u8 = b;
-	GXWGFifo.u8 = a;
+	GX_WRITE_U8(r);
+	GX_WRITE_U8(g);
+	GX_WRITE_U8(b);
+	GX_WRITE_U8(a);
 }
 
 static inline void GXTexCoord2s8(const s8 u, const s8 v)
 {
-	GXWGFifo.s8 = u;
-	GXWGFifo.s8 = v;
+	GX_WRITE_U8((u8)u);
+	GX_WRITE_U8((u8)v);
 }
 
 static inline void GXTexCoord2u8(u8 s, u8 t)
 {
-	GXWGFifo.u8 = s;
-	GXWGFifo.u8 = t;
+	GX_WRITE_U8(s);
+	GX_WRITE_U8(t);
 }
 
 static inline void GXPosition2u16(u16 x, u16 y)
 {
-	GXWGFifo.u16 = x;
-	GXWGFifo.u16 = y;
+	GX_WRITE_U16(x);
+	GX_WRITE_U16(y);
 }
 
 static inline void GXPosition2s16(s16 x, s16 y)
 {
-	GXWGFifo.s16 = x;
-	GXWGFifo.s16 = y;
+	GX_WRITE_S16(x);
+	GX_WRITE_S16(y);
 }
 
 static inline void GXTexCoord2s16(const s16 u, const s16 v)
 {
-	GXWGFifo.s16 = u;
-	GXWGFifo.s16 = v;
+	GX_WRITE_S16(u);
+	GX_WRITE_S16(v);
 }
 
 static inline void GXTexCoord2u16(const u16 u, const u16 v)
 {
-	GXWGFifo.u16 = u;
-	GXWGFifo.u16 = v;
+	GX_WRITE_U16(u);
+	GX_WRITE_U16(v);
 }
 
 static inline void GXTexCoord2f32(const f32 u, const f32 v)
 {
-	GXWGFifo.f32 = u;
-	GXWGFifo.f32 = v;
+	GX_WRITE_F32(u);
+	GX_WRITE_F32(v);
 }
 
 static inline void GXCmd1u8(const u8 x)
 {
-	//TODO: This might not be correct
-	GXWGFifo.u8 = x;
+	GX_WRITE_U8(x);
 }
 
 static inline void GXParam1u16(const u16 x)
 {
-	//TODO: This might not be correct
-	GXWGFifo.u16 = x;
+	GX_WRITE_U16(x);
 }
 
 static inline void GXParam1u32(const u32 x)
 {
-	//TODO: This might not be correct
-	GXWGFifo.u32 = x;
+	GX_WRITE_U32(x);
 }
 
 static inline void GXEnd(void)

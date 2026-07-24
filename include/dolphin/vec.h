@@ -25,7 +25,7 @@ typedef struct SVec {
 
 /////////////// VECTOR FUNCTION ALIAS MACROS //////////////////////////////////////////////////////////////////////////////////////////////
 
-#if DEBUG
+#if DEBUG || defined(LIBPORPOISE_PORT)
 
 #define VECAdd            C_VECAdd
 #define VECSubtract       C_VECSubtract

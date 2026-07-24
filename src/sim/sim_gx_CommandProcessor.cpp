@@ -1,16 +1,12 @@
 #include "dolphin/gx/GXEnum.h"
+#include <algorithm>
+#include <cstring>
+
 #include <dolphin.h>
-#include <simulator/glad/glad.h>
 #include <simulator/sim_gx_CommandProcessor.h>
 #include <simulator/sim_gx_CommandProcessor.hpp>
 #include <simulator/sim_gx_State.hpp>
 #include <simulator/sim.h>
-#include <cstdlib>
-#include <string.h>
-
-
-static GLuint gpuVertexArray;
-static GLuint gpuVertexBuffer;
 
 namespace SIM::GX {
 CommandProcessor::CommandProcessor() : mGeometryProcessor(GeometryProcessor()),
@@ -82,7 +78,10 @@ void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
             }
 
             if(mRemainingXfRegData <= 0 ) {
-                //todo: process the xf reg data
+                GetGlobalState().SetXfData(
+                    mXfRegAddr,
+                    mXfRegDataVec.data(),
+                    mXfRegDataVec.size() / sizeof(u32));
                 mCurrentState = State::ReadOpcode;
                 mXfRegDataVec.clear();
             }
@@ -128,9 +127,14 @@ void CommandProcessor::HandleBeginPrimitive(GXPrimitive primitive, size_t numVer
     gxState.SetCurrentPrimitive(primitive);
     gxState.SetCurrentVertexFormat(mLastVertexFormatIdx);
 
-    mRemainingGeometryBytes = numVerts * GetGlobalState().GetNumBytesPerVertex();
+    const size_t bytesPerVertex = gxState.GetNumBytesPerVertex();
+    mRemainingGeometryBytes = static_cast<int>(numVerts * bytesPerVertex);
     mTotalGeometryBytes = mRemainingGeometryBytes;
-    mCurrentState = State::ReadGeometry;
+    if (mRemainingGeometryBytes == 0) {
+        mCurrentState = State::ReadOpcode;
+    } else {
+        mCurrentState = State::ReadGeometry;
+    }
 }
 
 void CommandProcessor::ProcessOpcode() {
@@ -140,8 +144,6 @@ void CommandProcessor::ProcessOpcode() {
             break;
         case Opcode::LoadBpReg:
             {
-                u32 bpRegArgs = *(u32*)mArgsVec.data();
-                OSReport("LoadBpReg 0x%x\n", bpRegArgs);
                 mCurrentState = State::ReadOpcode;
             }
             break;
@@ -158,72 +160,69 @@ void CommandProcessor::ProcessOpcode() {
         case Opcode::LoadCpReg:
             {
                 u8 addr = mArgsVec[0];
-                mArgsVec.erase(mArgsVec.begin());
-                u32 value = *(u32*)mArgsVec.data();
-                OSReport("LoadCpReg 0x%x : %x\n", addr, value);
+                u32 value;
+                std::memcpy(&value, mArgsVec.data() + 1, sizeof(value));
                 ProcessCpReg(addr, value);
                 mCurrentState = State::ReadOpcode;
             }
             break;
         case Opcode::BeginTriangles:
             {
-              u16 numVerts = *(u16*)mArgsVec.data();
+              u16 numVerts;
+              std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
               HandleBeginPrimitive(GX_TRIANGLES, numVerts);
-              OSReport("Begin Triangles %d\n", numVerts);
             }
             break;
         case Opcode::BeginTriangleStrip:
             {
-              u16 numVerts = *(u16*)mArgsVec.data();
+              u16 numVerts;
+              std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
               HandleBeginPrimitive(GX_TRIANGLESTRIP, numVerts);
-              OSReport("Begin Triangle strip %d\n", numVerts);
             }
             break;
         case Opcode::BeginQuadStrip:
             {
-              u16 numVerts = *(u16*)mArgsVec.data();
-              //NOTE: GX_QUADSTRIP does not exist??
-              HandleBeginPrimitive(GX_QUADS, numVerts);
-              OSReport("Begin Quad strip %d\n", numVerts);
+              u16 numVerts;
+              std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
+              HandleBeginPrimitive(GX_QUADSTRIP, numVerts);
             }
             break;
         case Opcode::BeginTriangleFan:
             {
-              u16 numVerts = *(u16*)mArgsVec.data();
+              u16 numVerts;
+              std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
               HandleBeginPrimitive(GX_TRIANGLEFAN, numVerts);
-              OSReport("Begin Triangle Fan %d\n", numVerts);
             }
             break;
         case Opcode::BeginLines:
             {
-              u16 numVerts = *(u16*)mArgsVec.data();
+              u16 numVerts;
+              std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
               HandleBeginPrimitive(GX_LINES, numVerts);
-              OSReport("Begin Lines %d\n", numVerts);
             }
             break;
         case Opcode::BeginLineStrip:
             {
-              u16 numVerts = *(u16*)mArgsVec.data();
+              u16 numVerts;
+              std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
               HandleBeginPrimitive(GX_LINESTRIP, numVerts);
-              OSReport("Begin Line Strip %d\n", numVerts);
             }
             break;
         case Opcode::BeginPoints:
             {
-              u16 numVerts = *(u16*)mArgsVec.data();
+              u16 numVerts;
+              std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
               HandleBeginPrimitive(GX_POINTS, numVerts);
-              OSReport("Begin Points %d\n", numVerts);
             }
             break;
         case Opcode::BeginQuads:
             {
-              u16 numVerts = *(u16*)mArgsVec.data();
+              u16 numVerts;
+              std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
               HandleBeginPrimitive(GX_QUADS, numVerts);
-              OSReport("Begin Quads %d\n", numVerts);
             }
             break;
         case Opcode::InvalidateVertexCache:
-            OSReport("InvalidateVertexCache\n");
             mCurrentState = State::ReadOpcode;
             break;
         default:
@@ -236,6 +235,10 @@ void CommandProcessor::ProcessOpcode() {
 
 void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
     switch(regAddr) {
+        // Matrix index A. The position matrix index occupies bits 0..5.
+        case 0x30:
+            GetGlobalState().SetCurrentPositionMatrix(GetRegValue(value, 6, 0));
+            break;
 
         // VCD low
         case 0x50: {
@@ -278,10 +281,11 @@ void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
                     auto& gxState = GetGlobalState();
                     gxState.SetVertexFormatComponents(formatIndex, GX_VA_POS, static_cast<GXCompCnt>(GetRegValue(value, 1, 0)));
                     gxState.SetVertexFormatDataType(formatIndex, GX_VA_POS, static_cast<GXCompType>(GetRegValue(value, 3, 1)));
+                    gxState.SetVertexFormatFraction(formatIndex, GX_VA_POS, static_cast<u8>(GetRegValue(value, 5, 4)));
                     //TODO: Normal component
 
                     gxState.SetVertexFormatComponents(formatIndex, GX_VA_CLR0, static_cast<GXCompCnt>(GetRegValue(value, 1, 13)));
-                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_CLR1, static_cast<GXCompType>(GetRegValue(value, 3, 14)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_CLR0, static_cast<GXCompType>(GetRegValue(value, 3, 14)));
                 } else if(regAddr >= 0x80 && regAddr <= 0x87) {
 
                 } else if(regAddr >= 0x90 && regAddr <= 0x97) {

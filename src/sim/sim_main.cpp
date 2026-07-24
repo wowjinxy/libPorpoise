@@ -98,24 +98,41 @@ static GLuint gxFragmentShader;
 void DolphinMain();
 
 int main(int argc, char** argv) {
-    SDL_Init( SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK );
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK) != 0) {
+        fprintf(stderr, "SDL initialization failed: %s\n", SDL_GetError());
+        return 1;
+    }
 
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetSwapInterval(1);
 
     int windowWidth = 640;
     int windowHeight = 480;
 
     window = SDL_CreateWindow( "libPorpoise Game", 100, 100, windowWidth, windowHeight, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE );
-    context = SDL_GL_CreateContext(window);
+    if (window == NULL) {
+        fprintf(stderr, "SDL window creation failed: %s\n", SDL_GetError());
+        return 1;
+    }
 
-    gladLoadGLLoader(SDL_GL_GetProcAddress);
+    context = SDL_GL_CreateContext(window);
+    if (context == NULL) {
+        fprintf(stderr, "OpenGL context creation failed: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    if (!gladLoadGLLoader(SDL_GL_GetProcAddress)) {
+        fprintf(stderr, "OpenGL function loading failed\n");
+        return 1;
+    }
+    SDL_GL_SetSwapInterval(1);
 
     glViewport(0, 0, windowWidth, windowHeight);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f );
     glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
@@ -140,7 +157,17 @@ void SIM_Render() {
 
     while( SDL_PollEvent(&Event))
     {
-        //TODO: add input/pad stuff
+        if (Event.type == SDL_QUIT) {
+            SDL_GL_DeleteContext(context);
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            exit(0);
+        }
+
+        if (Event.type == SDL_WINDOWEVENT &&
+            Event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+            glViewport(0, 0, Event.window.data1, Event.window.data2);
+        }
     }
 
     //DrawTestTriangle();
