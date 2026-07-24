@@ -12,6 +12,7 @@ namespace SIM::GX {
 struct VertexAttributes {
     GXCompCnt mComponents;
     GXCompType mDataType;
+    u8 mFraction;
 };
 
 struct VertexFormat {
@@ -35,6 +36,7 @@ class GlobalState {
   size_t GetNumPositionComponents(GXCompCnt compType);
 
   GXAttrType GetVertexDescriptor(GXAttr attr);
+  GXPrimitive GetCurrentPrimitive();
   const VertexFormat& GetCurrentVertexFormat();
   const VertexArray& GetVertexArray(GXAttr attr);
   const VertexFormat& GetVertexFormat(GXVtxFmt formatIdx);
@@ -45,6 +47,7 @@ class GlobalState {
   void SetVertexDescriptor(GXAttr attr, GXAttrType descType);
   void SetVertexFormatComponents(GXVtxFmt formatIndex, GXAttr attrIndex, GXCompCnt component);
   void SetVertexFormatDataType(GXVtxFmt formatIndex, GXAttr attrIndex, GXCompType dataType);
+  void SetVertexFormatFraction(GXVtxFmt formatIndex, GXAttr attrIndex, u8 frac);
 
  private:
   GXVtxFmt mCurrentVertexFormat;

@@ -278,6 +278,7 @@ void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
                     auto& gxState = GetGlobalState();
                     gxState.SetVertexFormatComponents(formatIndex, GX_VA_POS, static_cast<GXCompCnt>(GetRegValue(value, 1, 0)));
                     gxState.SetVertexFormatDataType(formatIndex, GX_VA_POS, static_cast<GXCompType>(GetRegValue(value, 3, 1)));
+                    gxState.SetVertexFormatFraction(formatIndex, GX_VA_POS, GetRegValue(value, 5, 4));
                     //TODO: Normal component
 
                     gxState.SetVertexFormatComponents(formatIndex, GX_VA_CLR0, static_cast<GXCompCnt>(GetRegValue(value, 1, 13)));

@@ -88,6 +88,10 @@ GXAttrType GlobalState::GetVertexDescriptor(GXAttr attr) {
     return mVertexDescriptors[attr];
 }
 
+GXPrimitive GlobalState::GetCurrentPrimitive() {
+    return mCurrentPrimitive;
+}
+
 const VertexFormat& GlobalState::GetCurrentVertexFormat() {
     return mVertexFormats[mCurrentVertexFormat];
 }
@@ -118,6 +122,10 @@ void GlobalState::SetVertexFormatComponents(GXVtxFmt formatIndex, GXAttr attrInd
 
 void GlobalState::SetVertexFormatDataType(GXVtxFmt formatIndex, GXAttr attrIndex, GXCompType dataType) {
     mVertexFormats[formatIndex].mAttributes[attrIndex].mDataType = dataType;
+}
+
+void GlobalState::SetVertexFormatFraction(GXVtxFmt formatIndex, GXAttr attrIndex, u8 frac) {
+    mVertexFormats[formatIndex].mAttributes[attrIndex].mFraction = frac;
 }
 
 

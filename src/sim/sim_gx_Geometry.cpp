@@ -1,5 +1,6 @@
 #include "simulator/sim_gx_Geometry.hpp"
 
+#include <cmath>
 #include <limits>
 
 #include <dolphin.h>
@@ -8,26 +9,11 @@
 
 
 template <typename VertexCompDataType>
-static float NormalizeToFloat(VertexCompDataType value)
+static float ConvertToFloat(VertexCompDataType value, u8 frac)
 {
-    static_assert(std::is_integral_v<VertexCompDataType>, "NormalizeToFloat requires an integer type");
+    static_assert(std::is_integral_v<VertexCompDataType>, "ConvertToFloat requires an integer type");
 
-    if constexpr (std::is_signed_v<VertexCompDataType>)
-    {
-        // Signed: map [min, max] -> [-1, 1]
-        // Note: max is used as the divisor (not min's abs value),
-        // since |min| > max for two's complement types (e.g. int8_t: -128..127).
-        // This means min maps to slightly less than -1, so we clamp.
-        constexpr float maxVal = static_cast<float>(std::numeric_limits<VertexCompDataType>::max());
-        float result = static_cast<float>(value) / maxVal;
-        return std::max(result, -1.0f);
-    }
-    else
-    {
-        // Unsigned: map [0, max] -> [-1, 1]
-        constexpr float maxVal = static_cast<float>(std::numeric_limits<VertexCompDataType>::max());
-        return (static_cast<float>(value) / maxVal) * 2.0f - 1.0f;
-    }
+    return (static_cast<float>(value) * std::pow(2, -1.0f * static_cast<float>(frac)));
 }
 
 
@@ -57,7 +43,7 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
         auto coordDataType = format.mAttributes[GX_VA_POS].mDataType;
         auto descriptorSize = gxState.GetDescriptorSize(positionDescriptor, coordDataType);
         auto numComponents = gxState.GetNumPositionComponents(format.mAttributes[GX_VA_POS].mComponents);
-        //for(auto coordIdx = 0; coordIdx < numComponents; coordIdx++) { // This for would only apply if we are in GX_DIRECT
+        auto frac = format.mAttributes[GX_VA_POS].mFraction;
         int stride = 0;
         u8 * arrayPtr = nullptr;
         size_t arrayIdx = 0;
@@ -70,35 +56,35 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
                         {
                             u8 value = *byteStreamPointer;
                             byteStreamPointer++;
-                            vtxOut.position.coords[coordIdx] = NormalizeToFloat<u8>(value);
+                            vtxOut.position.coords[coordIdx] = ConvertToFloat<u8>(value, frac);
                         }
                         break;
                     case GX_S8:
                         {
                             s8 value = *(s8*)byteStreamPointer;
                             byteStreamPointer++;
-                            vtxOut.position.coords[coordIdx] = NormalizeToFloat<s8>(value);
+                            vtxOut.position.coords[coordIdx] = ConvertToFloat<s8>(value, frac);
                         }
                         break;
                     case GX_U16:
                         {
                             u16 value = *(u16*)byteStreamPointer;
                             byteStreamPointer+= sizeof(u16);
-                            vtxOut.position.coords[coordIdx] = NormalizeToFloat<u16>(value);
+                            vtxOut.position.coords[coordIdx] = ConvertToFloat<u16>(value, frac);
                         }
                         break;
                     case GX_S16:
                         {
                             s16 value = *(s16*)byteStreamPointer;
                             byteStreamPointer+= sizeof(s16);
-                            vtxOut.position.coords[coordIdx] = NormalizeToFloat<s16>(value);
+                            vtxOut.position.coords[coordIdx] = ConvertToFloat<s16>(value, frac);
                         }
                         break;
                     case GX_F32:
                         {
                             f32 value = *(f32*)byteStreamPointer;
                             byteStreamPointer+= sizeof(f32);
-                            vtxOut.position.coords[coordIdx] = value;
+                            vtxOut.position.coords[coordIdx] = value * std::pow(2, -(frac));
                         }
                         break;
                     default:
@@ -124,19 +110,19 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
             for(size_t coordIdx = 0; coordIdx < numComponents; coordIdx++) {
                 switch(coordDataType) {
                     case GX_U8:
-                        vtxOut.position.coords[coordIdx] = NormalizeToFloat<u8>(*(u8*)(arrayPtr + (arrayIdx * stride) + (sizeof(u8) * coordIdx)));
+                        vtxOut.position.coords[coordIdx] = ConvertToFloat<u8>(*(u8*)(arrayPtr + (arrayIdx * stride) + (sizeof(u8) * coordIdx)), frac);
                         break;
                     case GX_S8:
-                        vtxOut.position.coords[coordIdx] = NormalizeToFloat<s8>(*(s8*)(arrayPtr + (arrayIdx * stride) + (sizeof(s8) * coordIdx)));
+                        vtxOut.position.coords[coordIdx] = ConvertToFloat<s8>(*(s8*)(arrayPtr + (arrayIdx * stride) + (sizeof(s8) * coordIdx)), frac);
                         break;
                     case GX_U16:
-                        vtxOut.position.coords[coordIdx] = NormalizeToFloat<u16>(*(u16*)(arrayPtr + (arrayIdx * stride) + (sizeof(u16) * coordIdx)));
+                        vtxOut.position.coords[coordIdx] = ConvertToFloat<u16>(*(u16*)(arrayPtr + (arrayIdx * stride) + (sizeof(u16) * coordIdx)), frac);
                         break;
                     case GX_S16:
-                        vtxOut.position.coords[coordIdx] = NormalizeToFloat<s16>(*(s16*)(arrayPtr + (arrayIdx * stride) + (sizeof(s16) * coordIdx)));
+                        vtxOut.position.coords[coordIdx] = ConvertToFloat<s16>(*(s16*)(arrayPtr + (arrayIdx * stride) + (sizeof(s16) * coordIdx)), frac);
                         break;
                     case GX_F32:
-                        vtxOut.position.coords[coordIdx] = *(f32*)(arrayPtr + (arrayIdx * stride) + (sizeof(f32) * coordIdx));
+                        vtxOut.position.coords[coordIdx] = *(f32*)(arrayPtr + (arrayIdx * stride) + (sizeof(f32) * coordIdx)) * std::pow(2, -(frac));
                         break;
                     default:
                         // Bad data type!!!
@@ -144,21 +130,25 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
                         break;
                 }
             }
-
         }
-            //vtxOut.position.coords[coordIdx] =
-        //}
     }
 
     // Handle color0
     //TODO: for now I just advance bytestreampointer by the amount we want
     byteStreamPointer++;
 
-
-    mRenderVerts.push_back(vtxOut);
+    // Submit vertex
+    SubmitVertex(vtxOut);
   }
 
-  OSReport("Here\n");
-
+  OSReport("Here. Send to the GL Renderer\n");
 }
+
+void GeometryProcessor::SubmitVertex(RenderVertex& vtx) {
+    auto& gxState = GetGlobalState();
+
+    GXPrimitive primitiveType = gxState.GetCurrentPrimitive();
+    
+}
+
 }

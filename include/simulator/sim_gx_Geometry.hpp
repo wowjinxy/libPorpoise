@@ -37,6 +37,9 @@ class GeometryProcessor {
 
   void ProcessByteStream(std::vector<u8>& byteStream);
  private:
+  void SubmitVertex(RenderVertex& vtx);
+  
+  size_t mVertInPolygon;
   std::vector<RenderVertex> mRenderVerts;
 };
 
