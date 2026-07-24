@@ -1,43 +1,40 @@
-#ifndef DOLPHIN_GXPERF_H
-#define DOLPHIN_GXPERF_H
+#ifndef _DOLPHIN_GXPERF_H
+#define _DOLPHIN_GXPERF_H
 
 #include <dolphin/types.h>
+
 #include <dolphin/gx/GXEnum.h>
+#include <dolphin/gx/GXTypes.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+BEGIN_SCOPE_EXTERN_C
 
-void GXSetGPMetric(GXPerf0 perf0, GXPerf1 perf1);
-void GXClearGPMetric(void);
-void GXReadGPMetric(u32* cnt0, u32* cnt1);
+///////////// METRIC FUNCTIONS /////////////
+extern void GXSetGPMetric(GXPerf0 perf0, GXPerf1 perf1);
+extern void GXClearGPMetric();
+extern void GXReadXfRasMetric(u32* xfWaitIn, u32* xfWaitOut, u32* rasBusy, u32* clocks);
 
-#define GXSetGP0Metric(perf0) GXSetGPMetric((perf0), GX_PERF1_NONE)
-#define GXClearGP0Metric() GXClearGPMetric()
-u32 GXReadGP0Metric(void);
+#define GXSetGP0Metric(perf0)    GXSetGPMetric((perf0), GX_PERF1_NONE)
+#define GXClearGP0Metric()       GXClearGPMetric()
+#define GXSetGP1Metric(perf1)    GXSetGPMetric(GX_PERF0_NONE, (perf1))
+#define GXClearGP1Metric()       GXClearGPMetric()
 
-#define GXSetGP1Metric(perf1) GXSetGPMetric(GX_PERF0_NONE, (perf1))
-#define GXClearGP1Metric() GXClearGPMetric()
-u32 GXReadGP1Metric(void);
+// Unused/inlined in P2.
+extern void GXReadGPMetric(u32* count0, u32* count1);
+extern u32 GXReadGP0Metric();
+extern u32 GXReadGP1Metric();
+extern void GXReadMemMetric(u32* cpReq, u32* tcReq, u32* cpuReadReq, u32* cpuWriteReq, u32* dspReq, u32* ioReq, u32* viReq, u32* peReq,
+                            u32* rfReq, u32* fiReq);
+extern void GXClearMemMetric();
+extern void GXReadPixMetric(u32* topIn, u32* topOut, u32* bottomIn, u32* bottomOut, u32* clearIn, u32* copyClocks);
+extern void GXClearPixMetric();
+extern void GXSetVCacheMetric(GXVCachePerf attr);
+extern void GXReadVCacheMetric(u32* check, u32* miss, u32* stall);
+extern void GXClearVCacheMetric();
+extern void GXInitXfRasMetric();
+extern u32 GXReadClksPerVtx();
 
-void GXReadMemMetric(
-    u32* cp_req, u32* tc_req, u32* cpu_rd_req, u32* cpu_wr_req, u32* dsp_req,
-    u32* io_req, u32* vi_req, u32* pe_req, u32* rf_req, u32* fi_req);
-void GXClearMemMetric(void);
+////////////////////////////////////////////
 
-void GXReadPixMetric(
-    u32* top_pixels_in, u32* top_pixels_out, u32* bot_pixels_in, u32* bot_pixels_out,
-    u32* clr_pixels_in, u32* copy_clks);
-void GXClearPixMetric(void);
-
-void GXSetVCacheMetric(GXVCachePerf attr);
-void GXReadVCacheMetric(u32* check, u32* miss, u32* stall);
-void GXClearVCacheMetric(void);
-
-void GXReadXfRasMetric(u32* xf_wait_in, u32* xf_wait_out, u32* ras_busy, u32* clocks);
-
-#ifdef __cplusplus
-}
-#endif
+END_SCOPE_EXTERN_C
 
 #endif

@@ -1,547 +1,659 @@
-/*---------------------------------------------------------------------------*
-  OSCache.c - Cache Management Operations
-  
-  On GC/Wii hardware:
-  - PowerPC has manual cache control (L1 data, L1 instruction, L2)
-  - Games must explicitly flush/invalidate caches before DMA
-  - Instruction cache must be invalidated after modifying code
-  - "Locked cache" is special 16KB scratchpad memory with DMA
-  
-  On PC (x86/x64/ARM):
-  - CPUs handle cache coherency automatically
-  - No manual cache control needed
-  - OS/compiler handle instruction cache
-  - We simulate the API but most operations are no-ops
-  
-  TWO MODES:
-  1. Simple mode (default): Most operations are no-ops
-  2. Full emulation mode (PORPOISE_USE_GECKO_MEMORY): Implements locked cache
-  
-  Key functions that matter on PC:
-  - DCZeroRange: Fast memset (we use actual memset)
-  - DCFlushRange: Important if we later add real DMA
-  - ICInvalidateRange: Important for JIT or code modification
- *---------------------------------------------------------------------------*/
-
+#include <dolphin/base/PPCArch.h>
+#include <dolphin/db.h>
 #include <dolphin/os.h>
-#include <stdint.h>
-#include <string.h>
 
-#ifdef PORPOISE_USE_GECKO_MEMORY
-#include <dolphin/gecko_memory.h>
-#endif
-
-#define CACHE_LINE_SIZE 32
-
-/* Locked cache state (for full emulation mode) */
-static BOOL s_locked_cache_enabled = FALSE;
-
-#ifdef PORPOISE_USE_GECKO_MEMORY
-static BOOL PtrToGCAddr(const void* ptr, u32* outAddr) {
-    uintptr_t addr = (uintptr_t)ptr;
-    if (addr > UINT32_MAX) {
-        return FALSE;
-    }
-    *outAddr = (u32)addr;
-    return TRUE;
-}
-#endif
-
-/*---------------------------------------------------------------------------*
-  L1 Data Cache Operations
-  
-  On original hardware, these use PowerPC dcbf/dcbi/dcbz/dcbst instructions.
-  On PC, most are no-ops since x86/ARM handle cache coherency automatically.
- *---------------------------------------------------------------------------*/
-
-/*---------------------------------------------------------------------------*
-  Name:         DCInvalidateRange
-
-  Description:  Invalidates data cache for a memory range. On original hardware,
-                this executes 'dcbi' (data cache block invalidate) on each
-                32-byte cache line in the range.
-                
-                On PC: No-op. Modern CPUs handle cache coherency automatically.
-
-  Arguments:    addr   - Address (will be aligned down to 32-byte boundary)
-                nBytes - Size (will be aligned up to 32-byte boundary)
- *---------------------------------------------------------------------------*/
-void DCInvalidateRange(void* addr, u32 nBytes) {
-    // No-op on PC - cache coherency handled by hardware
-    (void)addr;
-    (void)nBytes;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000010
+ */
+void DCFlashInvalidate(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DCFlushRange
+/**
+ * @TODO: Documentation
+ */
+ASM void DCEnable(void)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
 
-  Description:  Flushes data cache to main memory. On original hardware,
-                executes 'dcbf' (data cache block flush) - writes modified
-                cache lines to memory and invalidates them.
-                
-                Critical before DMA operations! Games call this before GPU
-                reads data or before DVD writes.
-                
-                On PC: No-op for now. If we implement real DMA later, we might
-                need memory barriers here.
- *---------------------------------------------------------------------------*/
-void DCFlushRange(void* addr, u32 nBytes) {
-    // No-op on PC - but kept for API compatibility
-    // If we add real DMA: insert memory barrier/fence here
-    (void)addr;
-    (void)nBytes;
+	sync
+
+	mfspr  r3, SPR_HID0
+	ori    r3, r3, HID0_DCE
+	mtspr  SPR_HID0, r3
+
+	blr
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DCStoreRange
-
-  Description:  Stores data cache to main memory without invalidating.
-                Like DCFlushRange but cache lines stay in cache.
-                
-                On PC: No-op.
- *---------------------------------------------------------------------------*/
-void DCStoreRange(void* addr, u32 nBytes) {
-    (void)addr;
-    (void)nBytes;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000014
+ */
+void DCDisable(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DCFlushRangeNoSync / DCStoreRangeNoSync
-
-  Description:  Same as above but without sync barrier (for performance when
-                batching multiple operations).
-                
-                On PC: No-op.
- *---------------------------------------------------------------------------*/
-void DCFlushRangeNoSync(void* addr, u32 nBytes) {
-    (void)addr;
-    (void)nBytes;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000014
+ */
+void DCFreeze(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void DCStoreRangeNoSync(void* addr, u32 nBytes) {
-    (void)addr;
-    (void)nBytes;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000010
+ */
+void DCUnfreeze(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DCZeroRange
-
-  Description:  Zeros a memory range using cache operations. On original
-                hardware, executes 'dcbz' (data cache block zero) which
-                quickly zeros 32-byte cache lines.
-                
-                This is faster than memset on PowerPC!
-                
-                On PC: Use standard memset (compiler may optimize to SSE/AVX).
-
-  Arguments:    addr   - Address (aligned down to 32 bytes)
-                nBytes - Size (aligned up to 32 bytes)
- *---------------------------------------------------------------------------*/
-void DCZeroRange(void* addr, u32 nBytes) {
-    if (addr && nBytes > 0) {
-        // Align down to 32-byte boundary
-        uintptr_t alignedAddr = ((uintptr_t)addr) & ~(uintptr_t)31;
-        // Align up size
-        size_t alignedSize = ((size_t)nBytes + 31u) & ~(size_t)31u;
-        
-        memset((void*)alignedAddr, 0, alignedSize);
-    }
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008
+ */
+void DCTouchLoad(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         DCTouchRange
-
-  Description:  Prefetches data into cache. On original hardware, executes
-                'dcbt' (data cache block touch) to load data into L1 cache
-                without blocking.
-                
-                On PC: No-op. Modern CPUs have hardware prefetchers.
- *---------------------------------------------------------------------------*/
-void DCTouchRange(void* addr, u32 nBytes) {
-    // No-op - modern CPUs prefetch automatically
-    (void)addr;
-    (void)nBytes;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008
+ */
+void DCBlockZero(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Low-Level Data Cache Operations (single cache line)
- *---------------------------------------------------------------------------*/
-
-void DCFlashInvalidate(void) {
-    // Invalidate entire data cache - no-op on PC
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008
+ */
+void DCBlockStore(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void DCEnable(void) {
-    // Enable data cache - always on for modern CPUs
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008
+ */
+void DCBlockFlush(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void DCDisable(void) {
-    // Disable data cache - not possible/needed on modern CPUs
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008
+ */
+void DCBlockInvalidate(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void DCFreeze(void) {
-    // Lock cache contents - no equivalent on PC
+/**
+ * @note Dolphin Emulator has a speedhack in its JITs to recognize the instructions in this
+ * loop in order to batch data cache operations.  See `Jit64`/`JitArm64::dcbx` for details.
+ */
+ASM void DCInvalidateRange(register void* addr, register u32 nBytes) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	cmplwi   nBytes, 0
+	blelr-
+	rlwinm.  r5, addr, 0, 27, 31
+	beq      _noadd
+	addi     nBytes, nBytes, 0x20
+_noadd:
+	addi     nBytes, nBytes, 31
+	srwi     nBytes, nBytes, 5
+	mtctr    nBytes
+_loop:
+	dcbi     0, addr
+	addi     addr, addr, 32
+	bdnz     _loop
+	blr
+#endif // clang-format on
 }
 
-void DCUnfreeze(void) {
-    // Unlock cache - no equivalent on PC
+/**
+ * @note Dolphin Emulator has a speedhack in its JITs to recognize the instructions in this
+ * loop in order to batch data cache operations.  See `Jit64`/`JitArm64::dcbx` for details.
+ */
+ASM void DCFlushRange(register void* addr, register u32 nBytes) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	cmplwi   nBytes, 0
+	blelr-
+	rlwinm.  r5, addr, 0, 27, 31
+	beq      _noadd
+	addi     nBytes, nBytes, 0x20
+_noadd:
+	addi     nBytes, nBytes, 31
+	srwi     nBytes, nBytes, 5
+	mtctr    nBytes
+_loop:
+	dcbf     0, addr
+	addi     addr, addr, 32
+	bdnz     _loop
+
+	sc
+
+	blr
+#endif // clang-format on
 }
 
-void DCTouchLoad(void* addr) {
-    // Prefetch single cache line - no-op
-    (void)addr;
+/**
+ * @note Dolphin Emulator has a speedhack in its JITs to recognize the instructions in this
+ * loop in order to batch data cache operations.  See `Jit64`/`JitArm64::dcbx` for details.
+ */
+ASM void DCStoreRange(register void* addr, register u32 nBytes) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	cmplwi   nBytes, 0
+	blelr-
+	rlwinm.  r5, addr, 0, 27, 31
+	beq      _noadd
+	addi     nBytes, nBytes, 0x20
+_noadd:
+	addi     nBytes, nBytes, 31
+	srwi     nBytes, nBytes, 5
+	mtctr    nBytes
+_loop:
+	dcbst    0, addr
+	addi     addr, addr, 32
+	bdnz     _loop
+
+	sc
+
+	blr
+#endif // clang-format on
 }
 
-void DCBlockZero(void* addr) {
-    // Zero single 32-byte block
-    if (addr) {
-        memset(addr, 0, CACHE_LINE_SIZE);
-    }
+/**
+ * @note Dolphin Emulator has a speedhack in its JITs to recognize the instructions in this
+ * loop in order to batch data cache operations.  See `Jit64`/`JitArm64::dcbx` for details.
+ */
+ASM void DCFlushRangeNoSync(register void* addr, register u32 nBytes) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	cmplwi   nBytes, 0
+	blelr-
+	rlwinm.  r5, addr, 0, 27, 31
+	beq      _noadd
+	addi     nBytes, nBytes, 0x20
+_noadd:
+	addi     nBytes, nBytes, 31
+	srwi     nBytes, nBytes, 5
+	mtctr    nBytes
+_loop:
+	dcbf     0, addr
+	addi     addr, addr, 32
+	bdnz     _loop
+
+	blr
+#endif // clang-format on
 }
 
-void DCBlockStore(void* addr) {
-    // Store single cache line - no-op
-    (void)addr;
+/**
+ * @note Dolphin Emulator has a speedhack in its JITs to recognize the instructions in this
+ * loop in order to batch data cache operations.  See `Jit64`/`JitArm64::dcbx` for details.
+ */
+ASM void DCStoreRangeNoSync(register void* addr, register u32 nBytes) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	cmplwi   nBytes, 0
+	blelr-
+	rlwinm.  r5, addr, 0, 27, 31
+	beq      _noadd
+	addi     nBytes, nBytes, 0x20
+_noadd:
+	addi     nBytes, nBytes, 31
+	srwi     nBytes, nBytes, 5
+	mtctr    nBytes
+_loop:
+	dcbst    0, addr
+	addi     addr, addr, 32
+	bdnz     _loop
+
+	blr
+#endif // clang-format on
 }
 
-void DCBlockFlush(void* addr) {
-    // Flush single cache line - no-op
-    (void)addr;
+/**
+ * @TODO: Documentation
+ */
+ASM void DCZeroRange(register void* addr, register u32 nBytes)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	cmplwi   nBytes, 0
+	blelr-
+	rlwinm.  r5, addr, 0, 27, 31
+	beq      _noadd
+	addi     nBytes, nBytes, 0x20
+_noadd:
+	addi     nBytes, nBytes, 31
+	srwi     nBytes, nBytes, 5
+	mtctr    nBytes
+_loop:
+	dcbz     0, addr
+	addi     addr, addr, 32
+	bdnz     _loop
+
+	blr
+#endif // clang-format on
 }
 
-void DCBlockInvalidate(void* addr) {
-    // Invalidate single cache line - no-op
-    (void)addr;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000030
+ */
+void DCTouchRange(register void* addr, register u32 nBytes)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  L1 Instruction Cache Operations
-  
-  On original hardware, these manage the instruction cache. Critical when
-  modifying code at runtime (JIT compilers, loading overlays, etc.).
-  
-  On PC: Mostly no-op, but ICInvalidateRange might be needed for JIT.
- *---------------------------------------------------------------------------*/
+/**
+ * @TODO: Documentation
+ */
+ASM void ICInvalidateRange(register void* addr, register u32 nBytes) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	cmplwi   nBytes, 0
+	blelr-
+	rlwinm.  r5, addr, 0, 27, 31
+	beq      _noadd
+	addi     nBytes, nBytes, 0x20
+_noadd:
+	addi     nBytes, nBytes, 31
+	srwi     nBytes, nBytes, 5
+	mtctr    nBytes
+_loop:
+	icbi     0, addr
+	addi     addr, addr, 32
+	bdnz     _loop
 
-/*---------------------------------------------------------------------------*
-  Name:         ICInvalidateRange
+	sync
+	isync
 
-  Description:  Invalidates instruction cache for a range. On original hardware,
-                executes 'icbi' (instruction cache block invalidate).
-                
-                CRITICAL for: JIT compilation, loading code overlays, 
-                self-modifying code
-                
-                On PC: We might need platform-specific code flushing for JIT:
-                - Windows: FlushInstructionCache()
-                - Linux: __builtin___clear_cache()
-                - For now: no-op (most games don't modify code)
- *---------------------------------------------------------------------------*/
-void ICInvalidateRange(void* addr, u32 nBytes) {
-    // On PC: Would need platform-specific instruction cache flush
-    // For now: no-op (games rarely modify code at runtime)
-    
-#ifdef _WIN32
-    // If we implement JIT: FlushInstructionCache(GetCurrentProcess(), addr, nBytes);
-#elif defined(__GNUC__)
-    // If we implement JIT: __builtin___clear_cache((char*)addr, (char*)addr + nBytes);
-#endif
-    
-    (void)addr;
-    (void)nBytes;
+	blr
+#endif // clang-format on
 }
 
-void ICSync(void) {
-    // Sync instruction cache - no-op on PC
+/**
+ * @TODO: Documentation
+ */
+ASM void ICFlashInvalidate(void) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+
+	mfspr  r3, SPR_HID0
+	ori    r3, r3, HID0_ICFI
+	mtspr  SPR_HID0, r3
+
+	blr
+#endif // clang-format on
 }
 
-void ICFlashInvalidate(void) {
-    // Invalidate entire instruction cache - no-op on PC
+/**
+ * @TODO: Documentation
+ */
+ASM void ICEnable(void)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+
+	isync
+
+	mfspr  r3, SPR_HID0
+	ori    r3, r3, HID0_ICE
+	mtspr  SPR_HID0, r3
+
+	blr
+#endif // clang-format on
 }
 
-void ICEnable(void) {
-    // Enable instruction cache - always on
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000014
+ */
+void ICDisable(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void ICDisable(void) {
-    // Disable instruction cache - not possible
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000014
+ */
+void ICFreeze(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void ICFreeze(void) {
-    // Lock instruction cache - no equivalent
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000010
+ */
+void ICUnfreeze(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void ICUnfreeze(void) {
-    // Unlock instruction cache - no equivalent
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008
+ */
+void ICBlockInvalidate(void*)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void ICBlockInvalidate(void* addr) {
-    // Invalidate single cache line - no-op
-    (void)addr;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008
+ */
+void ICSync(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  L2 Cache Operations
-  
-  On GC/Wii: 256KB unified L2 cache with manual control
-  On PC: Modern CPUs have multi-level caches (L2, L3) managed automatically
- *---------------------------------------------------------------------------*/
-
-void L2Enable(void) {
-    // L2 cache always enabled on modern CPUs
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000CC
+ */
+void __LCEnable(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void L2Disable(void) {
-    // Cannot disable L2 on modern CPUs
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000038
+ */
+void LCEnable(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void L2GlobalInvalidate(void) {
-    // Invalidate entire L2 - not needed on PC
+/**
+ * @note Dolphin Emulator has a speedhack in its JITs to recognize the instructions in this
+ * loop in order to batch data cache operations.  See `Jit64`/`JitArm64::dcbx` for details.
+ * @note UNUSED Size: 000028 (Matching by size)
+ */
+ASM void LCDisable(void)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	lis     r3, LC_BASE @ha
+	li      r4, LC_LINES
+	mtctr   r4
+@1
+	dcbi    r0, r3
+	addi    r3, r3, 32
+	bdnz    @1
+	mfspr   r4, SPR_HID2
+	rlwinm  r4, r4, 0, 4, 2  // HID2_LCE
+	mtspr   SPR_HID2, r4
+	blr
+#endif // clang-format on
 }
 
-void L2SetDataOnly(BOOL dataOnly) {
-    // Configure L2 for data-only mode - not applicable on PC
-    (void)dataOnly;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000014
+ */
+void LCAllocOneTag(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void L2SetWriteThrough(BOOL writeThrough) {
-    // Configure L2 write policy - not applicable on PC
-    (void)writeThrough;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000040
+ */
+void LCAllocTags(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Locked Cache (LC) Operations
-  
-  GameCube/Wii specific feature: "Locked Cache" is 16KB of L1 cache that
-  can be used as fast scratchpad memory with DMA capabilities.
-  
-  Memory range: 0xE0000000 - 0xE0003FFF (16 KB)
-  
-  Uses:
-  - Ultra-fast temporary buffers
-  - DMA source/destination for GPU
-  - Audio buffer processing
-  
-  On PC:
-  - Simple mode: No-ops (games need modification)
-  - Full emulation mode: Uses 16KB buffer from GeckoMemory
- *---------------------------------------------------------------------------*/
-
-void LCEnable(void) {
-    s_locked_cache_enabled = TRUE;
-    
-#ifdef PORPOISE_USE_GECKO_MEMORY
-    if (g_geckoMemory) {
-        g_geckoMemory->locked_cache_enabled = TRUE;
-        OSReport("Locked cache enabled (16 KB scratchpad at 0xE0000000)\n");
-    }
-#endif
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000024
+ */
+void LCLoadBlocks(void* destTag, void* srcAddr, u32 numBlocks)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void LCDisable(void) {
-    s_locked_cache_enabled = FALSE;
-    
-#ifdef PORPOISE_USE_GECKO_MEMORY
-    if (g_geckoMemory) {
-        g_geckoMemory->locked_cache_enabled = FALSE;
-    }
-#endif
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000024
+ */
+void LCStoreBlocks(register void* destAddr, register void* srcTag, register u32 numBlocks)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void LCLoadBlocks(void* destTag, void* srcAddr, u32 numBlocks) {
-#ifdef PORPOISE_USE_GECKO_MEMORY
-    if (g_geckoMemory && s_locked_cache_enabled) {
-        /* DMA from main memory to locked cache */
-        u32 destAddr;
-        u32 srcAddr32;
-        if (PtrToGCAddr(destTag, &destAddr) && PtrToGCAddr(srcAddr, &srcAddr32)
-            && GeckoIsLockedCacheAddress(destAddr)) {
-            u32 offset = destAddr - GECKO_LOCKED_CACHE_BASE;
-            u32 size = numBlocks * CACHE_LINE_SIZE;
-            
-            if (offset + size <= GECKO_LOCKED_CACHE_SIZE) {
-                /* Get source pointer */
-                void* src = GeckoGetPointer(g_geckoMemory, srcAddr32);
-                if (src) {
-                    memcpy(&g_geckoMemory->locked_cache[offset], src, size);
-                }
-            }
-        }
-    }
-#else
-    (void)destTag;
-    (void)srcAddr;
-    (void)numBlocks;
-#endif
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000070
+ */
+void LCAlloc(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void LCStoreBlocks(void* destAddr, void* srcTag, u32 numBlocks) {
-#ifdef PORPOISE_USE_GECKO_MEMORY
-    if (g_geckoMemory && s_locked_cache_enabled) {
-        /* DMA from locked cache to main memory */
-        u32 srcAddr;
-        u32 destAddr32;
-        if (PtrToGCAddr(srcTag, &srcAddr) && PtrToGCAddr(destAddr, &destAddr32)
-            && GeckoIsLockedCacheAddress(srcAddr)) {
-            u32 offset = srcAddr - GECKO_LOCKED_CACHE_BASE;
-            u32 size = numBlocks * CACHE_LINE_SIZE;
-            
-            if (offset + size <= GECKO_LOCKED_CACHE_SIZE) {
-                /* Get destination pointer */
-                void* dest = GeckoGetPointer(g_geckoMemory, destAddr32);
-                if (dest) {
-                    memcpy(dest, &g_geckoMemory->locked_cache[offset], size);
-                }
-            }
-        }
-    }
-#else
-    (void)destAddr;
-    (void)srcTag;
-    (void)numBlocks;
-#endif
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000070
+ */
+void LCAllocNoInvalidate(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-u32 LCLoadData(void* destAddr, void* srcAddr, u32 nBytes) {
-#ifdef PORPOISE_USE_GECKO_MEMORY
-    if (g_geckoMemory && s_locked_cache_enabled) {
-        u32 numBlocks = (nBytes + 31) / 32;
-        u32 numTransactions = (numBlocks + 127) / 128; // Max 128 blocks per transaction
-        uintptr_t dest = (uintptr_t)destAddr;
-        uintptr_t src = (uintptr_t)srcAddr;
-        
-        /* Batch DMA operations (max 128 blocks at a time) */
-        while (numBlocks > 0) {
-            u32 blocksThisTime = (numBlocks < 128) ? numBlocks : 128;
-            LCLoadBlocks((void*)dest, (void*)src, blocksThisTime);
-            
-            numBlocks -= blocksThisTime;
-            dest += (uintptr_t)(blocksThisTime * CACHE_LINE_SIZE);
-            src += (uintptr_t)(blocksThisTime * CACHE_LINE_SIZE);
-        }
-        
-        return numTransactions;
-    }
-#else
-    (void)destAddr;
-    (void)srcAddr;
-    (void)nBytes;
-#endif
-    return 0;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000AC
+ */
+u32 LCLoadData(void* destAddr, void* srcAddr, u32 nBytes)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-u32 LCStoreData(void* destAddr, void* srcAddr, u32 nBytes) {
-#ifdef PORPOISE_USE_GECKO_MEMORY
-    if (g_geckoMemory && s_locked_cache_enabled) {
-        u32 numBlocks = (nBytes + 31) / 32;
-        u32 numTransactions = (numBlocks + 127) / 128;
-        uintptr_t dest = (uintptr_t)destAddr;
-        uintptr_t src = (uintptr_t)srcAddr;
-        
-        while (numBlocks > 0) {
-            u32 blocksThisTime = (numBlocks < 128) ? numBlocks : 128;
-            LCStoreBlocks((void*)dest, (void*)src, blocksThisTime);
-            
-            numBlocks -= blocksThisTime;
-            dest += (uintptr_t)(blocksThisTime * CACHE_LINE_SIZE);
-            src += (uintptr_t)(blocksThisTime * CACHE_LINE_SIZE);
-        }
-        
-        return numTransactions;
-    }
-#else
-    (void)destAddr;
-    (void)srcAddr;
-    (void)nBytes;
-#endif
-    return 0;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000AC
+ */
+u32 LCStoreData(void* destAddr, void* srcAddr, u32 nBytes)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-u32 LCQueueLength(void) {
-    /* No DMA queue on PC - all transfers are instant */
-    return 0;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00000C
+ */
+u32 LCQueueLength(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void LCQueueWait(u32 len) {
-    /* Instant on PC */
-    (void)len;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000018
+ */
+void LCQueueWait(register u32 len)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void LCFlushQueue(void) {
-    /* Instant on PC */
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000048
+ */
+void LCFlushQueue(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void LCAlloc(void* addr, u32 nBytes) {
-#ifdef PORPOISE_USE_GECKO_MEMORY
-    if (g_geckoMemory) {
-        /* Just enable locked cache - memory already exists in GeckoMemory */
-        if (!s_locked_cache_enabled) {
-            LCEnable();
-        }
-        
-        /* Invalidate the region to ensure no stale cache data */
-        u32 destAddr;
-        if (PtrToGCAddr(addr, &destAddr) && GeckoIsLockedCacheAddress(destAddr)) {
-            u32 offset = destAddr - GECKO_LOCKED_CACHE_BASE;
-            if (offset + nBytes <= GECKO_LOCKED_CACHE_SIZE) {
-                memset(&g_geckoMemory->locked_cache[offset], 0, nBytes);
-            }
-        }
-    }
-#else
-    (void)addr;
-    (void)nBytes;
-#endif
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00004C (Matching by size)
+ */
+void L2Init(void)
+{
+	u32 oldMSR;
+
+	oldMSR = PPCMfmsr();
+
+	#ifndef LIBPORPOISE_PORT
+	__mwerks_sync();
+	#endif
+	PPCMtmsr(MSR_IR | MSR_DR);
+	#ifndef LIBPORPOISE_PORT
+	__mwerks_sync();
+	#endif
+
+	L2Disable();
+
+	L2GlobalInvalidate();
+
+	PPCMtmsr(oldMSR);
 }
 
-void LCAllocNoInvalidate(void* addr, u32 nBytes) {
-#ifdef PORPOISE_USE_GECKO_MEMORY
-    if (g_geckoMemory) {
-        /* Same as LCAlloc but don't clear the buffer */
-        if (!s_locked_cache_enabled) {
-            LCEnable();
-        }
-    }
-#else
-    (void)addr;
-    (void)nBytes;
-#endif
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00002C (Matching by size)
+ */
+void L2Enable(void)
+{
+	PPCMtl2cr((PPCMfl2cr() | L2CR_L2E) & ~L2CR_L2I);
 }
 
-void LCAllocOneTag(BOOL invalidate, void* tag) {
-#ifdef PORPOISE_USE_GECKO_MEMORY
-    if (g_geckoMemory && s_locked_cache_enabled) {
-        u32 addr32;
-        if (PtrToGCAddr(tag, &addr32) && GeckoIsLockedCacheAddress(addr32)) {
-            if (invalidate) {
-                u32 offset = addr32 - GECKO_LOCKED_CACHE_BASE;
-                memset(&g_geckoMemory->locked_cache[offset], 0, CACHE_LINE_SIZE);
-            }
-        }
-    }
-#else
-    (void)invalidate;
-    (void)tag;
-#endif
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000030 (Matching by size)
+ */
+void L2Disable(void)
+{
+	#ifndef LIBPORPOISE_PORT
+	__mwerks_sync();
+	#endif
+	PPCMtl2cr(PPCMfl2cr() & ~L2CR_L2E);
+	#ifndef LIBPORPOISE_PORT
+	__mwerks_sync();
+	#endif
 }
 
-void LCAllocTags(BOOL invalidate, void* startTag, u32 numBlocks) {
-#ifdef PORPOISE_USE_GECKO_MEMORY
-    if (g_geckoMemory && s_locked_cache_enabled) {
-        u32 addr32;
-        if (PtrToGCAddr(startTag, &addr32) && GeckoIsLockedCacheAddress(addr32)) {
-            if (invalidate) {
-                u32 offset = addr32 - GECKO_LOCKED_CACHE_BASE;
-                u32 size = numBlocks * CACHE_LINE_SIZE;
-                if (offset + size <= GECKO_LOCKED_CACHE_SIZE) {
-                    memset(&g_geckoMemory->locked_cache[offset], 0, size);
-                }
-            }
-        }
-    }
-#else
-    (void)invalidate;
-    (void)startTag;
-    (void)numBlocks;
-#endif
+/**
+ * @TODO: Documentation
+ */
+void L2GlobalInvalidate(void)
+{
+	L2Disable();
+
+	PPCMtl2cr(PPCMfl2cr() | L2CR_L2I);
+
+	while (PPCMfl2cr() & L2CR_L2IP)
+		;
+
+	PPCMtl2cr(PPCMfl2cr() & ~L2CR_L2I);
+
+	while (PPCMfl2cr() & L2CR_L2IP) {
+		DBPrintf(">>> L2 INVALIDATE : SHOULD NEVER HAPPEN\n");
+	}
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000040
+ */
+void L2SetDataOnly(int)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000040
+ */
+void L2SetWriteThrough(int)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ */
+void DMAErrorHandler(OSError error, OSContext* context, ...)
+{
+#pragma unused(error)
+	u32 hid2 = PPCMfhid2();
+
+	OSReport("Machine check received\n");
+	OSReport("HID2 = 0x%x   SRR1 = 0x%x\n", hid2, context->srr1);
+	if (!(hid2 & (HID2_DCHERR | HID2_DNCERR | HID2_DCMERR | HID2_DQOERR)) || !(context->srr1 & SRR1_DMA_BIT)) {
+		OSReport("Machine check was not DMA/locked cache related\n");
+		OSDumpContext(context);
+		PPCHalt();
+		// spins forever, so not reached
+	}
+
+	OSReport("DMAErrorHandler(): An error occurred while processing DMA.\n");
+	OSReport("The following errors have been detected and cleared :\n");
+
+	if (hid2 & HID2_DCHERR) {
+		OSReport("\t- Requested a locked cache tag that was already in the cache\n");
+	}
+
+	if (hid2 & HID2_DNCERR) {
+		OSReport("\t- DMA attempted to access normal cache\n");
+	}
+
+	if (hid2 & HID2_DCMERR) {
+		OSReport("\t- DMA missed in data cache\n");
+	}
+
+	if (hid2 & HID2_DQOERR) {
+		OSReport("\t- DMA queue overflowed\n");
+	}
+
+	// write hid2 back (to clear the error bits)
+	PPCMthid2(hid2);
+}
+
+/**
+ * @TODO: Documentation
+ */
+void __OSCacheInit(void)
+{
+	if (!(PPCMfhid0() & HID0_ICE)) {
+		ICEnable();
+		DBPrintf("L1 i-caches initialized\n");
+	}
+	if (!(PPCMfhid0() & HID0_DCE)) {
+		DCEnable();
+		DBPrintf("L1 d-caches initialized\n");
+	}
+
+	if (!(PPCMfl2cr() & L2CR_L2E)) {
+		L2Init();
+		L2Enable();
+		DBPrintf("L2 cache initialized\n");
+	}
+
+	OSSetErrorHandler(OS_ERROR_MACHINE_CHECK, DMAErrorHandler);
+	DBPrintf("Locked cache machine check handler installed\n");
 }

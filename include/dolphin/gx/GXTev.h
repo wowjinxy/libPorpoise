@@ -1,36 +1,40 @@
-#ifndef DOLPHIN_GXTEV_H
-#define DOLPHIN_GXTEV_H
+#ifndef _DOLPHIN_GXTEV_H
+#define _DOLPHIN_GXTEV_H
+
+#include <dolphin/types.h>
 
 #include <dolphin/gx/GXEnum.h>
-#include <dolphin/gx/GXStruct.h>
+#include <dolphin/gx/GXTypes.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+BEGIN_SCOPE_EXTERN_C
 
-void GXSetTevOp(GXTevStageID id, GXTevMode mode);
-void GXSetTevColorIn(GXTevStageID stage, GXTevColorArg a, GXTevColorArg b, GXTevColorArg c, GXTevColorArg d);
-void GXSetTevAlphaIn(GXTevStageID stage, GXTevAlphaArg a, GXTevAlphaArg b, GXTevAlphaArg c, GXTevAlphaArg d);
-void GXSetTevColorOp(GXTevStageID stage, GXTevOp op, GXTevBias bias, GXTevScale scale, GXBool clamp,
-                     GXTevRegID out_reg);
-void GXSetTevAlphaOp(GXTevStageID stage, GXTevOp op, GXTevBias bias, GXTevScale scale, GXBool clamp,
-                     GXTevRegID out_reg);
-void GXSetTevColor(GXTevRegID id, GXColor color);
-void GXSetTevColorS10(GXTevRegID id, GXColorS10 color);
-void GXSetTevClampMode(GXTevStageID stage, GXTevClampMode mode);
-void GXSetTevKColor(GXTevKColorID id, GXColor color);
-void GXSetTevKColorSel(GXTevStageID stage, GXTevKColorSel sel);
-void GXSetTevKAlphaSel(GXTevStageID stage, GXTevKAlphaSel sel);
-void GXSetTevSwapMode(GXTevStageID stage, GXTevSwapSel ras_sel, GXTevSwapSel tex_sel);
-void GXSetTevSwapModeTable(GXTevSwapSel table, GXTevColorChan red, GXTevColorChan green, GXTevColorChan blue,
-                           GXTevColorChan alpha);
-void GXSetAlphaCompare(GXCompare comp0, u8 ref0, GXAlphaOp op, GXCompare comp1, u8 ref1);
-void GXSetZTexture(GXZTexOp op, GXTexFmt fmt, u32 bias);
-void GXSetTevOrder(GXTevStageID stage, GXTexCoordID coord, GXTexMapID map, GXChannelID color);
-void GXSetNumTevStages(u8 nStages);
+////// TEXTURE ENVIRONMENT FUNCTIONS ///////
+extern void GXSetTevOp(GXTevStageID stage, GXTevMode mode);
+extern void GXSetTevColorIn(GXTevStageID stage, GXTevColorArg a, GXTevColorArg b, GXTevColorArg c, GXTevColorArg d);
+extern void GXSetTevAlphaIn(GXTevStageID stage, GXTevAlphaArg a, GXTevAlphaArg b, GXTevAlphaArg c, GXTevAlphaArg d);
+extern void GXSetTevColorOp(GXTevStageID stage, GXTevOp op, GXTevBias bias, GXTevScale scale, GXBool doClamp, GXTevRegID outReg);
+extern void GXSetTevAlphaOp(GXTevStageID stage, GXTevOp op, GXTevBias bias, GXTevScale scale, GXBool doClamp, GXTevRegID outReg);
 
-#ifdef __cplusplus
-}
-#endif
+extern void GXSetTevColor(GXTevRegID reg, GXColor color);
+extern void GXSetTevColorS10(GXTevRegID reg, GXColorS10 color);
+
+extern void GXSetTevKColor(GXTevKColorID id, GXColor color);
+extern void GXSetTevKColorSel(GXTevStageID stage, GXTevKColorSel sel);
+extern void GXSetTevKAlphaSel(GXTevStageID stage, GXTevKAlphaSel sel);
+
+extern void GXSetTevSwapMode(GXTevStageID stage, GXTevSwapSel rasSel, GXTevSwapSel texSel);
+extern void GXSetTevSwapModeTable(GXTevSwapSel table, GXTevColorChan red, GXTevColorChan green, GXTevColorChan blue, GXTevColorChan alpha);
+
+extern void GXSetAlphaCompare(GXCompare comp0, u8 ref0, GXAlphaOp op, GXCompare comp1, u8 ref1);
+extern void GXSetTevOrder(GXTevStageID stage, GXTexCoordID coord, GXTexMapID map, GXChannelID color);
+extern void GXSetZTexture(GXZTexOp op, GXTexFmt format, u32 bias);
+extern void GXSetNumTevStages(u8 count);
+
+// Unused/inlined in P2.
+extern void GXSetTevClampMode(GXTevStageID stage, GXTevClampMode mode);
+
+////////////////////////////////////////////
+
+END_SCOPE_EXTERN_C
 
 #endif

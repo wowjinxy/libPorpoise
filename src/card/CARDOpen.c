@@ -1,120 +1,207 @@
-/*---------------------------------------------------------------------------*
-  CARDOpen.c - File Opening Operations
- *---------------------------------------------------------------------------*/
-
 #include <dolphin/card.h>
-#include <dolphin/card_internal.h>
-#include <dolphin/os.h>
-#include <dolphin/porpoise/Guard.h>
-#include <sys/stat.h>
+
 #include <string.h>
 
-#ifdef _WIN32
-#define stat _stat
+/**
+ * @TODO: Documentation
+ */
+BOOL __CARDCompareFileName(CARDDir* entry, const char* fileName)
+{
+	char* entName;
+	char c1;
+	char c2;
+	int n;
+
+	entName = (char*)entry->fileName;
+	n       = CARD_FILENAME_MAX;
+	while (0 <= --n) {
+		if ((c1 = *entName++) != (c2 = *fileName++)) {
+			return FALSE;
+		} else if (c2 == '\0') {
+			return TRUE;
+		}
+	}
+
+	if (*fileName == '\0') {
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+/**
+ * @TODO: Documentation
+ */
+#if OS_BUILD_VERSION >= 20011112L
+s32 __CARDAccess(CARDControl* card, CARDDir* entry)
+#else
+s32 __CARDAccess(CARDDir* entry)
 #endif
+{
+	if (entry->gameName[0] == 0xFF) {
+		return CARD_RESULT_NOFILE;
+	}
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDOpen
-
-  Description:  Open existing file.
-
-  Arguments:    chan      Card channel
-                fileName  Filename
-                fileInfo  File info structure
-
-  Returns:      CARD_RESULT_READY on success
- *---------------------------------------------------------------------------*/
-s32 CARDOpen(s32 chan, const char* fileName, CARDFileInfo* fileInfo) {
-    PP_GUARD_RET(chan >= 0 && chan < CARD_MAX_CHAN, CARD_RESULT_FATAL_ERROR, "invalid channel");
-    PP_GUARD_PTR_RET(fileName, CARD_RESULT_FATAL_ERROR);
-    PP_GUARD_PTR_RET(fileInfo, CARD_RESULT_FATAL_ERROR);
-    
-    if (!__CARDCards[chan].mounted) {
-        return CARD_RESULT_NOCARD;
-    }
-    
-    char path[512];
-    __CARDBuildFilePath(chan, fileName, path, sizeof(path));
-    
-    struct stat st;
-    if (stat(path, &st) != 0) {
-        return CARD_RESULT_NOFILE;
-    }
-    
-    // Find free file slot
-    s32 fileNo = -1;
-    for (int i = 0; i < 127; i++) {
-        if (__CARDCards[chan].openFiles[i][0] == '\0') {
-            fileNo = i;
-            break;
-        }
-    }
-    
-    if (fileNo < 0) {
-        return CARD_RESULT_LIMIT;  // Too many open files
-    }
-    
-    // Store filename for later read/write operations
-    strncpy(__CARDCards[chan].openFiles[fileNo], fileName, CARD_FILENAME_MAX - 1);
-    __CARDCards[chan].openFiles[fileNo][CARD_FILENAME_MAX - 1] = '\0';
-    
-    fileInfo->chan = chan;
-    fileInfo->fileNo = fileNo;
-    fileInfo->offset = 0;
-    fileInfo->length = (s32)st.st_size;
-    fileInfo->iBlock = 0;
-    
-    OSReport("CARD: Opened '%s' (%d bytes) [fileNo=%d]\n", fileName, fileInfo->length, fileNo);
-    
-    return CARD_RESULT_READY;
+#if OS_BUILD_VERSION >= 20011112L
+	if (card->diskID == &__CARDDiskNone
+	    || (memcmp(entry->gameName, card->diskID->gameName, sizeof(entry->gameName)) == 0
+	        && memcmp(entry->company, card->diskID->company, sizeof(entry->company)) == 0)) {
+		return CARD_RESULT_READY;
+	}
+#else
+	if (__CARDDiskID == &__CARDDiskNone
+	    || (memcmp(entry->gameName, __CARDDiskID->gameName, 4) == 0 && memcmp(entry->company, __CARDDiskID->company, 2) == 0)) {
+		return CARD_RESULT_READY;
+	}
+#endif
+	return CARD_RESULT_NOPERM;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDFastOpen
-
-  Description:  Open file by number.
-
-  Arguments:    chan      Card channel
-                fileNo    File number
-                fileInfo  File info structure
-
-  Returns:      CARD_RESULT_READY on success
- *---------------------------------------------------------------------------*/
-s32 CARDFastOpen(s32 chan, s32 fileNo, CARDFileInfo* fileInfo) {
-    PP_GUARD_RET(chan >= 0 && chan < CARD_MAX_CHAN, CARD_RESULT_FATAL_ERROR, "invalid channel");
-    PP_GUARD_RET(fileNo >= 0 && fileNo < 127, CARD_RESULT_FATAL_ERROR, "invalid file number");
-    PP_GUARD_PTR_RET(fileInfo, CARD_RESULT_FATAL_ERROR);
-    
-    fileInfo->chan = chan;
-    fileInfo->fileNo = fileNo;
-    fileInfo->offset = 0;
-    fileInfo->length = 0;
-    
-    return CARD_RESULT_READY;
+/**
+ * @TODO: Documentation
+ */
+s32 __CARDIsPublic(CARDDir* ent)
+{
+	if (ent->gameName[0] == 0xFF) {
+		return CARD_RESULT_NOFILE;
+	}
+	if (ent->permission & CARD_ATTR_PUBLIC) {
+		return CARD_RESULT_READY;
+	}
+	return CARD_RESULT_NOPERM;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDClose
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000148 (Matching by size)
+ */
+s32 __CARDGetFileNo(CARDControl* card, const char* fileName, s32* outFileNo)
+{
+	CARDDirectoryBlock* dir;
+	CARDDir* entry;
+	s32 fileNo;
+	s32 result;
 
-  Description:  Close file.
+	if (!card->attached) {
+		return CARD_RESULT_NOCARD;
+	}
 
-  Arguments:    fileInfo  File info structure
+	dir = __CARDGetDirBlock(card);
+	for (fileNo = 0; fileNo < CARD_MAX_FILE; fileNo++) {
+		entry = &dir->entries[fileNo];
+#if OS_BUILD_VERSION >= 20011112L
+		result = __CARDAccess(card, entry);
+#else
+		result = __CARDAccess(entry);
+#endif
+		if (result < CARD_RESULT_READY) {
+			continue;
+		}
+		if (__CARDCompareFileName(entry, fileName)) {
+			*outFileNo = fileNo;
+			return CARD_RESULT_READY;
+		}
+	}
 
-  Returns:      CARD_RESULT_READY on success
- *---------------------------------------------------------------------------*/
-s32 CARDClose(CARDFileInfo* fileInfo) {
-    PP_GUARD_PTR_RET(fileInfo, CARD_RESULT_FATAL_ERROR);
-    
-    s32 chan = fileInfo->chan;
-    s32 fileNo = fileInfo->fileNo;
-    
-    if (chan >= 0 && chan < CARD_MAX_CHAN && fileNo >= 0 && fileNo < 127) {
-        // Clear filename entry
-        __CARDCards[chan].openFiles[fileNo][0] = '\0';
-    }
-    
-    fileInfo->offset = 0;
-    
-    return CARD_RESULT_READY;
+	return CARD_RESULT_NOFILE;
 }
 
+/**
+ * @TODO: Documentation
+ */
+s32 CARDFastOpen(s32 channel, s32 fileNo, CARDFileInfo* fileInfo)
+{
+	CARDControl* card;
+	s32 result;
+	CARDDirectoryBlock* dir;
+	CARDDir* ent;
+
+	if (fileNo < 0 || fileNo >= CARD_MAX_FILE) {
+		return CARD_RESULT_FATAL_ERROR;
+	}
+
+	fileInfo->chan = -1;
+	result         = __CARDGetControlBlock(channel, &card);
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
+
+	dir = __CARDGetDirBlock(card);
+	ent = &dir->entries[fileNo];
+#if OS_BUILD_VERSION >= 20011112L
+	result = __CARDAccess(card, ent);
+#else
+	result = __CARDAccess(ent);
+#endif
+	if (result == CARD_RESULT_NOPERM) {
+		result = __CARDIsPublic(ent);
+	}
+	if (result >= CARD_RESULT_READY) {
+		if (!CARDIsValidBlockNo(card, ent->startBlock)) {
+			result = CARD_RESULT_BROKEN;
+		} else {
+			fileInfo->chan   = channel;
+			fileInfo->fileNo = fileNo;
+			fileInfo->offset = 0;
+			fileInfo->iBlock = ent->startBlock;
+		}
+	}
+	return __CARDPutControlBlock(card, result);
+}
+
+/**
+ * @TODO: Documentation
+ */
+s32 CARDOpen(s32 chan, const char* fileName, CARDFileInfo* fileInfo)
+{
+	CARDControl* card;
+	CARDDirectoryBlock* dir;
+	CARDDir* ent;
+	s32 result;
+	s32 fileNo;
+
+	fileInfo->chan = -1;
+	result         = __CARDGetControlBlock(chan, &card);
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
+	result = __CARDGetFileNo(card, fileName, &fileNo);
+	if (0 <= result) {
+		dir = __CARDGetDirBlock(card);
+		ent = &dir->entries[fileNo];
+		if (!CARDIsValidBlockNo(card, ent->startBlock)) {
+			result = CARD_RESULT_BROKEN;
+		} else {
+			fileInfo->chan   = chan;
+			fileInfo->fileNo = fileNo;
+			fileInfo->offset = 0;
+			fileInfo->iBlock = ent->startBlock;
+		}
+	}
+	return __CARDPutControlBlock(card, result);
+}
+
+/**
+ * @TODO: Documentation
+ */
+s32 CARDClose(CARDFileInfo* fileInfo)
+{
+	CARDControl* card;
+	s32 result;
+
+	result = __CARDGetControlBlock(fileInfo->chan, &card);
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
+
+	fileInfo->chan = -1;
+	return __CARDPutControlBlock(card, CARD_RESULT_READY);
+}
+
+/**
+ * @TODO: Documentation
+ */
+BOOL __CARDIsOpened(CARDControl* card, s32 fileNo)
+{
+	return FALSE;
+}

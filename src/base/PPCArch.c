@@ -1,288 +1,395 @@
-/*---------------------------------------------------------------------------*
-  PPCArch.c - PowerPC Architecture Functions for libPorpoise
-  
-  PC-compatible stubs for PowerPC architecture register access functions.
-  On PC, these functions are stubs that return dummy values or are no-ops,
-  providing API compatibility for games that use these functions.
- *---------------------------------------------------------------------------*/
-
-#include <dolphin/types.h>
 #include <dolphin/base/PPCArch.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#if defined(_MSC_VER)
-#include <intrin.h>
+/**
+ * @TODO: Documentation
+ */
+u32 PPCMfmsr(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_MSR(result);
+	return result;
+}
+
+/**
+ * @TODO: Documentation
+ */
+void PPCMtmsr(register u32 value)
+{
+	PPC_MOVE_TO_MSR(value);
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00000C (Nonmatching)
+ */
+void PPCOrMsr(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00000C (Nonmatching)
+ */
+void PPCAndMsr(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00000C (Nonmatching)
+ */
+void PPCAndCMsr(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
+
+/**
+ * @TODO: Documentation
+ */
+u32 PPCMfhid0(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_HID0, result);
+	return result;
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+void PPCMthid0(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_HID0, value);
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfhid1(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_HID1, result);
+	return result;
+}
+
+/**
+ * @TODO: Documentation
+ */
+u32 PPCMfl2cr(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_L2CR, result);
+	return result;
+}
+
+/**
+ * @TODO: Documentation
+ */
+void PPCMtl2cr(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_L2CR, value);
+}
+
+/**
+ * @TODO: Documentation
+ */
+void PPCMtdec(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_DEC, value);
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfdec(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_DEC, result);
+	return result;
+}
+
+/**
+ * @TODO: Documentation
+ */
+void PPCSync(void)
+{
+#ifdef __MWERKS__
+	asm { sc }
 #endif
-#else
-#include <unistd.h>
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000034 (Matching by size)
+ */
+void PPCEieio(void)
+{
+#ifdef __MWERKS__
+	asm {
+		mfmsr   r5
+		rlwinm  r6, r5, 0, 17, 15 // ~MSR_EE
+		mtmsr   r6
+		mfspr   r3, SPR_HID0
+		ori     r4, r3, HID0_ABE
+		mtspr   SPR_HID0, r4
+		isync
+		eieio
+		isync
+
+		mtspr   SPR_HID0, r3
+		mtmsr   r5
+		isync
+	}
 #endif
-
-/* Static storage for emulated register values */
-static u32 s_msr = MSR_EE | MSR_ME | MSR_IR | MSR_DR;
-static u32 s_hid0 = HID0_ICE | HID0_DCE;
-static u32 s_hid1 = 0;
-static u32 s_hid2 = 0;
-static u32 s_hid4 = 0;
-static u32 s_l2cr = 0;
-static u32 s_dec = 0;
-static u32 s_mmcr0 = 0;
-static u32 s_mmcr1 = 0;
-static u32 s_pmc1 = 0;
-static u32 s_pmc2 = 0;
-static u32 s_pmc3 = 0;
-static u32 s_pmc4 = 0;
-static u32 s_sia = 0;
-static u32 s_wpar = 0;
-static u32 s_dmaU = 0;
-static u32 s_dmaL = 0;
-static u32 s_fpscr = 0;
-
-/*---------------------------------------------------------------------------*
-  MSR functions
- *---------------------------------------------------------------------------*/
-u32 PPCMfmsr(void) {
-    return s_msr;
 }
 
-void PPCMtmsr(u32 newMSR) {
-    s_msr = newMSR;
+/**
+ * @TODO: Documentation
+ */
+void PPCHalt(void)
+{
+#ifdef __MWERKS__
+	__mwerks_sync();
+#endif
+	for (;;) {
+#ifdef __MWERKS__
+		asm {
+			nop
+			li   r3, 0
+			nop
+		}
+#endif
+	}
 }
 
-u32 PPCOrMsr(u32 value) {
-    s_msr |= value;
-    return s_msr;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfmmcr0(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_MMCR0, result);
+	return result;
 }
 
-u32 PPCAndMsr(u32 value) {
-    s_msr &= value;
-    return s_msr;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+void PPCMtmmcr0(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_MMCR0, value);
 }
 
-u32 PPCAndCMsr(u32 value) {
-    s_msr &= ~value;
-    return s_msr;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfmmcr1(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_MMCR1, result);
+	return result;
 }
 
-/*---------------------------------------------------------------------------*
-  HID0 functions
- *---------------------------------------------------------------------------*/
-u32 PPCMfhid0(void) {
-    return s_hid0;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+void PPCMtmmcr1(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_MMCR1, value);
 }
 
-void PPCMthid0(u32 newHID0) {
-    s_hid0 = newHID0;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfpmc1(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_PMC1, result);
+	return result;
 }
 
-/*---------------------------------------------------------------------------*
-  HID1 functions
- *---------------------------------------------------------------------------*/
-u32 PPCMfhid1(void) {
-    return s_hid1;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+void PPCMtpmc1(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_PMC1, value);
 }
 
-/*---------------------------------------------------------------------------*
-  HID2 functions (GEKKO)
- *---------------------------------------------------------------------------*/
-u32 PPCMfhid2(void) {
-    return s_hid2;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfpmc2(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_PMC2, result);
+	return result;
 }
 
-void PPCMthid2(u32 newhid2) {
-    s_hid2 = newhid2;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+void PPCMtpmc2(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_PMC2, value);
 }
 
-/*---------------------------------------------------------------------------*
-  WPAR functions (GEKKO)
- *---------------------------------------------------------------------------*/
-u32 PPCMfwpar(void) {
-    return s_wpar;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfpmc3(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_PMC3, result);
+	return result;
 }
 
-void PPCMtwpar(u32 newwpar) {
-    s_wpar = newwpar;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+void PPCMtpmc3(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_PMC3, value);
 }
 
-/*---------------------------------------------------------------------------*
-  DMA functions (GEKKO)
- *---------------------------------------------------------------------------*/
-u32 PPCMfdmaU(void) {
-    return s_dmaU;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfpmc4(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_PMC4, result);
+	return result;
 }
 
-u32 PPCMfdmaL(void) {
-    return s_dmaL;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+void PPCMtpmc4(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_PMC4, value);
 }
 
-void PPCMtdmaU(u32 newdmau) {
-    s_dmaU = newdmau;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfsia(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_SIA, result);
+	return result;
 }
 
-void PPCMtdmaL(u32 newdmal) {
-    s_dmaL = newdmal;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+void PPCMtsia(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_SIA, value);
 }
 
-/*---------------------------------------------------------------------------*
-  L2CR functions
- *---------------------------------------------------------------------------*/
-u32 PPCMfl2cr(void) {
-    return s_l2cr;
+/**
+ * @TODO: Documentation
+ */
+u32 PPCMfhid2(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_HID2, result);
+	return result;
 }
 
-void PPCMtl2cr(u32 newL2cr) {
-    s_l2cr = newL2cr;
+/**
+ * @TODO: Documentation
+ */
+void PPCMthid2(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_HID2, value);
 }
 
-/*---------------------------------------------------------------------------*
-  DEC functions
- *---------------------------------------------------------------------------*/
-void PPCMtdec(u32 newDec) {
-    s_dec = newDec;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00000C (Matching by size)
+ */
+u32 PPCMfwpar(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_WPAR, result);
+	return result;
 }
 
-u32 PPCMfdec(void) {
-    return s_dec;
+/**
+ * @TODO: Documentation
+ */
+void PPCMtwpar(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_WPAR, value);
 }
 
-/*---------------------------------------------------------------------------*
-  Sync functions
- *---------------------------------------------------------------------------*/
-void PPCSync(void) {
-    /* Approximate PPC "sync" with a full host memory fence. */
-    #if defined(_MSC_VER)
-    _ReadWriteBarrier();
-    MemoryBarrier();
-    #elif defined(__GNUC__) || defined(__clang__)
-    __sync_synchronize();
-    #else
-    /* Fallback: keep API behavior if no barrier primitive is available. */
-    #endif
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfdmaU(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_DMA_U, result);
+	return result;
 }
 
-void PPCEieio(void) {
-    /* On PC, I/O ordering is handled by the OS/CPU automatically */
-    /* This is a no-op for compatibility */
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfdmaL(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_DMA_L, result);
+	return result;
 }
 
-/*---------------------------------------------------------------------------*
-  Halt function
- *---------------------------------------------------------------------------*/
-void PPCHalt(void) {
-    /* On PC, halt the process */
-    #ifdef _WIN32
-    ExitProcess(0);
-    #else
-    _exit(0);
-    #endif
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+void PPCMtdmaU(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_DMA_U, value);
 }
 
-/*---------------------------------------------------------------------------*
-  Performance Monitor functions
- *---------------------------------------------------------------------------*/
-u32 PPCMfmmcr0(void) {
-    return s_mmcr0;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+void PPCMtdmaL(register u32 value)
+{
+	PPC_MOVE_TO_SPR(SPR_DMA_L, value);
 }
 
-void PPCMtmmcr0(u32 newMmcr0) {
-    s_mmcr0 = newMmcr0;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+u32 PPCMfpvr(void)
+{
+	register u32 result;
+	PPC_MOVE_FROM_SPR(SPR_PVR, result);
+	return result;
 }
-
-u32 PPCMfmmcr1(void) {
-    return s_mmcr1;
-}
-
-void PPCMtmmcr1(u32 newMmcr1) {
-    s_mmcr1 = newMmcr1;
-}
-
-u32 PPCMfpmc1(void) {
-    return s_pmc1;
-}
-
-void PPCMtpmc1(u32 newPmc1) {
-    s_pmc1 = newPmc1;
-}
-
-u32 PPCMfpmc2(void) {
-    return s_pmc2;
-}
-
-void PPCMtpmc2(u32 newPmc2) {
-    s_pmc2 = newPmc2;
-}
-
-u32 PPCMfpmc3(void) {
-    return s_pmc3;
-}
-
-void PPCMtpmc3(u32 newPmc3) {
-    s_pmc3 = newPmc3;
-}
-
-u32 PPCMfpmc4(void) {
-    return s_pmc4;
-}
-
-void PPCMtpmc4(u32 newPmc4) {
-    s_pmc4 = newPmc4;
-}
-
-u32 PPCMfsia(void) {
-    return s_sia;
-}
-
-void PPCMtsia(u32 newSia) {
-    s_sia = newSia;
-}
-
-/*---------------------------------------------------------------------------*
-  PVR function
- *---------------------------------------------------------------------------*/
-u32 PPCMfpvr(void) {
-    /* Return a fake PVR value indicating this is a PC port */
-    /* Original GC: 0x00083214, Wii: 0x000C0200 */
-    return 0x000C0200;  /* Return Wii PVR for compatibility */
-}
-
-/*---------------------------------------------------------------------------*
-  FPSCR functions
- *---------------------------------------------------------------------------*/
-u32 PPCMffpscr(void) {
-    return s_fpscr;
-}
-
-void PPCMtfpscr(u32 newFPSCR) {
-    s_fpscr = newFPSCR;
-}
-
-/*---------------------------------------------------------------------------*
-  Mode functions
- *---------------------------------------------------------------------------*/
-void PPCEnableSpeculation(void) {
-    s_hid0 &= ~HID0_SPD;
-}
-
-void PPCDisableSpeculation(void) {
-    s_hid0 |= HID0_SPD;
-}
-
-void PPCSetFpIEEEMode(void) {
-    s_fpscr &= ~FPSCR_NI;
-}
-
-void PPCSetFpNonIEEEMode(void) {
-    s_fpscr |= FPSCR_NI;
-}
-
-/*---------------------------------------------------------------------------*
-  Broadway HID4 functions
- *---------------------------------------------------------------------------*/
-u32 PPCMfhid4(void) {
-    return s_hid4;
-}
-
-void PPCMthid4(u32 newhid4) {
-    s_hid4 = newhid4;
-}
-

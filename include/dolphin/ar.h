@@ -1,237 +1,78 @@
-/**
- * @file ar.h
- * @brief ARAM (Auxiliary RAM / Audio RAM) API for libPorpoise
- * 
- * ARAM is 16MB of auxiliary memory on GameCube used primarily for audio.
- * On PC, we simulate ARAM using regular heap memory.
- */
-
-#ifndef DOLPHIN_AR_H
-#define DOLPHIN_AR_H
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#ifndef _DOLPHIN_AR_H
+#define _DOLPHIN_AR_H
 
 #include <dolphin/types.h>
 
-/*---------------------------------------------------------------------------*
-    Constants
- *---------------------------------------------------------------------------*/
+BEGIN_SCOPE_EXTERN_C
 
-// ARAM sizes (GameCube has 16MB internal ARAM)
-#define AR_INTERNAL_SIZE    0x1000000   // 16MB
-#define AR_EXPANSION_SIZE   0           // No expansion on retail units
+///////////////// AR TYPES /////////////////
+typedef struct ARQRequest ARQRequest;
 
-// DMA types
-#define AR_MRAM_TO_ARAM     0
-#define AR_ARAM_TO_MRAM     1
-
-// Reserved area (OS uses bottom 16KB)
-#define AR_OS_RESERVED      0x4000      // 16KB
-
-/*---------------------------------------------------------------------------*
-    Types
- *---------------------------------------------------------------------------*/
-
-/**
- * @brief ARAM DMA callback function type
- */
+// AR callback function type.
 typedef void (*ARCallback)(void);
 
-/**
- * @brief ARQ request structure (for queued DMA operations)
- */
-typedef struct ARQRequest {
-    struct ARQRequest* next;        ///< Next request in queue
-    u32   owner;                    ///< Owner ID
-    u32   type;                     ///< DMA type (MRAM_TO_ARAM or ARAM_TO_MRAM)
-    u32   priority;                 ///< Priority (0=high, 1=low)
-    u32   source;                   ///< Source address
-    u32   dest;                     ///< Destination address
-    u32   length;                   ///< Transfer length
-    void (*callback)(struct ARQRequest*);  ///< Completion callback
-} ARQRequest;
+// ARQ callback function type.
+typedef void (*ARQCallback)(u32 ptrToRequest);
 
-/*---------------------------------------------------------------------------*
-    Functions
- *---------------------------------------------------------------------------*/
+struct ARQRequest {
+	ARQRequest* next;     // _00
+	u32 owner;            // _04
+	u32 type;             // _08
+	u32 priority;         // _0C
+	u32 source;           // _10
+	u32 dest;             // _14
+	u32 length;           // _18
+	ARQCallback callback; // _1C
+};
 
-/**
- * @brief Initialize ARAM subsystem
- * 
- * Allocates simulated ARAM and sets up DMA system.
- * 
- * @param stackIndexAddr  Pointer to stack index for allocation tracking
- * @param numEntries      Number of allocation entries
- * @return Base address of user ARAM (after OS reserved area)
- */
-u32 ARInit(u32* stackIndexAddr, u32 numEntries);
+////////////////////////////////////////////
 
-/**
- * @brief Reset ARAM subsystem
- */
-void ARReset(void);
+/////////////// AR FUNCTIONS ///////////////
+// ARQ functions.
+void __ARQServiceQueueLo();
+void __ARQCallbackHack();
+void __ARQInterruptServiceRoutine();
+void ARQInit();
+void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u32 source, u32 dest, u32 length, ARQCallback callback);
 
-/**
- * @brief Get total ARAM size
- * 
- * @return ARAM size in bytes (16MB on GameCube)
- */
-u32 ARGetSize(void);
-
-/**
- * @brief Get internal ARAM size
- * 
- * @return Internal ARAM size in bytes
- */
-u32 ARGetInternalSize(void);
-
-/**
- * @brief Get base address of user ARAM
- * 
- * @return Base address (after OS reserved area)
- */
-u32 ARGetBaseAddress(void);
-
-/**
- * @brief Allocate ARAM space
- * 
- * @param length  Number of bytes to allocate
- * @return ARAM address, or 0 if allocation failed
- */
-u32 ARAlloc(u32 length);
-
-/**
- * @brief Free ARAM space
- * 
- * @param length  Pointer to receive size freed
- * @return ARAM address of freed block
- */
-u32 ARFree(u32* length);
-
-/**
- * @brief Check if ARAM is initialized
- * 
- * @return TRUE if ARInit() has been called
- */
-BOOL ARCheckInit(void);
-
-/**
- * @brief Clear ARAM contents
- * 
- * @param flag  Clear flag (non-zero to clear)
- */
-void ARClear(u32 flag);
-
-/**
- * @brief Start DMA transfer between ARAM and main RAM
- * 
- * @param type          Transfer type (AR_MRAM_TO_ARAM or AR_ARAM_TO_MRAM)
- * @param mainmemAddr   Main memory address (must be 32-byte aligned)
- * @param aramAddr      ARAM address (must be 32-byte aligned)
- * @param length        Transfer length (must be multiple of 32 bytes)
- */
-void ARStartDMA(u32 type, u32 mainmemAddr, u32 aramAddr, u32 length);
-
-/**
- * @brief Get DMA status
- * 
- * @return 0 if DMA idle, non-zero if busy
- */
-u32 ARGetDMAStatus(void);
-
-/**
- * @brief Register DMA completion callback
- * 
- * @param callback  Callback function
- * @return Previous callback
- */
+// AR functions.
 ARCallback ARRegisterDMACallback(ARCallback callback);
+void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length);
+u32 ARInit(u32* stack_index_addr, u32 num_entries);
+u32 ARGetBaseAddress();
 
-/**
- * @brief Clear ARAM interrupt
- */
-void __ARClearInterrupt(void);
+////////////////////////////////////////////
+u16 __ARGetInterruptStatus();
+//////////////// AR DEFINES ////////////////
+// AR defines.
+#define AR_STACK_INDEX_ENTRY_SIZE sizeof(u32)
 
-/**
- * @brief Get ARAM interrupt status
- */
-u32 __ARGetInterruptStatus(void);
+#define ARAM_DIR_MRAM_TO_ARAM 0x00
+#define ARAM_DIR_ARAM_TO_MRAM 0x01
 
-/*---------------------------------------------------------------------------*
-    ARQ - ARAM Queue (for queued DMA operations)
- *---------------------------------------------------------------------------*/
+#define AR_CLEAR_INTERNAL_ALL  0x00
+#define AR_CLEAR_INTERNAL_USER 0x01
+#define AR_CLEAR_EXPANSION     0x02
 
-/**
- * @brief Initialize ARQ (ARAM Queue) subsystem
- */
-void ARQInit(void);
+#define __AR_ARAM_OS_BASE_ADDR  0x0000 // OS area at bottom of ARAM
+#define __AR_ARAM_USR_BASE_ADDR 0x4000 // USR area at 16KB (0x4000)
 
-/**
- * @brief Reset ARQ subsystem
- */
-void ARQReset(void);
+// AR macros.
+#define ARStartDMARead(mmem, aram, len)  ARStartDMA(ARAM_DIR_ARAM_TO_MRAM, mmem, aram, len)
+#define ARStartDMAWrite(mmem, aram, len) ARStartDMA(ARAM_DIR_MRAM_TO_ARAM, mmem, aram, len)
 
-/**
- * @brief Post a DMA request to the queue
- * 
- * @param request   ARQ request structure
- * @param owner     Owner ID
- * @param type      DMA type
- * @param priority  Priority (0=high, 1=low)
- * @param source    Source address
- * @param dest      Destination address
- * @param length    Transfer length
- * @param callback  Completion callback
- */
-void ARQPostRequest(ARQRequest* request, u32 owner, u32 type, u32 priority,
-                    u32 source, u32 dest, u32 length,
-                    void (*callback)(ARQRequest*));
+// ARQ defines.
+#define ARQ_DMA_ALIGNMENT      32
+#define ARQ_CHUNK_SIZE_DEFAULT 4096
 
-/**
- * @brief Remove a request from the queue
- * 
- * @param request  Request to remove
- */
-void ARQRemoveRequest(ARQRequest* request);
+#define ARQ_TYPE_MRAM_TO_ARAM ARAM_DIR_MRAM_TO_ARAM
+#define ARQ_TYPE_ARAM_TO_MRAM ARAM_DIR_ARAM_TO_MRAM
 
-/**
- * @brief Remove all requests from specific owner
- * 
- * @param owner  Owner ID
- */
-void ARQRemoveOwnerRequest(u32 owner);
+#define ARQ_PRIORITY_LOW  0
+#define ARQ_PRIORITY_HIGH 1
 
-/**
- * @brief Flush all pending requests
- */
-void ARQFlushQueue(void);
+////////////////////////////////////////////
 
-/**
- * @brief Set chunk size for DMA transfers
- * 
- * @param size  Chunk size in bytes
- */
-void ARQSetChunkSize(u32 size);
+END_SCOPE_EXTERN_C
 
-/**
- * @brief Get current chunk size
- * 
- * @return Chunk size in bytes
- */
-u32 ARQGetChunkSize(void);
-
-/**
- * @brief Check if ARQ is initialized
- * 
- * @return TRUE if ARQInit() has been called
- */
-BOOL ARQCheckInit(void);
-
-#ifdef __cplusplus
-}
 #endif
-
-#endif // DOLPHIN_AR_H
-

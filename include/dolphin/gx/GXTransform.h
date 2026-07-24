@@ -1,36 +1,58 @@
-#ifndef DOLPHIN_GXTRANSFORM_H
-#define DOLPHIN_GXTRANSFORM_H
+#ifndef _DOLPHIN_GXTRANSFORM_H
+#define _DOLPHIN_GXTRANSFORM_H
+
+#include <dolphin/types.h>
 
 #include <dolphin/gx/GXEnum.h>
+#include <dolphin/gx/GXTypes.h>
+#include <dolphin/mtx.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+BEGIN_SCOPE_EXTERN_C
 
+/////////// TRANSFORM FUNCTIONS ////////////
+// Matrix and projection functions.
+extern void GXSetProjection(const Mtx44 mtx, GXProjectionType type);
+extern void GXSetProjectionv(const f32* ptr);
+extern void GXLoadPosMtxImm(const Mtx mtx, u32 id);
+extern void GXLoadNrmMtxImm(const Mtx mtx, u32 id);
+extern void GXSetCurrentMtx(u32 id);
+extern void GXLoadTexMtxImm(const Mtx mtx, u32 id, GXTexMtxType type);
+extern void __GXSetMatrixIndex(GXAttr index);
+
+// Viewport functions.
+extern void __GXSetViewport(); // confirm types
+extern void GXSetViewport(f32 left, f32 top, f32 width, f32 height, f32 nearZ, f32 farZ);
+
+// Scissor/clip functions.
+extern void GXSetScissor(u32 left, u32 top, u32 width, u32 height);
+extern void GXSetScissorBoxOffset(s32 x, s32 y);
+extern void GXGetScissor(u32* left, u32* top, u32* width, u32* height);
+extern void GXGetScissorBoxOffset(int xOffset, int yOffset);
+extern void GXSetClipMode(GXClipMode mode);
+
+// Unused/inlined in P2.
+extern void GXProject(f32 x, f32 y, f32 z, const Mtx viewMtx, f32* projMtx, f32* viewport, f32* screenX, f32* screenY, f32* screenZ);
+extern void GXGetProjectionv(f32* ptr);
+extern void GXLoadPosMtxIndx(u16 index, u32 id);
+extern void GXLoadNrmMtxImm3x3(const Mtx33, u32 id);
+extern void GXLoadNrmMtxIndx3x3(u16 index, u32 id);
+extern void GXLoadTexMtxIndx(u16 index, u32 id, GXTexMtxType type);
+extern void GXSetViewportJitter(f32 left, f32 top, f32 width, f32 height, f32 nearZ, f32 farZ, u32 field);
+extern void GXGetViewportv(f32* viewport);
+
+////////////////////////////////////////////
+
+////////////// USEFUL EXTRAS ///////////////
 #define GX_PROJECTION_SZ 7
 #define GX_VIEWPORT_SZ   6
 
-void GXSetProjection(f32 mtx[4][4], GXProjectionType type);
-void GXSetProjectionv(const f32* ptr);
-void GXLoadPosMtxImm(f32 mtx[3][4], u32 id);
-void GXLoadNrmMtxImm(f32 mtx[3][4], u32 id);
-void GXLoadNrmMtxImm3x3(f32 mtx[3][3], u32 id);
-void GXLoadTexMtxImm(f32 mtx[][4], u32 id, GXTexMtxType type);
-void GXLoadPosMtxIndx(u16 index, u32 id);
-void GXLoadNrmMtxIndx3x3(u16 index, u32 id);
-void GXLoadTexMtxIndx(u16 index, u32 id, GXTexMtxType type);
-void GXSetViewport(f32 left, f32 top, f32 wd, f32 ht, f32 nearz, f32 farz);
-void GXSetViewportv(const f32* vp);
-void GXGetViewportv(f32* vp);
-void GXSetCurrentMtx(u32 id);
-void GXSetViewportJitter(f32 left, f32 top, f32 wd, f32 ht, f32 nearz, f32 farz, u32 field);
-void GXSetScissorBoxOffset(s32 x_off, s32 y_off);
-void GXSetClipMode(GXClipMode mode);
-void GXGetProjectionv(f32* p);
-void GXProject(f32 x, f32 y, f32 z, f32 mtx[3][4], f32* pm, f32* vp, f32* sx, f32* sy, f32* sz);
-
-#ifdef __cplusplus
+static inline void GXSetViewportv(f32* port)
+{
+	GXSetViewport(port[0], port[1], port[2], port[3], port[4], port[5]);
 }
-#endif
+
+////////////////////////////////////////////
+
+END_SCOPE_EXTERN_C
 
 #endif

@@ -1,71 +1,81 @@
-#ifndef DOLPHIN_OS_H
-#define DOLPHIN_OS_H
+#ifndef _DOLPHIN_OS_H
+#define _DOLPHIN_OS_H
 
-#include "dolphin/types.h"
-#include "dolphin/os/OSTime.h"
-#include "dolphin/os/OSUtil.h"
-#include "dolphin/os/OSContext.h"
-#include "dolphin/os/OSThread.h"
-#include "dolphin/os/OSMutex.h"
-#include "dolphin/os/OSSemaphore.h"
-#include "dolphin/os/OSAlarm.h"
-#include "dolphin/os/OSMessage.h"
-#include "dolphin/os/OSFastCast.h"
-#include "dolphin/os/OSAlloc.h"
-#include "dolphin/os/OSStopwatch.h"
-#include "dolphin/os/OSCache.h"
-#include "dolphin/os/OSError.h"
-#include "dolphin/os/OSFont.h"
-#include "dolphin/os/OSInterrupt.h"
-#include "dolphin/os/OSMemory.h"
-#include "dolphin/os/OSReset.h"
-#include "dolphin/os/OSResetSW.h"
-#include "dolphin/os/OSRtc.h"
-#include "dolphin/os/OSAssert.h"
+#include <dolphin/types.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <dolphin/os/OSAlarm.h>
+#include <dolphin/os/OSAlloc.h>
+#include <dolphin/os/OSArena.h>
+#include <dolphin/os/OSBootInfo.h>
+#include <dolphin/os/OSCache.h>
+#include <dolphin/os/OSContext.h>
+#include <dolphin/os/OSError.h>
+#include <dolphin/os/OSException.h>
+#include <dolphin/os/OSExpansion.h>
+#include <dolphin/os/OSFastCast.h>
+#include <dolphin/os/OSFont.h>
+#include <dolphin/os/OSInterrupt.h>
+#include <dolphin/os/OSMemory.h>
+#include <dolphin/os/OSMessage.h>
+#include <dolphin/os/OSModule.h>
+#include <dolphin/os/OSMutex.h>
+#include <dolphin/os/OSReset.h>
+#include <dolphin/os/OSRtc.h>
+#include <dolphin/os/OSThread.h>
+#include <dolphin/os/OSTime.h>
+#include <dolphin/os/OSUtil.h>
+#include <dolphin/os/OSVersion.h>
 
-/* Main OS Initialization */
+BEGIN_SCOPE_EXTERN_C
+
+/////////////// OS FUNCTIONS //////////////////////////////////////////////////////////////////////
+
+// Initialisers.
+
+extern void __OSPSInit();
+extern void __OSFPRInit();
+extern void __OSCacheInit();
+extern void __OSContextInit();
+extern void __OSInterruptInit();
+extern void __OSThreadInit();
+extern void __OSInitSystemCall();
+extern void __OSModuleInit();
+extern void __OSInitAudioSystem();
+extern void __OSStopAudioSystem();
+extern void __OSInitMemoryProtection();
+
 void OSInit(void);
 
-/* Console/System Info */
-u32  OSGetConsoleType(void);
+// Other OS functions.
 
-/* Debug Output */
-void OSReport(const char* fmt, ...);
-void OSPanic(const char* file, int line, const char* fmt, ...);
-void OSFatal(u32 textColor, u32 bgColor, const char* msg);
+#define OS_CONSOLE_RETAIL4     0x00000004
+#define OS_CONSOLE_RETAIL3     0x00000003
+#define OS_CONSOLE_RETAIL2     0x00000002
+#define OS_CONSOLE_RETAIL1     0x00000001
+#define OS_CONSOLE_RETAIL      0x00000000
+#define OS_CONSOLE_DEVHW4      0x10000007
+#define OS_CONSOLE_DEVHW3      0x10000006
+#define OS_CONSOLE_DEVHW2      0x10000005
+#define OS_CONSOLE_DEVHW1      0x10000004
+#define OS_CONSOLE_MINNOW      0x10000003
+#define OS_CONSOLE_ARTHUR      0x10000002
+#define OS_CONSOLE_PC_EMULATOR 0x10000001
+#define OS_CONSOLE_EMULATOR    0x10000000
+#define OS_CONSOLE_DEVELOPMENT 0x10000000
+#define OS_CONSOLE_DEVKIT      0x10000000
+#define OS_CONSOLE_TDEVKIT     0x20000000
 
-/* Version Registration */
-void OSRegisterVersion(const char* id);
+u32 OSGetConsoleType();
 
-/* Arena Management */
-void* OSGetArenaHi(void);
-void* OSGetArenaLo(void);
-void  OSSetArenaHi(void* addr);
-void  OSSetArenaLo(void* addr);
-void* OSAllocFromArenaHi(u32 size, u32 align);
-void* OSAllocFromArenaLo(u32 size, u32 align);
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
-void* OSGetMEM1ArenaHi(void);
-void* OSGetMEM1ArenaLo(void);
-void  OSSetMEM1ArenaHi(void* addr);
-void  OSSetMEM1ArenaLo(void* addr);
+/////////////// Extern Things /////////////////////////////////////////////////////////////////////
 
-void* OSGetMEM2ArenaHi(void);
-void* OSGetMEM2ArenaLo(void);
-void  OSSetMEM2ArenaHi(void* addr);
-void  OSSetMEM2ArenaLo(void* addr);
+extern BOOL __OSInIPL;
+extern OSTime __OSStartTime;
 
-// Internal initialization functions
-u8   __OSGetDIConfig(void);     // Get DVD interface config
-void __OSPSInit(void);          // Processor state init
-void __OSCacheInit(void);       // Cache init
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#ifdef __cplusplus
-}
+END_SCOPE_EXTERN_C
+
 #endif
-
-#endif /* DOLPHIN_OS_H */

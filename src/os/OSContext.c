@@ -1,456 +1,600 @@
-/*---------------------------------------------------------------------------*
-  OSContext.c - CPU Context Save/Restore
-  
-  On GC/Wii (PowerPC):
-  - OSContext stores complete CPU register state (GPRs, FPRs, special regs)
-  - Used for exception handling, thread switching, setjmp/longjmp
-  - All implemented in assembly to directly access CPU registers
-  - FPU context is saved lazily (only when needed)
-  
-  On PC (x86/x64/ARM):
-  - Platform threads (Win32/pthread) handle their own contexts
-  - We don't implement low-level exception handling
-  - OS handles context switching automatically
-  - Most functions are stubs or no-ops
-  
-  What we DO implement:
-  - OSClearContext, OSInitContext - For API compatibility
-  - OSGetCurrentContext, OSSetCurrentContext - Track active context
-  - OSDumpContext - Debug output (useful!)
-  
-  What we DON'T need:
-  - OSSaveContext, OSLoadContext - Platform threads handle this
-  - FPU context switching - x86 handles FPU automatically
-  - Stack switching - Platform threads have their own stacks
- *---------------------------------------------------------------------------*/
-
+#include <dolphin/base/PPCArch.h>
+#include <dolphin/db.h>
 #include <dolphin/os.h>
-#include <string.h>
-#include <stdio.h>
+#include <stddef.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#if defined(_MSC_VER)
-#include <intrin.h>
-#endif
-#else
-#include <unistd.h>
-#endif
+/**
+ * @TODO: Documentation
+ */
+static ASM void __OSLoadFPUContext(register u32, register OSContext* fpuContext)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	lhz      r5, fpuContext->state;
+	clrlwi.  r5, r5, 31  // OS_CONTEXT_STATE_FPSAVED
+	beq      _return
 
-static OSContext* s_currentContext = NULL;
+	lfd      fp0, fpuContext->fpscr
+	mtfsf    0xFF, fp0
+	mfspr    r5, SPR_HID2
+	rlwinm.  r5, r5, 3, 31, 31  // HID2_PSE
+	beq      _regular_FPRs
 
-/*---------------------------------------------------------------------------*
-  Name:         OSGetStackPointer
+	// fpuContext->psf does not work for paired-singles instructions.
+	// Gives "illegal object reference in constant expression" error.
+	psq_l    fp0, OSContext.psf[0] (fpuContext), 0, 0
+	psq_l    fp1, OSContext.psf[1] (fpuContext), 0, 0
+	psq_l    fp2, OSContext.psf[2] (fpuContext), 0, 0
+	psq_l    fp3, OSContext.psf[3] (fpuContext), 0, 0
+	psq_l    fp4, OSContext.psf[4] (fpuContext), 0, 0
+	psq_l    fp5, OSContext.psf[5] (fpuContext), 0, 0
+	psq_l    fp6, OSContext.psf[6] (fpuContext), 0, 0
+	psq_l    fp7, OSContext.psf[7] (fpuContext), 0, 0
+	psq_l    fp8, OSContext.psf[8] (fpuContext), 0, 0
+	psq_l    fp9, OSContext.psf[9] (fpuContext), 0, 0
+	psq_l    fp10, OSContext.psf[10] (fpuContext), 0, 0
+	psq_l    fp11, OSContext.psf[11] (fpuContext), 0, 0
+	psq_l    fp12, OSContext.psf[12] (fpuContext), 0, 0
+	psq_l    fp13, OSContext.psf[13] (fpuContext), 0, 0
+	psq_l    fp14, OSContext.psf[14] (fpuContext), 0, 0
+	psq_l    fp15, OSContext.psf[15] (fpuContext), 0, 0
+	psq_l    fp16, OSContext.psf[16] (fpuContext), 0, 0
+	psq_l    fp17, OSContext.psf[17] (fpuContext), 0, 0
+	psq_l    fp18, OSContext.psf[18] (fpuContext), 0, 0
+	psq_l    fp19, OSContext.psf[19] (fpuContext), 0, 0
+	psq_l    fp20, OSContext.psf[20] (fpuContext), 0, 0
+	psq_l    fp21, OSContext.psf[21] (fpuContext), 0, 0
+	psq_l    fp22, OSContext.psf[22] (fpuContext), 0, 0
+	psq_l    fp23, OSContext.psf[23] (fpuContext), 0, 0
+	psq_l    fp24, OSContext.psf[24] (fpuContext), 0, 0
+	psq_l    fp25, OSContext.psf[25] (fpuContext), 0, 0
+	psq_l    fp26, OSContext.psf[26] (fpuContext), 0, 0
+	psq_l    fp27, OSContext.psf[27] (fpuContext), 0, 0
+	psq_l    fp28, OSContext.psf[28] (fpuContext), 0, 0
+	psq_l    fp29, OSContext.psf[29] (fpuContext), 0, 0
+	psq_l    fp30, OSContext.psf[30] (fpuContext), 0, 0
+	psq_l    fp31, OSContext.psf[31] (fpuContext), 0, 0
 
-  Description:  Returns the current stack pointer value.
-                
-                On PowerPC: Returns r1 register
-                On PC: Not practical to get from C code reliably
-                
-                Most games don't actually use this. It's mainly for debugging.
-
-  Returns:      Stack pointer (stub: returns 0 on PC)
- *---------------------------------------------------------------------------*/
-u32 OSGetStackPointer(void) {
-    /* Best-effort PC approximation.
-     * Not exact PPC r1 semantics, but suitable for diagnostics.
-     */
-#if defined(_MSC_VER)
-    return (u32)(uintptr_t)_AddressOfReturnAddress();
-#elif defined(__GNUC__) || defined(__clang__)
-    return (u32)(uintptr_t)__builtin_frame_address(0);
-#else
-    return 0;
-#endif
+_regular_FPRs:
+	lfd      fp0,  fpuContext->fpr[0]
+	lfd      fp1,  fpuContext->fpr[1]
+	lfd      fp2,  fpuContext->fpr[2]
+	lfd      fp3,  fpuContext->fpr[3]
+	lfd      fp4,  fpuContext->fpr[4]
+	lfd      fp5,  fpuContext->fpr[5]
+	lfd      fp6,  fpuContext->fpr[6]
+	lfd      fp7,  fpuContext->fpr[7]
+	lfd      fp8,  fpuContext->fpr[8]
+	lfd      fp9,  fpuContext->fpr[9]
+	lfd      fp10, fpuContext->fpr[10]
+	lfd      fp11, fpuContext->fpr[11]
+	lfd      fp12, fpuContext->fpr[12]
+	lfd      fp13, fpuContext->fpr[13]
+	lfd      fp14, fpuContext->fpr[14]
+	lfd      fp15, fpuContext->fpr[15]
+	lfd      fp16, fpuContext->fpr[16]
+	lfd      fp17, fpuContext->fpr[17]
+	lfd      fp18, fpuContext->fpr[18]
+	lfd      fp19, fpuContext->fpr[19]
+	lfd      fp20, fpuContext->fpr[20]
+	lfd      fp21, fpuContext->fpr[21]
+	lfd      fp22, fpuContext->fpr[22]
+	lfd      fp23, fpuContext->fpr[23]
+	lfd      fp24, fpuContext->fpr[24]
+	lfd      fp25, fpuContext->fpr[25]
+	lfd      fp26, fpuContext->fpr[26]
+	lfd      fp27, fpuContext->fpr[27]
+	lfd      fp28, fpuContext->fpr[28]
+	lfd      fp29, fpuContext->fpr[29]
+	lfd      fp30, fpuContext->fpr[30]
+	lfd      fp31, fpuContext->fpr[31]
+_return:
+	blr
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSSwitchStack
+/**
+ * @TODO: Documentation
+ */
+static ASM void __OSSaveFPUContext(register u32, register u32, register OSContext* fpuContext)
+{
+#ifdef __MWERKS__ // clang-format off
+  	nofralloc
 
-  Description:  Switches to a new stack pointer and returns the old one.
-                
-                On PowerPC: Swaps r1 register
-                On PC: Not safe to do from C code
-                
-                Games use this for coroutines or custom stack management.
-                On PC, use platform threads instead.
+	lhz      r3,   fpuContext->state
+	ori      r3,   r3, OS_CONTEXT_STATE_FPSAVED
+	sth      r3,   fpuContext->state
 
-  Arguments:    newsp - New stack pointer
+	stfd     fp0,  fpuContext->fpr[0]
+	stfd     fp1,  fpuContext->fpr[1]
+	stfd     fp2,  fpuContext->fpr[2]
+	stfd     fp3,  fpuContext->fpr[3]
+	stfd     fp4,  fpuContext->fpr[4]
+	stfd     fp5,  fpuContext->fpr[5]
+	stfd     fp6,  fpuContext->fpr[6]
+	stfd     fp7,  fpuContext->fpr[7]
+	stfd     fp8,  fpuContext->fpr[8]
+	stfd     fp9,  fpuContext->fpr[9]
+	stfd     fp10, fpuContext->fpr[10]
+	stfd     fp11, fpuContext->fpr[11]
+	stfd     fp12, fpuContext->fpr[12]
+	stfd     fp13, fpuContext->fpr[13]
+	stfd     fp14, fpuContext->fpr[14]
+	stfd     fp15, fpuContext->fpr[15]
+	stfd     fp16, fpuContext->fpr[16]
+	stfd     fp17, fpuContext->fpr[17]
+	stfd     fp18, fpuContext->fpr[18]
+	stfd     fp19, fpuContext->fpr[19]
+	stfd     fp20, fpuContext->fpr[20]
+	stfd     fp21, fpuContext->fpr[21]
+	stfd     fp22, fpuContext->fpr[22]
+	stfd     fp23, fpuContext->fpr[23]
+	stfd     fp24, fpuContext->fpr[24]
+	stfd     fp25, fpuContext->fpr[25]
+	stfd     fp26, fpuContext->fpr[26]
+	stfd     fp27, fpuContext->fpr[27]
+	stfd     fp28, fpuContext->fpr[28]
+	stfd     fp29, fpuContext->fpr[29]
+	stfd     fp30, fpuContext->fpr[30]
+	stfd     fp31, fpuContext->fpr[31]
 
-  Returns:      Old stack pointer (stub: returns 0 on PC)
- *---------------------------------------------------------------------------*/
-u32 OSSwitchStack(u32 newsp) {
-    /* Stack switching is dangerous and not portable in C.
-     * On PC, use proper threads instead of stack switching.
-     * Games that use this will need to be refactored to use OSCreateThread.
-     */
-    (void)newsp;
-    OSReport("WARNING: OSSwitchStack called - not supported on PC\n");
-    OSReport("  Consider using OSCreateThread instead\n");
-    return 0;
+	mffs     fp0
+	stfd     fp0,  fpuContext->fpscr
+
+	lfd      fp0,  fpuContext->fpr[0]
+
+	mfspr    r3, SPR_HID2
+	rlwinm.  r3, r3, 3, 31, 31
+	beq      _return
+
+	// fpuContext->psf does not work for paired-singles instructions.
+	// Gives "illegal object reference in constant expression" error.
+	psq_st   fp0, OSContext.psf[0] (fpuContext), 0, 0
+	psq_st   fp1, OSContext.psf[1] (fpuContext), 0, 0
+	psq_st   fp2, OSContext.psf[2] (fpuContext), 0, 0
+	psq_st   fp3, OSContext.psf[3] (fpuContext), 0, 0
+	psq_st   fp4, OSContext.psf[4] (fpuContext), 0, 0
+	psq_st   fp5, OSContext.psf[5] (fpuContext), 0, 0
+	psq_st   fp6, OSContext.psf[6] (fpuContext), 0, 0
+	psq_st   fp7, OSContext.psf[7] (fpuContext), 0, 0
+	psq_st   fp8, OSContext.psf[8] (fpuContext), 0, 0
+	psq_st   fp9, OSContext.psf[9] (fpuContext), 0, 0
+	psq_st   fp10, OSContext.psf[10] (fpuContext), 0, 0
+	psq_st   fp11, OSContext.psf[11] (fpuContext), 0, 0
+	psq_st   fp12, OSContext.psf[12] (fpuContext), 0, 0
+	psq_st   fp13, OSContext.psf[13] (fpuContext), 0, 0
+	psq_st   fp14, OSContext.psf[14] (fpuContext), 0, 0
+	psq_st   fp15, OSContext.psf[15] (fpuContext), 0, 0
+	psq_st   fp16, OSContext.psf[16] (fpuContext), 0, 0
+	psq_st   fp17, OSContext.psf[17] (fpuContext), 0, 0
+	psq_st   fp18, OSContext.psf[18] (fpuContext), 0, 0
+	psq_st   fp19, OSContext.psf[19] (fpuContext), 0, 0
+	psq_st   fp20, OSContext.psf[20] (fpuContext), 0, 0
+	psq_st   fp21, OSContext.psf[21] (fpuContext), 0, 0
+	psq_st   fp22, OSContext.psf[22] (fpuContext), 0, 0
+	psq_st   fp23, OSContext.psf[23] (fpuContext), 0, 0
+	psq_st   fp24, OSContext.psf[24] (fpuContext), 0, 0
+	psq_st   fp25, OSContext.psf[25] (fpuContext), 0, 0
+	psq_st   fp26, OSContext.psf[26] (fpuContext), 0, 0
+	psq_st   fp27, OSContext.psf[27] (fpuContext), 0, 0
+	psq_st   fp28, OSContext.psf[28] (fpuContext), 0, 0
+	psq_st   fp29, OSContext.psf[29] (fpuContext), 0, 0
+	psq_st   fp30, OSContext.psf[30] (fpuContext), 0, 0
+	psq_st   fp31, OSContext.psf[31] (fpuContext), 0, 0
+
+_return:
+	blr
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSSwitchFiber
-
-  Description:  Calls a function with a new stack, then restores old stack
-                when it returns. This is like a coroutine switch.
-                
-                On PowerPC: Assembly routine that:
-                1. Saves old SP
-                2. Switches to new SP
-                3. Calls function at 'pc'
-                4. Restores old SP when function returns
-                
-                On PC: Not safe in C. Use threads or callbacks instead.
-
-  Arguments:    pc    - Function to call
-                newsp - Stack for the function
-
-  Returns:      Return value from the function (stub: returns 0)
- *---------------------------------------------------------------------------*/
-int OSSwitchFiber(u32 pc, u32 newsp) {
-    /* Fiber switching requires assembly and is not portable.
-     * Games using this are typically doing advanced coroutine tricks.
-     * On PC, refactor to use callbacks or threads.
-     */
-    (void)pc;
-    (void)newsp;
-    OSReport("WARNING: OSSwitchFiber called - not supported on PC\n");
-    OSReport("  Consider using callback pattern instead\n");
-    return 0;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+ASM void OSLoadFPUContext(register OSContext* fpuContext) {
+#ifdef __MWERKS__ // clang-format off
+	// Just a guess based on the UNUSED size.
+	nofralloc
+	mr  r4, fpuContext
+	b   __OSLoadFPUContext
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSSwitchFiberEx
-
-  Description:  Like OSSwitchFiber but can pass up to 4 arguments to the
-                function.
-
-  Arguments:    arg0-arg3 - Arguments to pass to function
-                pc        - Function to call
-                newsp     - Stack for the function
-
-  Returns:      Return value from the function (stub: returns 0)
- *---------------------------------------------------------------------------*/
-int OSSwitchFiberEx(u32 arg0, u32 arg1, u32 arg2, u32 arg3, u32 pc, u32 newsp) {
-    (void)arg0;
-    (void)arg1;
-    (void)arg2;
-    (void)arg3;
-    (void)pc;
-    (void)newsp;
-    OSReport("WARNING: OSSwitchFiberEx called - not supported on PC\n");
-    return 0;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+ASM void OSSaveFPUContext(register OSContext* fpuContext) {
+#ifdef __MWERKS__ // clang-format off
+	// Just a guess based on the UNUSED size.
+	nofralloc
+	mr  r5, fpuContext
+	b   __OSSaveFPUContext
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSSetCurrentContext / OSGetCurrentContext
+/**
+ * @TODO: Documentation
+ */
+ASM void OSSetCurrentContext(register OSContext* context) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
 
-  Description:  Tracks which OSContext is currently active. Used by the
-                exception system and thread scheduler.
-                
-                On original hardware, this is stored in low memory and used
-                by interrupt handlers.
-                
-                On PC: We just track it in a global variable. Platform threads
-                don't actually use this, but we maintain it for API compatibility.
+	lis     r4, OS_BASE_CACHED @ha
 
-  Arguments:    context - Context to make current (Set function)
+	stw     context, __OSCurrentContext @l (r4)
 
-  Returns:      Current context (Get function)
- *---------------------------------------------------------------------------*/
-void OSSetCurrentContext(OSContext* context) {
-    s_currentContext = context;
+	clrlwi  r5, context, 2
+	stw     r5, OS_CURRENTCONTEXT_PADDR (r4)
+
+	lwz     r5, __OSFPUContext @l (r4)
+	cmpw    r5, context
+	bne     _disableFPU
+
+	lwz     r6, context->srr1
+	ori     r6, r6, MSR_FP
+	stw     r6, context->srr1
+	mfmsr   r6
+	ori     r6, r6, MSR_RI
+	mtmsr   r6
+	blr
+
+_disableFPU:
+	lwz     r6, context->srr1
+	rlwinm  r6, r6, 0, 19, 17  // ~MSR_FP
+	stw     r6, context->srr1
+	mfmsr   r6
+	rlwinm  r6, r6, 0, 19, 17  // ~MSR_FP
+	ori     r6, r6, MSR_RI
+	mtmsr   r6
+	isync
+	blr
+#endif // clang-format on
 }
 
-OSContext* OSGetCurrentContext(void) {
-    return s_currentContext;
+/**
+ * @TODO: Documentation
+ */
+OSContext* OSGetCurrentContext(void)
+{
+	return (OSContext*)__OSCurrentContext;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSSaveContext
-
-  Description:  Saves the current CPU register state to a context structure.
-                Analogous to setjmp().
-                
-                On PowerPC: Assembly that saves all registers (GPRs, special regs)
-                Returns 0 when called, returns 1 when restored via OSLoadContext
-                
-                On PC: Not implementable in portable C. Platform threads handle
-                context switching. Games using setjmp/longjmp pattern should
-                use actual setjmp/longjmp instead.
-
-  Arguments:    context - Where to save state
-
-  Returns:      0 when saving, 1 when restored (stub: always returns 0)
- *---------------------------------------------------------------------------*/
-u32 OSSaveContext(OSContext* context) {
-    /* This is PowerPC-specific assembly that saves r0-r31, LR, CR, etc.
-     * On PC:
-     * - Can't access CPU registers from C
-     * - Platform threads handle their own context
-     * - Games using this for setjmp/longjmp should use <setjmp.h> instead
-     * 
-     * We provide a stub that at least clears the context for safety.
-     */
-    if (context) {
-        memset(context, 0, sizeof(OSContext));
-    }
-    
-    OSReport("WARNING: OSSaveContext called - not fully supported on PC\n");
-    OSReport("  For setjmp/longjmp behavior, use standard <setjmp.h> instead\n");
-    return 0;
+/**
+ * @TODO: Documentation
+ */
+ASM u32 OSSaveContext(register OSContext* context) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	stmw   r13, context->gpr[13]
+	mfspr  r0, SPR_GQR1
+	stw    r0, context->gqr[1]
+	mfspr  r0, SPR_GQR2
+	stw    r0, context->gqr[2]
+	mfspr  r0, SPR_GQR3
+	stw    r0, context->gqr[3]
+	mfspr  r0, SPR_GQR4
+	stw    r0, context->gqr[4]
+	mfspr  r0, SPR_GQR5
+	stw    r0, context->gqr[5]
+	mfspr  r0, SPR_GQR6
+	stw    r0, context->gqr[6]
+	mfspr  r0, SPR_GQR7
+	stw    r0, context->gqr[7]
+	mfcr   r0
+	stw    r0, context->cr
+	mflr   r0
+	stw    r0, context->lr
+	stw    r0, context->srr0
+	mfmsr  r0
+	stw    r0, context->srr1
+	mfctr  r0
+	stw    r0, context->ctr
+	mfxer  r0
+	stw    r0, context->xer
+	stw    r1, context->gpr[1]
+	stw    r2, context->gpr[2]
+	li     r0, 0x1
+	stw    r0, context->gpr[3]
+	li     r3, 0
+	blr
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSLoadContext
+/**
+ * @TODO: Documentation
+ */
+ASM void OSLoadContext(register OSContext* context)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
 
-  Description:  Restores CPU state from a context. Analogous to longjmp().
-                
-                On PowerPC: Restores all registers and uses RFI (return from
-                interrupt) to jump to the saved PC.
-                
-                On PC: Not implementable. Use actual longjmp() instead.
+	lis      r4,     __RAS_OSDisableInterrupts_begin @ha
+	lwz      r6, context->srr0
+	addi     r5, r4, __RAS_OSDisableInterrupts_begin @l
+	cmplw    r6, r5
+	blt      _notInRAS
+	lis      r4,     __RAS_OSDisableInterrupts_end @ha
+	addi     r0, r4, __RAS_OSDisableInterrupts_end @l
+	cmplw    r6, r0
+	bgt      _notInRAS
+	stw      r5, context->srr0
 
-  Arguments:    context - Context to restore
+_notInRAS:
 
-  Returns:      Does not return (stub: just returns)
- *---------------------------------------------------------------------------*/
-void OSLoadContext(OSContext* context) {
-    /* This uses PowerPC RFI (Return From Interrupt) instruction to
-     * restore registers and jump to saved PC.
-     * 
-     * On PC: Not possible in C. Games using this should refactor to
-     * use standard longjmp() or callbacks.
-     */
-    (void)context;
-    OSReport("WARNING: OSLoadContext called - not supported on PC\n");
-    OSReport("  Consider using longjmp() or callback patterns\n");
+	lwz      r0, context->gpr[0]
+	lwz      r1, context->gpr[1]
+	lwz      r2, context->gpr[2]
+
+	lhz      r4, context->state
+	rlwinm.  r5, r4, 0, 30, 30
+	beq      notexc
+	rlwinm   r4, r4, 0, 31, 29
+	sth      r4, context->state
+	lmw      r5, context->gpr[5]
+	b        misc
+notexc:
+	lmw      r13, context->gpr[13]
+misc:
+
+	lwz      r4, context->gqr[1]
+	mtspr    SPR_GQR1, r4
+	lwz      r4, context->gqr[2]
+	mtspr    SPR_GQR2, r4
+	lwz      r4, context->gqr[3]
+	mtspr    SPR_GQR3, r4
+	lwz      r4, context->gqr[4]
+	mtspr    SPR_GQR4, r4
+	lwz      r4, context->gqr[5]
+	mtspr    SPR_GQR5, r4
+	lwz      r4, context->gqr[6]
+	mtspr    SPR_GQR6, r4
+	lwz      r4, context->gqr[7]
+	mtspr    SPR_GQR7, r4
+
+	lwz      r4, context->cr
+	mtcr     r4
+	lwz      r4, context->lr
+	mtlr     r4
+	lwz      r4, context->ctr
+	mtctr    r4
+	lwz      r4, context->xer
+	mtxer    r4
+
+	mfmsr    r4
+	rlwinm   r4, r4, 0, 17, 15  // ~MSR_EE
+	rlwinm   r4, r4, 0, 31, 29  // ~MSR_RI
+	mtmsr    r4
+
+	lwz      r4, context->srr0
+	mtsrr0   r4
+	lwz      r4, context->srr1
+	mtsrr1   r4
+
+	lwz      r4, context->gpr[4]
+	lwz      r3, context->gpr[3]
+
+	rfi
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSClearContext
-
-  Description:  Clears/initializes a context structure. Called before the
-                context is set as current, or when context is no longer used.
-                
-                On PC: Simple memset. We can implement this properly.
-
-  Arguments:    context - Context to clear
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSClearContext(OSContext* context) {
-    if (!context) return;
-    
-    /* Just zero out the structure */
-    memset(context, 0, sizeof(OSContext));
-    context->mode = 0;
-    context->state = 0;
+/**
+ * @TODO: Documentation
+ */
+ASM u32 OSGetStackPointer(void) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	mr   r3, r1
+	blr
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSInitContext
-
-  Description:  Initializes a context with a given program counter and stack
-                pointer. Used to set up a context for a new thread or function.
-                
-                On PowerPC: Sets PC (SRR0), SP (r1), and initializes MSR with
-                appropriate flags (interrupts enabled, address translation on).
-                
-                On PC: We can set the fields, but they won't actually be used
-                by our platform threads. Still useful for API compatibility.
-
-  Arguments:    context - Context to initialize
-                pc      - Program counter (function address)
-                sp      - Stack pointer (top of stack)
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSInitContext(OSContext* context, u32 pc, u32 sp) {
-    if (!context) return;
-    
-    /* Clear the context first */
-    memset(context, 0, sizeof(OSContext));
-    
-    /* Set program counter (SRR0) */
-    context->srr0 = pc;
-    
-    /* Set stack pointer (r1) */
-    context->gpr[1] = sp;
-    
-    /* Set up MSR with reasonable defaults:
-     * On PowerPC this would enable interrupts, address translation, etc.
-     * On PC these values don't actually matter, but we set them for
-     * compatibility if games read the context.
-     */
-    context->srr1 = 0x00009032; // MSR_EE | MSR_IR | MSR_DR | MSR_RI | MSR_ME
-    
-    /* Clear condition register, XER */
-    context->cr = 0;
-    context->xer = 0;
-    
-    /* Note: On original hardware, r2 (RTOC) and r13 (SDA) are set to
-     * current values from CPU. On PC we just leave them as 0.
-     */
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000010
+ */
+u32 OSSwitchStack(register u32 newsp)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSLoadFPUContext / OSSaveFPUContext
-
-  Description:  Loads/saves floating-point registers from/to context.
-                
-                On PowerPC: Assembly that loads/stores fp0-fp31, FPSCR, and
-                paired singles (Gekko-specific SIMD registers).
-                
-                On PC: x86 FPU/SSE is completely different architecture.
-                Platform threads handle their own FPU state.
-                These are no-ops.
-
-  Arguments:    context - Context with FPU state
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSLoadFPUContext(OSContext* context) {
-    /* PowerPC has 32 double-precision FPU registers (fp0-fp31).
-     * x86/x64 has different FPU/SSE architecture.
-     * Platform threads save/restore their own FPU state automatically.
-     * This is a no-op on PC.
-     */
-    (void)context;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000030
+ */
+int OSSwitchFiber(register u32 pc, register u32 newsp)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-void OSSaveFPUContext(OSContext* context) {
-    /* Same as OSLoadFPUContext - not needed on PC */
-    (void)context;
+/**
+ * @TODO: Documentation
+ */
+void OSClearContext(OSContext* context)
+{
+	context->mode  = 0;
+	context->state = 0;
+	if (context == __OSFPUContext) {
+		__OSFPUContext = NULL;
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSFillFPUContext
+/**
+ * @TODO: Documentation
+ */
+ASM void OSInitContext(register OSContext* context, register u32 pc, register u32 newsp)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
 
-  Description:  Saves current FPU register contents into a context.
-                Used by exception handlers to capture FPU state.
-                
-                On PC: No-op since we don't implement exception handlers.
+	stw  pc,  context->srr0
+	stw  newsp,  context->gpr[1]
+	li   r11, 0
+	ori  r11, r11, MSR_EE | MSR_IR | MSR_DR | MSR_RI | MSR_ME
+	stw  r11, context->srr1
+	li   r0,  0
+	stw  r0,  context->cr
+	stw  r0,  context->xer
 
-  Arguments:    context - Context to fill with FPU state
+	stw  r2,  context->gpr[2]
+	stw  r13, context->gpr[13]
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSFillFPUContext(OSContext* context) {
-    /* Used to capture current FPU state into a context.
-     * On PC, platform exception handlers do this automatically.
-     */
-    (void)context;
+	stw  r0,  context->gpr[3]
+	stw  r0,  context->gpr[4]
+	stw  r0,  context->gpr[5]
+	stw  r0,  context->gpr[6]
+	stw  r0,  context->gpr[7]
+	stw  r0,  context->gpr[8]
+	stw  r0,  context->gpr[9]
+	stw  r0,  context->gpr[10]
+	stw  r0,  context->gpr[11]
+	stw  r0,  context->gpr[12]
+
+	stw  r0,  context->gpr[14]
+	stw  r0,  context->gpr[15]
+	stw  r0,  context->gpr[16]
+	stw  r0,  context->gpr[17]
+	stw  r0,  context->gpr[18]
+	stw  r0,  context->gpr[19]
+	stw  r0,  context->gpr[20]
+	stw  r0,  context->gpr[21]
+	stw  r0,  context->gpr[22]
+	stw  r0,  context->gpr[23]
+	stw  r0,  context->gpr[24]
+	stw  r0,  context->gpr[25]
+	stw  r0,  context->gpr[26]
+	stw  r0,  context->gpr[27]
+	stw  r0,  context->gpr[28]
+	stw  r0,  context->gpr[29]
+	stw  r0,  context->gpr[30]
+	stw  r0,  context->gpr[31]
+
+	stw  r0,  context->gqr[0]
+	stw  r0,  context->gqr[1]
+	stw  r0,  context->gqr[2]
+	stw  r0,  context->gqr[3]
+	stw  r0,  context->gqr[4]
+	stw  r0,  context->gqr[5]
+	stw  r0,  context->gqr[6]
+	stw  r0,  context->gqr[7]
+
+	b       OSClearContext
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSDumpContext
+/**
+ * @TODO: Documentation
+ */
+void OSDumpContext(OSContext* context)
+{
+	u32 i;
+	u32* p;
 
-  Description:  Prints a context structure for debugging. Very useful for
-                debugging crashes and exceptions.
-                
-                This is one of the few context functions that's actually
-                useful on PC! We can implement it properly.
+	OSReport("------------------------- Context 0x%08x -------------------------\n", context);
 
-  Arguments:    context - Context to dump
+	for (i = 0; i < 16; ++i) {
+		OSReport("r%-2d  = 0x%08x (%14d)  r%-2d  = 0x%08x (%14d)\n", i, context->gpr[i], context->gpr[i], i + 16, context->gpr[i + 16],
+		         context->gpr[i + 16]);
+	}
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSDumpContext(OSContext* context) {
-    if (!context) {
-        OSReport("OSDumpContext: NULL context\n");
-        return;
-    }
-    
-    OSReport("\n");
-    OSReport("==================== Context Dump ====================\n");
-    OSReport("Context at: %p\n", context);
-    OSReport("\n");
-    
-    /* Program counter and stack pointer */
-    OSReport("PC (SRR0) = 0x%08X\n", context->srr0);
-    OSReport("SP (r1)   = 0x%08X\n", context->gpr[1]);
-    OSReport("LR        = 0x%08X\n", context->lr);
-    OSReport("MSR       = 0x%08X (SRR1)\n", context->srr1);
-    OSReport("\n");
-    
-    /* General purpose registers (in pairs for readability) */
-    OSReport("General Purpose Registers:\n");
-    OSReport("-----------------------------------------------------\n");
-    for (int i = 0; i < 16; i++) {
-        OSReport("r%-2d = 0x%08X (%11d)  r%-2d = 0x%08X (%11d)\n",
-                 i, context->gpr[i], (s32)context->gpr[i],
-                 i + 16, context->gpr[i + 16], (s32)context->gpr[i + 16]);
-    }
-    OSReport("\n");
-    
-    /* Special registers */
-    OSReport("Special Registers:\n");
-    OSReport("-----------------------------------------------------\n");
-    OSReport("CR  (Condition)    = 0x%08X\n", context->cr);
-    OSReport("CTR (Count)        = 0x%08X\n", context->ctr);
-    OSReport("XER (Fixed-Point)  = 0x%08X\n", context->xer);
-    OSReport("FPSCR (FP Status)  = 0x%08X\n", context->fpscr);
-    OSReport("\n");
-    
-    /* Context state */
-    OSReport("Context State:\n");
-    OSReport("-----------------------------------------------------\n");
-    OSReport("Mode  = 0x%04X ", context->mode);
-    if (context->mode & 0x01) OSReport("[FPU] ");
-    if (context->mode & 0x02) OSReport("[PSFP] ");
-    OSReport("\n");
-    
-    OSReport("State = 0x%04X ", context->state);
-    if (context->state & 0x01) OSReport("[FPSAVED] ");
-    if (context->state & 0x02) OSReport("[EXC] ");
-    OSReport("\n");
-    OSReport("\n");
-    
-    /* GQR registers (Gekko graphics quantization - usually all zero on PC) */
-    BOOL has_gqr = FALSE;
-    for (int i = 0; i < 8; i++) {
-        if (context->gqr[i] != 0) {
-            has_gqr = TRUE;
-            break;
-        }
-    }
-    
-    if (has_gqr) {
-        OSReport("Graphics Quantization Registers (GQR):\n");
-        OSReport("-----------------------------------------------------\n");
-        for (int i = 0; i < 4; i++) {
-            OSReport("GQR%d = 0x%08X  GQR%d = 0x%08X\n",
-                     i, context->gqr[i], i + 4, context->gqr[i + 4]);
-        }
-        OSReport("\n");
-    }
-    
-    /* Floating-point registers (if saved) */
-    if (context->state & 0x01) { // OS_CONTEXT_STATE_FPSAVED
-        OSReport("Floating-Point Registers:\n");
-        OSReport("-----------------------------------------------------\n");
-        for (int i = 0; i < 8; i++) {
-            OSReport("fp%-2d = %.6f  fp%-2d = %.6f  fp%-2d = %.6f  fp%-2d = %.6f\n",
-                     i*4, context->fpr[i*4],
-                     i*4+1, context->fpr[i*4+1],
-                     i*4+2, context->fpr[i*4+2],
-                     i*4+3, context->fpr[i*4+3]);
-        }
-        OSReport("\n");
-    }
-    
-    /* Stack crawl (if we have a valid stack pointer) */
-    if (context->gpr[1] != 0 && context->gpr[1] != 0xFFFFFFFF) {
-        OSReport("Stack Backtrace (simulated):\n");
-        OSReport("-----------------------------------------------------\n");
-        OSReport("SP: 0x%08X, LR: 0x%08X\n", context->gpr[1], context->lr);
-        OSReport("(Note: Full stack crawl not available on PC)\n");
-        OSReport("\n");
-    }
-    
-    OSReport("======================================================\n");
-    OSReport("\n");
+	OSReport("LR   = 0x%08x                   CR   = 0x%08x\n", context->lr, context->cr);
+	OSReport("SRR0 = 0x%08x                   SRR1 = 0x%08x\n", context->srr0, context->srr1);
+
+	OSReport("\nGQRs----------\n");
+	for (i = 0; i < 4; ++i) {
+		OSReport("gqr%d = 0x%08x \t gqr%d = 0x%08x\n", i, context->gqr[i], i + 4, context->gqr[i + 4]);
+	}
+
+	if (context->state & OS_CONTEXT_STATE_FPSAVED) {
+		OSContext* currentContext;
+		OSContext fpuContext;
+		BOOL enabled;
+
+		enabled        = OSDisableInterrupts();
+		currentContext = OSGetCurrentContext();
+		OSClearContext(&fpuContext);
+		OSSetCurrentContext(&fpuContext);
+
+		OSReport("\n\nFPRs----------\n");
+		for (i = 0; i < 32; i += 2) {
+			OSReport("fr%d \t= %d \t fr%d \t= %d\n", i, (u32)context->fpr[i], i + 1, (u32)context->fpr[i + 1]);
+		}
+		OSReport("\n\nPSFs----------\n");
+		for (i = 0; i < 32; i += 2) {
+			OSReport("ps%d \t= 0x%x \t ps%d \t= 0x%x\n", i, (u32)context->psf[i], i + 1, (u32)context->psf[i + 1]);
+		}
+
+		OSClearContext(&fpuContext);
+		OSSetCurrentContext(currentContext);
+		OSRestoreInterrupts(enabled);
+	}
+
+	OSReport("\nAddress:      Back Chain    LR Save\n");
+	for (i = 0, p = (u32*)context->gpr[1]; p && (u32)p != 0xffffffff && i++ < 16; p = (u32*)*p) {
+		OSReport("0x%08x:   0x%08x    0x%08x\n", p, p[0], p[1]);
+	}
+}
+
+/**
+ * @TODO: Documentation
+ */
+static ASM void OSSwitchFPUContext(register __OSException exception, register OSContext* context)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	mfmsr   r5
+	ori     r5, r5, MSR_FP
+	mtmsr   r5
+	isync
+	lwz     r5, context->srr1
+	ori     r5, r5, MSR_FP
+	mtsrr1  r5
+	lis     r3, __OSFPUContext @ha
+	lwz     r5, __OSFPUContext @l (r3)
+	stw     context, __OSFPUContext @l (r3)
+	cmpw    r5, r4
+	beq     _restoreAndExit
+	cmpwi   r5, 0x0
+	beq     _loadNewFPUContext
+	bl      __OSSaveFPUContext
+_loadNewFPUContext:
+	bl      __OSLoadFPUContext
+_restoreAndExit:
+	lwz     r3, context->cr
+	mtcr    r3
+	lwz     r3, context->lr
+	mtlr    r3
+	lwz     r3, context->srr0
+	mtsrr0  r3
+	lwz     r3, context->ctr
+	mtctr   r3
+	lwz     r3, context->xer
+	mtxer   r3
+	lhz     r3, context->state
+	rlwinm  r3, r3, 0, 31, 29
+	sth     r3, context->state
+	lwz     r5, context->gpr[5]
+	lwz     r3, context->gpr[3]
+	lwz     r4, context->gpr[4]
+	rfi
+#endif // clang-format on
+}
+
+/**
+ * @TODO: Documentation
+ */
+void __OSContextInit(void)
+{
+	__OSSetExceptionHandler(__OS_EXCEPTION_FLOATING_POINT, OSSwitchFPUContext);
+	__OSFPUContext = NULL;
+	DBPrintf("FPU-unavailable handler installed\n");
+}
+
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00012C
+ */
+void OSFillFPUContext(register OSContext* context)
+{
+	TRAP_UNIMPLEMENTED;
 }

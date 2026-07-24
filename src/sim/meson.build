@@ -1,6 +1,12 @@
 libsim_srcs = files(
     'glad.c',
-    'sim_main.c'
+    'sim_main.cpp',
+    'sim_globals.c',
+    'sim_gx_CommandProcessor.cpp',
+    'sim_gx_GlRenderer.cpp',
+    'sim_gx_Geometry.cpp',
+    'sim_gx_Shader.cpp',
+    'sim_gx_State.cpp'
 )
 
 libsim = library('sim',

@@ -1,6 +1,5 @@
 libdb_srcs = files(
-    'db.c',
-    'dbprintf.c'
+    'db.c'
 )
 
 libdb = library('db',

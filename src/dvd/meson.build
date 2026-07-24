@@ -1,9 +1,10 @@
 libdvd_srcs = files(
-    'DVD.c',
-    'DVDError.c',
-    'DVDFatal.c',
-    'DVDLow.c',
-    'DVDQueue.c'
+    'dvd.c',
+    'dvderror.c',
+    'dvdfs.c',
+    'dvdlow.c',
+    'dvdqueue.c',
+	'fstload.c'
 )
 
 libdvd = library('dvd',

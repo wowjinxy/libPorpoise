@@ -1,634 +1,513 @@
-/*---------------------------------------------------------------------------*
-  OSInterrupt.c - Interrupt Management
-  
-  HARDWARE INTERRUPT SYSTEM (GC/Wii):
-  ====================================
-  
-  The original GameCube/Wii had a sophisticated hardware interrupt system:
-  
-  **Hardware Sources (28 interrupt types):**
-  - **MEM (Memory):** Memory interface errors, address errors
-  - **DSP:** Audio DSP completion, ARAM DMA
-  - **AI:** Audio interface streaming
-  - **EXI (External Interface):** Memory cards, network adapter, modems
-  - **PI (Processor Interface):** Graphics, Video, Serial, Disc, Debug
-    * CP (Command Processor) - GX graphics FIFO
-    * PE (Pixel Engine) - Graphics rendering completion
-    * VI (Video Interface) - Vertical retrace
-    * SI (Serial Interface) - Controller polling
-    * DI (Disc Interface) - DVD reads
-    * RSW/HSP - Reset switch, high-speed port
-    * ACR (Wii) - IPC for ARM coprocessor (Starlet/IOS)
-  
-  **Priority-Based Dispatch:**
-  - Hardware interrupts go through Flipper/Hollywood chips
-  - Gekko/Broadway CPU receives external interrupt exception
-  - __OSDispatchInterrupt() prioritizes and dispatches to handlers
-  - Uses hardware registers (PI_INTSR, PI_INTMSK, etc.)
-  
-  **MSR Register Control:**
-  - Interrupts enabled/disabled via MSR[EE] (External Enable bit)
-  - Assembly code: mfmsr/mtmsr instructions
-  - Atomic operations (OSDisableInterrupts = save MSR + clear EE bit)
-  
-  **Typical Game Usage:**
-  ```c
-  // Register handler for vertical retrace
-  __OSSetInterruptHandler(__OS_INTERRUPT_PI_VI, MyVIHandler);
-  __OSUnmaskInterrupts(OS_INTERRUPTMASK_PI_VI);
-  
-  // Handler gets called 60 times per second (NTSC)
-  void MyVIHandler(__OSInterrupt interrupt, OSContext* context) {
-      // Update frame counter, trigger render, etc.
-  }
-  ```
-  
-  PC PORT REALITY:
-  ================
-  
-  **Why We Can't Port Interrupts Directly:**
-  
-  1. **No Hardware** ❌
-     - No Flipper/Hollywood chips on PC
-     - No PI/VI/EXI/SI/DI hardware registers
-     - Can't read PI_INTSR or write PI_INTMSK
-  
-  2. **Different CPU** ❌
-     - x86/ARM don't have PowerPC MSR register
-     - Can't use mfmsr/mtmsr instructions
-     - OS controls interrupt enable/disable (privileged)
-  
-  3. **OS-Level Interrupts** ❌
-     - Windows/Linux handle hardware interrupts at kernel level
-     - User-mode apps can't intercept hardware interrupts
-     - Can't install interrupt handlers like on bare-metal GC/Wii
-  
-  4. **No Decrementer** ❌
-     - PowerPC has hardware decrementer register
-     - Generates interrupt when reaches zero
-     - Used for timing, preemption, alarms
-     - PC uses OS timer APIs instead
-  
-  **What We CAN Do:**
-  
-  1. **Track Handler Registration** ✅
-     - Store handlers in table (API compatibility)
-     - Games can register handlers
-     - Handlers just won't be called by hardware
-  
-  2. **Manual Invocation** ✅
-     - Games can manually call handlers:
-       ```c
-       __OSInterruptHandler handler = __OSGetInterruptHandler(__OS_INTERRUPT_PI_VI);
-       if (handler) handler(__OS_INTERRUPT_PI_VI, &context);
-       ```
-  
-  3. **Polling Replacement** ✅
-     - Instead of VI interrupt → poll vsync
-     - Instead of DI interrupt → blocking read
-     - Instead of EXI interrupt → blocking I/O
-  
-  MIGRATION STRATEGIES:
-  =====================
-  
-  **Strategy 1: Polling (Simple)**
-  ```c
-  // Old (Interrupt-driven):
-  __OSSetInterruptHandler(__OS_INTERRUPT_PI_VI, OnVBlank);
-  __OSUnmaskInterrupts(OS_INTERRUPTMASK_PI_VI);
-  
-  // New (Polling):
-  while (running) {
-      WaitForVSync();  // Platform-specific (SDL, GLFW, etc.)
-      OnVBlank();      // Call directly
-  }
-  ```
-  
-  **Strategy 2: Callbacks (Medium)**
-  ```c
-  // Register callbacks that game framework calls
-  void SetVBlankCallback(void (*callback)(void)) {
-      // Store callback, call from main loop
-  }
-  ```
-  
-  **Strategy 3: Threading (Advanced)**
-  ```c
-  // Use a background thread to simulate hardware timing
-  void VBlankThread(void* arg) {
-      while (running) {
-          SleepMilliseconds(16);  // ~60 Hz
-          
-          __OSInterruptHandler handler = __OSGetInterruptHandler(__OS_INTERRUPT_PI_VI);
-          if (handler) {
-              OSContext ctx;
-              handler(__OS_INTERRUPT_PI_VI, &ctx);
-          }
-      }
-  }
-  ```
-  
-  **Strategy 4: Event-Driven (Best)**
-  ```c
-  // Modern graphics APIs have event callbacks
-  // OpenGL: SwapBuffers with vsync
-  // Vulkan: vkQueuePresentKHR
-  // DirectX: IDXGISwapChain::Present with VSYNC_INTERVAL
-  ```
-  
-  IMPLEMENTATION SUMMARY:
-  =======================
-  
-  This file provides:
-  - ✅ Handler registration (full compatibility)
-  - ✅ Interrupt mask tracking (stubs, API compatible)
-  - ✅ Enable/Disable interrupt tracking (stubs)
-  - ❌ Actual hardware interrupt handling (impossible on PC)
-  - 📖 Complete documentation for migration
-  
-  Most games should:
-  1. Use manual callbacks from main loop (VI)
-  2. Use blocking I/O instead of DI interrupts
-  3. Remove decrementer usage (use OSAlarm or timers)
-  4. Poll controllers instead of SI interrupts
- *---------------------------------------------------------------------------*/
-
+#include <dolphin/hw_regs.h>
 #include <dolphin/os.h>
 #include <string.h>
-#include <stdint.h>
-
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <pthread.h>
+#ifdef LIBPORPOISE_PORT
+#include <stdlib.h>
 #endif
 
-#if defined(_MSC_VER)
-#define PORPOISE_THREAD_LOCAL __declspec(thread)
-#elif defined(__GNUC__) || defined(__clang__)
-#define PORPOISE_THREAD_LOCAL __thread
-#else
-#define PORPOISE_THREAD_LOCAL
-#endif
+static void ExternalInterruptHandler(__OSException exception, OSContext* context);
 
-/* Interrupt handler table */
-static __OSInterruptHandler s_interruptHandlers[__OS_INTERRUPT_MAX] = {NULL};
+static __OSInterruptHandler* InterruptHandlerTable;
 
-/* Interrupt masks (for API compatibility) */
-static OSInterruptMask s_globalMask = 0xFFFFFFFF;  /* All masked initially */
-static OSInterruptMask s_currentMask = 0xFFFFFFFF;
-static BOOL s_interruptsEnabled = TRUE;
-static PORPOISE_THREAD_LOCAL u32 s_tlsInterruptDisableDepth = 0;
-
-#ifdef _WIN32
-static CRITICAL_SECTION s_interruptLock;
-static INIT_ONCE s_interruptLockInitOnce = INIT_ONCE_STATIC_INIT;
-
-static BOOL CALLBACK InitInterruptLockOnce(PINIT_ONCE once, PVOID param, PVOID* context) {
-    (void)once;
-    (void)param;
-    (void)context;
-    InitializeCriticalSection(&s_interruptLock);
-    return TRUE;
-}
-
-static void EnsureInterruptLockInitialized(void) {
-    InitOnceExecuteOnce(&s_interruptLockInitOnce, InitInterruptLockOnce, NULL, NULL);
-}
-
-static void InterruptLockEnter(void) {
-    EnterCriticalSection(&s_interruptLock);
-}
-
-static void InterruptLockLeave(void) {
-    LeaveCriticalSection(&s_interruptLock);
-}
-#else
-static pthread_mutex_t s_interruptLock;
-static pthread_once_t s_interruptLockInitOnce = PTHREAD_ONCE_INIT;
-
-static void InitInterruptLockOnce(void) {
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    #if 0
-    //TODO: Not compiling
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    #endif
-    pthread_mutex_init(&s_interruptLock, &attr);
-    pthread_mutexattr_destroy(&attr);
-}
-
-static void EnsureInterruptLockInitialized(void) {
-    pthread_once(&s_interruptLockInitOnce, InitInterruptLockOnce);
-}
-
-static void InterruptLockEnter(void) {
-    pthread_mutex_lock(&s_interruptLock);
-}
-
-static void InterruptLockLeave(void) {
-    pthread_mutex_unlock(&s_interruptLock);
-}
-#endif
-
-/* Debug: Interrupt names for logging */
-#ifdef _DEBUG
-static const char* s_interruptNames[__OS_INTERRUPT_MAX] = {
-    "MEM_0",            /*  0 */
-    "MEM_1",            /*  1 */
-    "MEM_2",            /*  2 */
-    "MEM_3",            /*  3 */
-    "MEM_ADDRESS",      /*  4 */
-    "DSP_AI",           /*  5 */
-    "DSP_ARAM",         /*  6 */
-    "DSP_DSP",          /*  7 */
-    "AI_AI",            /*  8 */
-    "EXI_0_EXI",        /*  9 */
-    "EXI_0_TC",         /* 10 */
-    "EXI_0_EXT",        /* 11 */
-    "EXI_1_EXI",        /* 12 */
-    "EXI_1_TC",         /* 13 */
-    "EXI_1_EXT",        /* 14 */
-    "EXI_2_EXI",        /* 15 */
-    "EXI_2_TC",         /* 16 */
-    "PI_CP",            /* 17 - Command Processor (GX) */
-    "PI_PE_TOKEN",      /* 18 - Pixel Engine token */
-    "PI_PE_FINISH",     /* 19 - Pixel Engine finish */
-    "PI_SI",            /* 20 - Serial Interface (controllers) */
-    "PI_DI",            /* 21 - Disc Interface (DVD) */
-    "PI_RSW",           /* 22 - Reset switch */
-    "PI_ERROR",         /* 23 - Processor interface error */
-    "PI_VI",            /* 24 - Video Interface (vsync) */
-    "PI_DEBUG",         /* 25 - Debug interrupt */
-    "PI_HSP",           /* 26 - High-speed port */
-    "PI_ACR",           /* 27 - ARM coprocessor (Wii IOS) */
-    "UNKNOWN_28",
-    "UNKNOWN_29",
-    "UNKNOWN_30",
-    "UNKNOWN_31",
+static OSInterruptMask InterruptPrioTable[] = {
+	OS_INTERRUPTMASK_PI_ERROR,
+	OS_INTERRUPTMASK_PI_DEBUG,
+	OS_INTERRUPTMASK_MEM,
+	OS_INTERRUPTMASK_PI_RSW,
+	OS_INTERRUPTMASK_PI_VI,
+	OS_INTERRUPTMASK_PI_PE,
+	OS_INTERRUPTMASK_PI_HSP,
+	OS_INTERRUPTMASK_DSP_ARAM | OS_INTERRUPTMASK_DSP_DSP | OS_INTERRUPTMASK_AI | OS_INTERRUPTMASK_EXI | OS_INTERRUPTMASK_PI_SI
+	    | OS_INTERRUPTMASK_PI_DI,
+	OS_INTERRUPTMASK_DSP_AI,
+	OS_INTERRUPTMASK_PI_CP,
+	0xFFFFFFFF,
 };
+
+/**
+ * @TODO: Documentation
+ */
+ASM BOOL OSDisableInterrupts(void) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+entry __RAS_OSDisableInterrupts_begin
+	mfmsr   r3
+	rlwinm  r4, r3, 0, 17, 15  // ~MSR_EE
+	mtmsr   r4
+	rlwinm  r3, r3, 17, 31, 31  // MSR_EE
+entry __RAS_OSDisableInterrupts_end
+	blr
+#endif // clang-format on
+}
+
+/**
+ * @TODO: Documentation
+ */
+ASM BOOL OSEnableInterrupts(void) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+
+	mfmsr   r3
+	ori     r4, r3, MSR_EE
+	mtmsr   r4
+	rlwinm  r3, r3, 17, 31, 31 // MSR_EE
+	blr
+#endif // clang-format on
+}
+
+/**
+ * @TODO: Documentation
+ */
+ASM BOOL OSRestoreInterrupts(register BOOL enabled) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+
+	cmpwi   enabled, 0
+	mfmsr   r4
+	beq     _disable
+	ori     r5, r4, MSR_EE
+	b       _restore
+_disable:
+	rlwinm  r5, r4, 0, 17, 15 // ~MSR_EE
+_restore:
+	mtmsr   r5
+	rlwinm  r4, r4, 17, 31, 31 // MSR_EE
+	blr
+#endif // clang-format on
+}
+
+/**
+ * @TODO: Documentation
+ */
+__OSInterruptHandler __OSSetInterruptHandler(__OSInterrupt interrupt, __OSInterruptHandler handler)
+{
+	__OSInterruptHandler oldHandler;
+
+	oldHandler                       = InterruptHandlerTable[interrupt];
+	InterruptHandlerTable[interrupt] = handler;
+	return oldHandler;
+}
+
+/**
+ * @TODO: Documentation
+ */
+__OSInterruptHandler __OSGetInterruptHandler(__OSInterrupt interrupt)
+{
+	return InterruptHandlerTable[interrupt];
+}
+
+/**
+ * @TODO: Documentation
+ */
+void __OSInterruptInit(void)
+{
+	InterruptHandlerTable = OSPhysicalToCached(0x3040);
+	#ifdef LIBPORPOISE_PORT
+	InterruptHandlerTable = malloc(sizeof(void*) * __OS_INTERRUPT_MAX);
+	#endif
+	memset(InterruptHandlerTable, 0, __OS_INTERRUPT_MAX * sizeof(__OSInterruptHandler));
+
+	__OSPriorInterruptMask = 0;
+
+	__OSCurrentInterruptMask = 0;
+
+	__PIRegs[PI_INTRPT_MASK] = PI_INTRPT_EXI | PI_INTRPT_AI | PI_INTRPT_DSP | PI_INTRPT_MEM;
+
+	__OSMaskInterrupts(OS_INTERRUPTMASK_MEM | OS_INTERRUPTMASK_DSP | OS_INTERRUPTMASK_AI | OS_INTERRUPTMASK_EXI | OS_INTERRUPTMASK_PI);
+
+	__OSSetExceptionHandler(__OS_EXCEPTION_EXTERNAL_INTERRUPT, ExternalInterruptHandler);
+}
+
+/**
+ * @TODO: Documentation
+ */
+static u32 SetInterruptMask(OSInterruptMask mask, OSInterruptMask current)
+{
+	u32 reg;
+#ifndef LIBPORPOISE_PORT
+//TODO
+	switch (__mwerks_cntlzw(mask)) {
+	case __OS_INTERRUPT_MEM_0:
+	case __OS_INTERRUPT_MEM_1:
+	case __OS_INTERRUPT_MEM_2:
+	case __OS_INTERRUPT_MEM_3:
+#if OS_BUILD_VERSION >= 20011002L
+	case __OS_INTERRUPT_MEM_ADDRESS:
+#endif
+	{
+		reg = 0;
+		if (!(current & OS_INTERRUPTMASK_MEM_0)) {
+			reg |= 0x1;
+		}
+		if (!(current & OS_INTERRUPTMASK_MEM_1)) {
+			reg |= 0x2;
+		}
+		if (!(current & OS_INTERRUPTMASK_MEM_2)) {
+			reg |= 0x4;
+		}
+		if (!(current & OS_INTERRUPTMASK_MEM_3)) {
+			reg |= 0x8;
+		}
+		if (!(current & OS_INTERRUPTMASK_MEM_ADDRESS)) {
+			reg |= 0x10;
+		}
+		__MEMRegs[MEM_INTRPT_MASK] = (u16)reg;
+		mask &= ~OS_INTERRUPTMASK_MEM;
+		break;
+	}
+	case __OS_INTERRUPT_DSP_AI:
+	case __OS_INTERRUPT_DSP_ARAM:
+	case __OS_INTERRUPT_DSP_DSP:
+	{
+		reg = __DSPRegs[DSP_CONTROL_STATUS];
+		reg &= ~0x1F8;
+		if (!(current & OS_INTERRUPTMASK_DSP_AI)) {
+			reg |= 0x10;
+		}
+		if (!(current & OS_INTERRUPTMASK_DSP_ARAM)) {
+			reg |= 0x40;
+		}
+		if (!(current & OS_INTERRUPTMASK_DSP_DSP)) {
+			reg |= 0x100;
+		}
+		__DSPRegs[DSP_CONTROL_STATUS] = (u16)reg;
+		mask &= ~OS_INTERRUPTMASK_DSP;
+		break;
+	}
+	case __OS_INTERRUPT_AI_AI:
+	{
+		reg = __AIRegs[AI_CONTROL];
+		reg &= ~0x2C;
+		if (!(current & OS_INTERRUPTMASK_AI_AI)) {
+			reg |= 0x4;
+		}
+		__AIRegs[AI_CONTROL] = reg;
+		mask &= ~OS_INTERRUPTMASK_AI;
+		break;
+	}
+	case __OS_INTERRUPT_EXI_0_EXI:
+	case __OS_INTERRUPT_EXI_0_TC:
+	case __OS_INTERRUPT_EXI_0_EXT:
+	{
+		reg = __EXIRegs[EXI_CHAN_0_STAT];
+		reg &= ~0x2C0F;
+		if (!(current & OS_INTERRUPTMASK_EXI_0_EXI)) {
+			reg |= 0x1;
+		}
+		if (!(current & OS_INTERRUPTMASK_EXI_0_TC)) {
+			reg |= 0x4;
+		}
+		if (!(current & OS_INTERRUPTMASK_EXI_0_EXT)) {
+			reg |= 0x400;
+		}
+		__EXIRegs[EXI_CHAN_0_STAT] = reg;
+		mask &= ~OS_INTERRUPTMASK_EXI_0;
+		break;
+	}
+	case __OS_INTERRUPT_EXI_1_EXI:
+	case __OS_INTERRUPT_EXI_1_TC:
+	case __OS_INTERRUPT_EXI_1_EXT:
+	{
+		reg = __EXIRegs[EXI_CHAN_1_STAT];
+		reg &= ~0xC0F;
+
+		if (!(current & OS_INTERRUPTMASK_EXI_1_EXI)) {
+			reg |= 0x1;
+		}
+		if (!(current & OS_INTERRUPTMASK_EXI_1_TC)) {
+			reg |= 0x4;
+		}
+		if (!(current & OS_INTERRUPTMASK_EXI_1_EXT)) {
+			reg |= 0x400;
+		}
+		__EXIRegs[EXI_CHAN_1_STAT] = reg;
+		mask &= ~OS_INTERRUPTMASK_EXI_1;
+		break;
+	}
+	case __OS_INTERRUPT_EXI_2_EXI:
+	case __OS_INTERRUPT_EXI_2_TC:
+	{
+		reg = __EXIRegs[EXI_CHAN_2_STAT];
+		reg &= ~0xF;
+		if (!(current & OS_INTERRUPTMASK_EXI_2_EXI)) {
+			reg |= 0x1;
+		}
+		if (!(current & OS_INTERRUPTMASK_EXI_2_TC)) {
+			reg |= 0x4;
+		}
+
+		__EXIRegs[EXI_CHAN_2_STAT] = reg;
+		mask &= ~OS_INTERRUPTMASK_EXI_2;
+		break;
+	}
+	case __OS_INTERRUPT_PI_CP:
+	case __OS_INTERRUPT_PI_SI:
+	case __OS_INTERRUPT_PI_DI:
+	case __OS_INTERRUPT_PI_RSW:
+	case __OS_INTERRUPT_PI_ERROR:
+	case __OS_INTERRUPT_PI_VI:
+	case __OS_INTERRUPT_PI_DEBUG:
+	case __OS_INTERRUPT_PI_PE_TOKEN:
+	case __OS_INTERRUPT_PI_PE_FINISH:
+	case __OS_INTERRUPT_PI_HSP:
+	{
+		reg = PI_INTRPT_EXI | PI_INTRPT_AI | PI_INTRPT_DSP | PI_INTRPT_MEM;
+
+		if (!(current & OS_INTERRUPTMASK_PI_CP)) {
+			reg |= PI_INTRPT_CP;
+		}
+		if (!(current & OS_INTERRUPTMASK_PI_SI)) {
+			reg |= PI_INTRPT_SI;
+		}
+		if (!(current & OS_INTERRUPTMASK_PI_DI)) {
+			reg |= PI_INTRPT_DVD;
+		}
+		if (!(current & OS_INTERRUPTMASK_PI_RSW)) {
+			reg |= PI_INTRPT_RSW;
+		}
+		if (!(current & OS_INTERRUPTMASK_PI_ERROR)) {
+			reg |= PI_INTRPT_ERR;
+		}
+		if (!(current & OS_INTERRUPTMASK_PI_VI)) {
+			reg |= PI_INTRPT_VI;
+		}
+		if (!(current & OS_INTERRUPTMASK_PI_DEBUG)) {
+			reg |= PI_INTRPT_DEBUG;
+		}
+		if (!(current & OS_INTERRUPTMASK_PI_PE_TOKEN)) {
+			reg |= PI_INTRPT_PE_TOKEN;
+		}
+		if (!(current & OS_INTERRUPTMASK_PI_PE_FINISH)) {
+			reg |= PI_INTRPT_PE_FINISH;
+		}
+		if (!(current & OS_INTERRUPTMASK_PI_HSP)) {
+			reg |= PI_INTRPT_HSP;
+		}
+		__PIRegs[PI_INTRPT_MASK] = reg;
+		mask &= ~OS_INTERRUPTMASK_PI;
+		break;
+	}
+	default:
+	{
+		break;
+	}
+	}
 #endif
 
-/*---------------------------------------------------------------------------*
-  Name:         __OSSetInterruptHandler
+	return mask;
+}
 
-  Description:  Registers an interrupt handler for a specific interrupt type.
-                
-                On original hardware: Handler is called when hardware interrupt
-                occurs. Dispatcher checks PI_INTSR, routes to correct handler.
-                
-                On PC: Handler is registered but NOT automatically called.
-                Games must manually invoke handlers or use polling/callbacks.
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00000C
+ */
+u32 OSGetInterruptMask(void)
+{
+	TRAP_UNIMPLEMENTED;
+}
 
-  Arguments:    interrupt - Interrupt type (__OS_INTERRUPT_PI_VI, etc.)
-                handler   - Function to call
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000090
+ */
+u32 OSSetInterruptMask(u32)
+{
+	TRAP_UNIMPLEMENTED;
+}
 
-  Returns:      Previous handler (NULL if none)
- *---------------------------------------------------------------------------*/
-__OSInterruptHandler __OSSetInterruptHandler(__OSInterrupt interrupt, 
-                                             __OSInterruptHandler handler) {
-    if (interrupt < 0 || interrupt >= __OS_INTERRUPT_MAX) {
-        return NULL;
-    }
-    
-    __OSInterruptHandler old = s_interruptHandlers[interrupt];
-    s_interruptHandlers[interrupt] = handler;
-    
-#ifdef _DEBUG
-    if (handler) {
-        OSReport("[OSInterrupt] Registered handler for %s (interrupt %d)\n",
-                 s_interruptNames[interrupt], interrupt);
-        OSReport("              NOTE: Handler must be called manually on PC!\n");
-    }
+/**
+ * @TODO: Documentation
+ */
+OSInterruptMask __OSMaskInterrupts(OSInterruptMask global)
+{
+	BOOL enabled;
+	OSInterruptMask prev;
+	OSInterruptMask local;
+	OSInterruptMask mask;
+
+	enabled = OSDisableInterrupts();
+	prev    = __OSPriorInterruptMask;
+	local   = __OSCurrentInterruptMask;
+	mask    = ~(prev | local) & global;
+	global |= prev;
+	__OSPriorInterruptMask = global;
+	#ifndef LIBPORPOISE_PORT
+	while (mask) {
+		mask = SetInterruptMask(mask, global | local);
+	}
+	#endif
+	OSRestoreInterrupts(enabled);
+	return prev;
+}
+
+/**
+ * @TODO: Documentation
+ */
+OSInterruptMask __OSUnmaskInterrupts(OSInterruptMask global)
+{
+	BOOL enabled;
+	OSInterruptMask prev;
+	OSInterruptMask local;
+	OSInterruptMask mask;
+
+	enabled                = OSDisableInterrupts();
+	prev                   = __OSPriorInterruptMask;
+	local                  = __OSCurrentInterruptMask;
+	mask                   = (prev | local) & global;
+	global                 = prev & ~global;
+	__OSPriorInterruptMask = global;
+	#ifndef LIBPORPOISE_PORT
+	while (mask) {
+		mask = SetInterruptMask(mask, global | local);
+	}
+	#endif
+	OSRestoreInterrupts(enabled);
+	return prev;
+}
+
+#if OS_BUILD_VERSION >= 20011002L
+volatile OSTime __OSLastInterruptTime;
+volatile __OSInterrupt __OSLastInterrupt;
+volatile u32 __OSLastInterruptSrr0;
 #endif
-    
-    return old;
-}
 
-/*---------------------------------------------------------------------------*
-  Name:         __OSGetInterruptHandler
+/**
+ * @TODO: Documentation
+ */
+void __OSDispatchInterrupt(__OSException exception, OSContext* context)
+{
+	u32 intsr;
+	u32 reg;
+	OSInterruptMask cause;
+	OSInterruptMask unmasked;
+	OSInterruptMask* prio;
+	__OSInterrupt interrupt;
+	__OSInterruptHandler handler;
+	intsr = __PIRegs[PI_INTRPT_SRC];
+	intsr &= ~PI_INTRPT_RSWST;
 
-  Description:  Retrieves the registered handler for an interrupt type.
+	if (intsr == 0 || (intsr & __PIRegs[PI_INTRPT_MASK]) == 0) {
+		OSLoadContext(context);
+	}
 
-  Arguments:    interrupt - Interrupt type
+	cause = 0;
 
-  Returns:      Handler function (NULL if none registered)
- *---------------------------------------------------------------------------*/
-__OSInterruptHandler __OSGetInterruptHandler(__OSInterrupt interrupt) {
-    if (interrupt < 0 || interrupt >= __OS_INTERRUPT_MAX) {
-        return NULL;
-    }
-    
-    return s_interruptHandlers[interrupt];
-}
+	if (intsr & PI_INTRPT_MEM) {
+		reg = __MEMRegs[MEM_INTRPT_SRC];
+		if (reg & 0x1)
+			cause |= OS_INTERRUPTMASK_MEM_0;
+		if (reg & 0x2)
+			cause |= OS_INTERRUPTMASK_MEM_1;
+		if (reg & 0x4)
+			cause |= OS_INTERRUPTMASK_MEM_2;
+		if (reg & 0x8)
+			cause |= OS_INTERRUPTMASK_MEM_3;
+		if (reg & 0x10)
+			cause |= OS_INTERRUPTMASK_MEM_ADDRESS;
+	}
 
-/*---------------------------------------------------------------------------*
-  Name:         OSGetInterruptMask
+	if (intsr & PI_INTRPT_DSP) {
+		reg = __DSPRegs[DSP_CONTROL_STATUS];
+		if (reg & 0x8)
+			cause |= OS_INTERRUPTMASK_DSP_AI;
+		if (reg & 0x20)
+			cause |= OS_INTERRUPTMASK_DSP_ARAM;
+		if (reg & 0x80)
+			cause |= OS_INTERRUPTMASK_DSP_DSP;
+	}
 
-  Description:  Returns the current interrupt mask.
-                
-                On original hardware: Reads from PI_INTMSK register and
-                OS low memory mask. Bits set = interrupt is MASKED (disabled).
-                
-                On PC: Returns stored mask value (not connected to hardware).
+	if (intsr & PI_INTRPT_AI) {
+		reg = __AIRegs[AI_CONTROL];
+		if (reg & 0x8)
+			cause |= OS_INTERRUPTMASK_AI_AI;
+	}
 
-  Returns:      Current interrupt mask
- *---------------------------------------------------------------------------*/
-OSInterruptMask OSGetInterruptMask(void) {
-    /* Original hardware:
-     * - Reads PI_INTMSK hardware register
-     * - Reads OS low memory mask (OS_INTERRUPTMASK_ADDR)
-     * - Combines module and global masks
-     * 
-     * PC: Just return our tracked mask.
-     */
-    return s_currentMask;
-}
+	if (intsr & PI_INTRPT_EXI) {
+		reg = __EXIRegs[EXI_CHAN_0_STAT];
+		if (reg & 0x2)
+			cause |= OS_INTERRUPTMASK_EXI_0_EXI;
+		if (reg & 0x8)
+			cause |= OS_INTERRUPTMASK_EXI_0_TC;
+		if (reg & 0x800)
+			cause |= OS_INTERRUPTMASK_EXI_0_EXT;
 
-/*---------------------------------------------------------------------------*
-  Name:         OSSetInterruptMask
+		reg = __EXIRegs[EXI_CHAN_1_STAT];
+		if (reg & 0x2)
+			cause |= OS_INTERRUPTMASK_EXI_1_EXI;
+		if (reg & 0x8)
+			cause |= OS_INTERRUPTMASK_EXI_1_TC;
+		if (reg & 0x800)
+			cause |= OS_INTERRUPTMASK_EXI_1_EXT;
 
-  Description:  Sets the interrupt mask.
-                
-                On original hardware: Writes to PI_INTMSK register and
-                OS low memory. Also updates MEM/DSP/AI/EXI module masks.
-                
-                On PC: STUB - Stores mask but doesn't affect actual interrupts
-                (because there are no hardware interrupts on PC).
+		reg = __EXIRegs[EXI_CHAN_2_STAT];
+		if (reg & 0x2)
+			cause |= OS_INTERRUPTMASK_EXI_2_EXI;
+		if (reg & 0x8)
+			cause |= OS_INTERRUPTMASK_EXI_2_TC;
+	}
 
-  Arguments:    mask - New interrupt mask (bits set = masked)
+	if (intsr & PI_INTRPT_HSP)
+		cause |= OS_INTERRUPTMASK_PI_HSP;
+	if (intsr & PI_INTRPT_DEBUG)
+		cause |= OS_INTERRUPTMASK_PI_DEBUG;
+	if (intsr & PI_INTRPT_PE_FINISH)
+		cause |= OS_INTERRUPTMASK_PI_PE_FINISH;
+	if (intsr & PI_INTRPT_PE_TOKEN)
+		cause |= OS_INTERRUPTMASK_PI_PE_TOKEN;
+	if (intsr & PI_INTRPT_VI)
+		cause |= OS_INTERRUPTMASK_PI_VI;
+	if (intsr & PI_INTRPT_SI)
+		cause |= OS_INTERRUPTMASK_PI_SI;
+	if (intsr & PI_INTRPT_DVD)
+		cause |= OS_INTERRUPTMASK_PI_DI;
+	if (intsr & PI_INTRPT_RSW)
+		cause |= OS_INTERRUPTMASK_PI_RSW;
+	if (intsr & PI_INTRPT_CP)
+		cause |= OS_INTERRUPTMASK_PI_CP;
+	if (intsr & PI_INTRPT_ERR)
+		cause |= OS_INTERRUPTMASK_PI_ERROR;
 
-  Returns:      Previous interrupt mask
- *---------------------------------------------------------------------------*/
-OSInterruptMask OSSetInterruptMask(OSInterruptMask mask) {
-    /* Original hardware:
-     * - Writes to hardware registers (PI_INTMSK, etc.)
-     * - Updates module-level masks (MEM, DSP, AI, EXI, PI)
-     * - Affects which hardware interrupts can reach CPU
-     * 
-     * PC: No hardware, just track the mask value.
-     */
-    OSInterruptMask prev = s_currentMask;
-    s_currentMask = mask;
-    
-#ifdef _DEBUG
-    if (prev != mask) {
-        OSReport("[OSInterrupt] Mask changed: 0x%08X → 0x%08X\n", prev, mask);
-    }
+	unmasked = cause & ~(__OSPriorInterruptMask | __OSCurrentInterruptMask);
+	if (unmasked) {
+		for (prio = InterruptPrioTable;; ++prio) {
+			if (unmasked & *prio) {
+				#ifndef LIBPORPOISE_PORT
+				interrupt = (__OSInterrupt)__mwerks_cntlzw(unmasked & *prio);
+				#endif
+				break;
+			}
+		}
+
+		handler = __OSGetInterruptHandler(interrupt);
+		if (handler) {
+#if OS_BUILD_VERSION >= 20011112L
+			if (__OS_INTERRUPT_MEM_ADDRESS < interrupt) {
+				__OSLastInterrupt     = interrupt;
+				__OSLastInterruptTime = OSGetTime();
+				__OSLastInterruptSrr0 = context->srr0;
+			}
 #endif
-    
-    return prev;
+
+			OSDisableScheduler();
+			handler(interrupt, context);
+			OSEnableScheduler();
+			__OSReschedule();
+			OSLoadContext(context);
+		}
+	}
+
+	OSLoadContext(context);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __OSMaskInterrupts
-
-  Description:  Masks (disables) specified interrupts.
-                
-                On original hardware: Sets mask bits in hardware registers.
-                Masked interrupts won't trigger exception handler.
-                
-                On PC: STUB - Tracks mask state only.
-
-  Arguments:    mask - Interrupts to mask (bits set = mask those interrupts)
-
-  Returns:      Previous interrupt mask
- *---------------------------------------------------------------------------*/
-OSInterruptMask __OSMaskInterrupts(OSInterruptMask mask) {
-    /* Original hardware:
-     * - ORs mask bits into current mask (set bits = masked)
-     * - Updates PI_INTMSK hardware register
-     * - Masked interrupts don't generate exceptions
-     * 
-     * PC: Simulate by OR-ing into our mask.
-     */
-    OSInterruptMask prev = s_currentMask;
-    s_currentMask |= mask;
-    
-#ifdef _DEBUG
-    if (mask != 0) {
-        OSReport("[OSInterrupt] Masked interrupts: 0x%08X (new mask: 0x%08X)\n", 
-                 mask, s_currentMask);
-    }
-#endif
-    
-    return prev;
+/**
+ * @TODO: Documentation
+ */
+static ASM void ExternalInterruptHandler(register __OSException exception, register OSContext* context)
+{
+#pragma unused(exception)
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	OS_EXCEPTION_SAVE_GPRS(context)
+	b  __OSDispatchInterrupt
+#endif // clang-format on
 }
-
-/*---------------------------------------------------------------------------*
-  Name:         __OSUnmaskInterrupts
-
-  Description:  Unmasks (enables) specified interrupts.
-                
-                On original hardware: Clears mask bits in hardware registers.
-                Unmasked interrupts can now trigger exception handler.
-                
-                On PC: STUB - Tracks mask state only.
-
-  Arguments:    mask - Interrupts to unmask (bits set = unmask those interrupts)
-
-  Returns:      Previous interrupt mask
- *---------------------------------------------------------------------------*/
-OSInterruptMask __OSUnmaskInterrupts(OSInterruptMask mask) {
-    /* Original hardware:
-     * - Clears mask bits from current mask (cleared bits = unmasked)
-     * - Updates PI_INTMSK hardware register
-     * - Unmasked interrupts can generate exceptions
-     * 
-     * PC: Simulate by clearing bits from our mask.
-     */
-    OSInterruptMask prev = s_currentMask;
-    s_currentMask &= ~mask;
-    
-#ifdef _DEBUG
-    if (mask != 0) {
-        OSReport("[OSInterrupt] Unmasked interrupts: 0x%08X (new mask: 0x%08X)\n", 
-                 mask, s_currentMask);
-    }
-#endif
-    
-    return prev;
-}
-
-/*===========================================================================*
-  CPU INTERRUPT ENABLE/DISABLE (NOT IMPLEMENTABLE ON PC)
-  
-  These functions manipulate the PowerPC MSR[EE] bit to enable/disable
-  external interrupts at the CPU level. On x86/ARM, this requires kernel
-  mode and isn't accessible from user-mode applications.
-  
-  We track the state for API compatibility but can't actually disable
-  interrupts on PC.
- *===========================================================================*/
-
-/*---------------------------------------------------------------------------*
-  Name:         OSDisableInterrupts
-
-  Description:  Disables CPU external interrupts.
-                
-                On original hardware (PowerPC assembly):
-                ```
-                mfmsr   r3              # Read MSR
-                rlwinm  r4, r3, 0, 17, 15  # Clear EE bit
-                mtmsr   r4              # Write MSR (interrupts off)
-                rlwinm  r3, r3, 17, 31, 31 # Return old EE bit
-                blr
-                ```
-                
-                On PC: CAN'T disable interrupts (kernel-level operation).
-                We track state for API compatibility.
-
-  Returns:      TRUE if interrupts were enabled, FALSE otherwise
- *---------------------------------------------------------------------------*/
-BOOL OSDisableInterrupts(void) {
-    BOOL wasEnabled = (s_tlsInterruptDisableDepth == 0);
-    s_tlsInterruptDisableDepth++;
-    s_interruptsEnabled = FALSE;
-    return wasEnabled;
-}
-
-/*---------------------------------------------------------------------------*
-  Name:         OSEnableInterrupts
-
-  Description:  Enables CPU external interrupts.
-                
-                On original hardware (PowerPC assembly):
-                ```
-                mfmsr   r3        # Read MSR
-                ori     r4, r3, 0x8000  # Set EE bit
-                mtmsr   r4        # Write MSR (interrupts on)
-                rlwinm  r3, r3, 17, 31, 31  # Return old EE bit
-                blr
-                ```
-                
-                On PC: CAN'T control interrupt enable (kernel-level).
-
-  Returns:      TRUE if interrupts were enabled, FALSE otherwise
- *---------------------------------------------------------------------------*/
-BOOL OSEnableInterrupts(void) {
-    BOOL wasEnabled = (s_tlsInterruptDisableDepth == 0);
-    s_tlsInterruptDisableDepth = 0;
-    s_interruptsEnabled = TRUE;
-    return wasEnabled;
-}
-
-/*---------------------------------------------------------------------------*
-  Name:         OSRestoreInterrupts
-
-  Description:  Restores interrupt enable state.
-                
-                Pattern on original hardware:
-                ```c
-                BOOL enabled = OSDisableInterrupts();
-                // Critical section
-                OSRestoreInterrupts(enabled);
-                ```
-                
-                On PC: Use mutexes instead:
-                ```c
-                OSLockMutex(&mutex);
-                // Critical section
-                OSUnlockMutex(&mutex);
-                ```
-
-  Arguments:    level - Previous state from OSDisableInterrupts/OSEnableInterrupts
-
-  Returns:      Previous state (before this call)
- *---------------------------------------------------------------------------*/
-BOOL OSRestoreInterrupts(BOOL level) {
-    BOOL prev = (s_tlsInterruptDisableDepth == 0);
-
-    /* Unwind one disable level for this restore call. */
-    if (s_tlsInterruptDisableDepth > 0) {
-        s_tlsInterruptDisableDepth--;
-    }
-
-    if (level) {
-        s_tlsInterruptDisableDepth = 0;
-    } else if (s_tlsInterruptDisableDepth == 0) {
-        s_tlsInterruptDisableDepth = 1;
-    }
-
-    s_interruptsEnabled = (s_tlsInterruptDisableDepth == 0) ? TRUE : FALSE;
-    return prev;
-}
-
-/*---------------------------------------------------------------------------*
-  Internal helpers used by OSSleepThread/OSWakeupThread implementation.
- *---------------------------------------------------------------------------*/
-u32 __OSSuspendInterruptLockForSleep(void) {
-    u32 released = s_tlsInterruptDisableDepth;
-    s_tlsInterruptDisableDepth = 0;
-    s_interruptsEnabled = TRUE;
-    return released;
-}
-
-void __OSResumeInterruptLockAfterSleep(u32 depth) {
-    s_tlsInterruptDisableDepth += depth;
-    s_interruptsEnabled = (s_tlsInterruptDisableDepth == 0) ? TRUE : FALSE;
-}
-
-/*===========================================================================*
-  HELPER UTILITIES
- *===========================================================================*/
-
-/*---------------------------------------------------------------------------*
-  Name:         __OSInterruptInit (Internal)
-
-  Description:  Initializes interrupt system. Called by OSInit().
-                
-                On original hardware:
-                - Clears interrupt handler table in low memory
-                - Sets up PI_INTMSK register
-                - Masks all interrupts initially
-                - Installs ExternalInterruptHandler exception handler
-                
-                On PC: Just clears our handler table.
-
-  Arguments:    None
- *---------------------------------------------------------------------------*/
-void __OSInterruptInit(void) {
-    EnsureInterruptLockInitialized();
-
-    /* Clear handler table */
-    memset(s_interruptHandlers, 0, sizeof(s_interruptHandlers));
-    
-    /* Start with all interrupts masked */
-    s_currentMask = 0xFFFFFFFF;
-    s_globalMask = 0xFFFFFFFF;
-    s_interruptsEnabled = TRUE;
-    
-#ifdef _DEBUG
-    OSReport("[OSInterrupt] Initialized (PC mode - handlers must be called manually)\n");
-#endif
-}
-
-/*---------------------------------------------------------------------------*
-  Name:         __OSDispatchInterrupt (NOT IMPLEMENTED)
-
-  Description:  On original hardware, this is called by the external interrupt
-                exception handler. It reads PI_INTSR to determine which hardware
-                triggered the interrupt, then dispatches to the appropriate
-                registered handler.
-                
-                On PC: NOT IMPLEMENTED - No hardware to dispatch from.
-                
-                If your game needs interrupts on PC, you must:
-                1. Poll for events in main loop
-                2. Manually call handlers when events occur
-                3. Use background threads to simulate timing
- *---------------------------------------------------------------------------*/
-#if 0
-void __OSDispatchInterrupt(__OSException exception, OSContext* context) {
-    /* Original hardware:
-     * 1. Reads PI_INTSR (interrupt status register)
-     * 2. Checks interrupt priority table
-     * 3. Finds highest priority pending interrupt
-     * 4. Calls registered handler
-     * 5. Clears interrupt status bit
-     * 6. Checks for thread reschedule
-     * 
-     * PC: No hardware registers to read. Not implemented.
-     */
-}
-#endif

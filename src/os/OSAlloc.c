@@ -1,958 +1,320 @@
-/*---------------------------------------------------------------------------*
-  OSAlloc.c - Memory Allocation System
-  
-  Implements a custom heap allocator matching the original GC/Wii SDK.
-  
-  Key features:
-  - Multiple independent heaps within a managed arena
-  - First-fit allocation with 32-byte alignment
-  - Automatic coalescing of adjacent free blocks
-  - Doubly-linked lists for free and allocated blocks
-  - Support for non-contiguous heaps via OSAddToHeap
-  - Fixed allocations that carve out specific memory ranges
-  
-  Memory Structure:
-    Each allocation has a hidden header (Cell) containing:
-    - Doubly-linked list pointers (prev/next)
-    - Size of the block (including header)
-    - Debug info (heap descriptor, requested size)
-    
-    All blocks are aligned to 32 bytes.
- *---------------------------------------------------------------------------*/
+#include <dolphin/os/OSAlloc.h>
 
 #include <dolphin/os.h>
-#include <stdlib.h>
-#include <string.h>
+#include <stddef.h>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+typedef struct HeapCell {
+	struct HeapCell* prev;
+	struct HeapCell* next;
+	u32 size;
+} HeapCell;
 
-/* NtAllocateVirtualMemory: allocate in lower 4GB via ZeroBits (ntdll) */
-typedef long NTSTATUS;
-#define STATUS_SUCCESS ((NTSTATUS)0)
-static NTSTATUS (NTAPI *pNtAllocateVirtualMemory)(HANDLE, void**, unsigned long long, size_t*, unsigned long, unsigned long);
-#endif
+typedef struct Heap {
+	s32 size;
+	struct HeapCell* free;      // linked list of free cells
+	struct HeapCell* allocated; // linked list of allocated cells
+} Heap;
 
-/* Alignment and sizing macros */
-#define OFFSET(n, a)    ((uintptr_t)(n) & ((uintptr_t)(a) - (uintptr_t)1u))
-#define TRUNC(n, a)     ((uintptr_t)(n) & ~((uintptr_t)(a) - (uintptr_t)1u))
-#define ROUND(n, a)     ((((uintptr_t)(n) + ((uintptr_t)(a) - (uintptr_t)1u))) & ~((uintptr_t)(a) - (uintptr_t)1u))
-
-#define ALIGNMENT       32
-#define HEADERSIZE      ((u32)ROUND(sizeof(Cell), ALIGNMENT))
-#define MINOBJSIZE      (HEADERSIZE + ALIGNMENT)
-
-/* Range checking macros */
-#define InRange(targ, a, b) \
-    ((uintptr_t)(a) <= (uintptr_t)(targ) && (uintptr_t)(targ) < (uintptr_t)(b))
-
-#define RangeOverlap(aStart, aEnd, bStart, bEnd) \
-    (((uintptr_t)(bStart) <= (uintptr_t)(aStart) && (uintptr_t)(aStart) < (uintptr_t)(bEnd)) || \
-     ((uintptr_t)(bStart) < (uintptr_t)(aEnd) && (uintptr_t)(aEnd) <= (uintptr_t)(bEnd)))
-
-#define RangeSubset(aStart, aEnd, bStart, bEnd) \
-    ((uintptr_t)(bStart) <= (uintptr_t)(aStart) && (uintptr_t)(aEnd) <= (uintptr_t)(bEnd))
-
-/*---------------------------------------------------------------------------*
-  Cell - Header for each memory block (free or allocated)
-  
-  Located HEADERSIZE bytes before the returned pointer.
-  Contains linked list pointers and size information.
- *---------------------------------------------------------------------------*/
-typedef struct Cell Cell;
-
-struct Cell {
-    Cell* prev;         // Previous block in list
-    Cell* next;         // Next block in list
-    long  size;         // Total size including header
-};
-
-/*---------------------------------------------------------------------------*
-  HeapDesc - Descriptor for each heap
-  
-  Maintains separate lists for free and allocated blocks.
-  Size is -1 if heap is destroyed/inactive.
- *---------------------------------------------------------------------------*/
-typedef struct HeapDesc HeapDesc;
-
-struct HeapDesc {
-    long  size;         // Total heap size (-1 if inactive)
-    Cell* free;         // List of free blocks
-    Cell* allocated;    // List of allocated blocks
-};
-
-/* Global heap management */
+void* ArenaEnd;
+void* ArenaStart;
+int NumHeaps;
+struct Heap* HeapArray;
 volatile OSHeapHandle __OSCurrHeap = -1;
-static HeapDesc* s_heapArray = NULL;
-static int s_numHeaps = 0;
-static void* s_arenaStart = NULL;
-static void* s_arenaEnd = NULL;
 
-/*---------------------------------------------------------------------------*
-  Doubly-Linked List Helper Functions
- *---------------------------------------------------------------------------*/
+#define InRange(addr, start, end) ((u8*)(start) <= (u8*)(addr) && (u8*)(addr) < (u8*)(end))
+#define OFFSET(addr, align)       (((uintptr_t)(addr) & ((align) - 1)))
 
-/* Add cell to front of list */
-static Cell* DLAddFront(Cell* list, Cell* cell) {
-    cell->next = list;
-    cell->prev = NULL;
-    if (list) {
-        list->prev = cell;
-    }
-    return cell;
+#define ALIGNMENT  32
+#define MINOBJSIZE 64
+
+/**
+ * @brief inserts 'cell' before 'neighbor' and returns 'cell'
+ * @note UNUSED Size: 000020
+ */
+static inline void* DLAddFront(struct HeapCell* neighbor, struct HeapCell* cell)
+{
+	cell->next = neighbor;
+	cell->prev = NULL;
+	if (neighbor != NULL)
+		neighbor->prev = cell;
+	return cell;
 }
 
-/* Look up cell in list */
-static Cell* DLLookup(Cell* list, Cell* cell) {
-    for (; list; list = list->next) {
-        if (list == cell) {
-            return list;
-        }
-    }
-    return NULL;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000020
+ */
+void DLLookup(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/* Extract cell from list */
-static Cell* DLExtract(Cell* list, Cell* cell) {
-    if (cell->next) {
-        cell->next->prev = cell->prev;
-    }
-    
-    if (cell->prev == NULL) {
-        return cell->next; // Cell was head
-    } else {
-        cell->prev->next = cell->next;
-        return list;
-    }
+/**
+ * @brief Removes 'cell' from 'list' and returns 'list'
+ * @note UNUSED Size: 000034
+ */
+static inline HeapCell* DLExtract(struct HeapCell* list, struct HeapCell* cell)
+{
+	if (cell->next != NULL)
+		cell->next->prev = cell->prev;
+	if (cell->prev == NULL)
+		list = cell->next;
+	else
+		cell->prev->next = cell->next;
+	return list;
 }
 
-/* Insert cell into list in sorted order by address, with coalescing */
-static Cell* DLInsert(Cell* list, Cell* cell) {
-    Cell* prev;
-    Cell* next;
-    
-    // Find insertion point (sorted by address)
-    for (next = list, prev = NULL; next; prev = next, next = next->next) {
-        if (cell <= next) {
-            break;
-        }
-    }
-    
-    cell->next = next;
-    cell->prev = prev;
-    
-    // Try to coalesce with next block
-    if (next) {
-        next->prev = cell;
-        if ((char*)cell + cell->size == (char*)next) {
-            // Merge with next
-            cell->size += next->size;
-            cell->next = next = next->next;
-            if (next) {
-                next->prev = cell;
-            }
-        }
-    }
-    
-    // Try to coalesce with previous block
-    if (prev) {
-        prev->next = cell;
-        if ((char*)prev + prev->size == (char*)cell) {
-            // Merge with prev
-            prev->size += cell->size;
-            prev->next = next;
-            if (next) {
-                next->prev = prev;
-            }
-            return list;
-        }
-        return list;
-    } else {
-        return cell; // New head
-    }
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000AC
+ */
+static HeapCell* DLInsert(HeapCell* list, HeapCell* cell, void* unused /* needed to match OSFreeToHeap */)
+{
+	HeapCell* before = NULL;
+	HeapCell* after  = list;
+
+	while (after != NULL) {
+		if (cell <= after)
+			break;
+		before = after;
+		after  = after->next;
+	}
+	cell->next = after;
+	cell->prev = before;
+	if (after != NULL) {
+		after->prev = cell;
+		if ((u8*)cell + cell->size == (u8*)after) {
+			cell->size += after->size;
+			after      = after->next;
+			cell->next = after;
+			if (after != NULL)
+				after->prev = cell;
+		}
+	}
+	if (before != NULL) {
+		before->next = cell;
+		if ((u8*)before + before->size == (u8*)cell) {
+			before->size += cell->size;
+			before->next = after;
+			if (after != NULL)
+				after->prev = before;
+		}
+		return list;
+	}
+	return cell;
 }
 
-/* Check if range overlaps with any cell in list */
-static BOOL DLOverlap(Cell* list, void* start, void* end) {
-    for (Cell* cell = list; cell; cell = cell->next) {
-        if (RangeOverlap(cell, (char*)cell + cell->size, start, end)) {
-            return TRUE;
-        }
-    }
-    return FALSE;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000048
+ */
+void DLOverlap(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/* Calculate total size of all cells in list */
-static long DLSize(Cell* list) {
-    long size = 0;
-    for (Cell* cell = list; cell; cell = cell->next) {
-        size += cell->size;
-    }
-    return size;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000024
+ */
+void DLSize(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSInitAlloc
+/**
+ * @TODO: Documentation
+ */
+void* OSAllocFromHeap(OSHeapHandle heap, u32 size)
+{
+	struct Heap* hd = &HeapArray[heap];
+	s32 sizeAligned = OSRoundUp32B(ALIGNMENT + size);
+	struct HeapCell* cell;
+	struct HeapCell* oldTail;
+	u32 leftoverSpace;
 
-  Description:  Initializes the heap allocation system. Must be called before
-                creating any heaps.
-                
-                Reserves space at the start of the arena for the heap descriptor
-                array, then returns the adjusted arena start.
+	// find first cell with enough capacity
+	for (cell = hd->free; cell != NULL; cell = cell->next) {
+		if (sizeAligned <= (s32)cell->size)
+			break;
+	}
+	if (cell == NULL)
+		return NULL;
 
-  Arguments:    arenaStart - Start of memory arena
-                arenaEnd   - End of memory arena
-                maxHeaps   - Maximum number of heaps (usually 1-4)
+	leftoverSpace = cell->size - sizeAligned;
+	if (leftoverSpace < MINOBJSIZE) {
+		// remove this cell from the free list
+		hd->free = DLExtract(hd->free, cell);
+	} else {
+		// remove this cell from the free list and make a new cell out of the
+		// remaining space
+		struct HeapCell* newcell = (void*)((u8*)cell + sizeAligned);
+		cell->size               = sizeAligned;
+		newcell->size            = leftoverSpace;
+		newcell->prev            = cell->prev;
+		newcell->next            = cell->next;
+		if (newcell->next != NULL)
+			newcell->next->prev = newcell;
+		if (newcell->prev != NULL)
+			newcell->prev->next = newcell;
+		else
+			hd->free = newcell;
+	}
 
-  Returns:      Adjusted arena start (after heap array)
- *---------------------------------------------------------------------------*/
-void* OSInitAlloc(void* arenaStart, void* arenaEnd, int maxHeaps) {
-    u32 arraySize;
-    OSHeapHandle i;
-    
-    OSReport("OSInitAlloc: start=%p end=%p maxHeaps=%d\n", arenaStart, arenaEnd, maxHeaps);
-    
-    // WORKAROUND: If pointers are NULL, allocate a default arena
-    // On PC, we don't pre-allocate arenas, so we allocate on demand.
-    // Games like Pikmin use u32 for heap addresses; on x64 we must allocate
-    // in the lower 4GB so pointer truncation yields valid addresses.
-    if (arenaStart == NULL || arenaEnd == NULL) {
-        u32 defaultSize = 24 * 1024 * 1024;
-        int needLow4GB = 0;
-#if defined(_M_X64) || defined(__x86_64__)
-        needLow4GB = 1;
-#endif
-        arenaStart = NULL;
-#ifdef _WIN32
-        if (needLow4GB) {
-            /* Try VirtualAlloc at fixed low addresses - must succeed for u32 truncation.
-             * Games like Pikmin use u32 for heap addresses; arena must be in lower 4GB. */
-            static const uintptr_t lowAddrs[] = {
-                (uintptr_t)0x10000000u, (uintptr_t)0x11000000u, (uintptr_t)0x12000000u,
-                (uintptr_t)0x13000000u, (uintptr_t)0x14000000u, (uintptr_t)0x20000000u,
-                (uintptr_t)0x21000000u, (uintptr_t)0x30000000u, (uintptr_t)0x40000000u,
-                (uintptr_t)0x50000000u
-            };
-            int i, n = (int)(sizeof(lowAddrs) / sizeof(lowAddrs[0]));
-            for (i = 0; i < n; i++) {
-                void* p = VirtualAlloc((void*)(uintptr_t)lowAddrs[i], defaultSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-                if (p != NULL) {
-                    arenaStart = p;
-                    break;
-                }
-            }
-            if (arenaStart == NULL) {
-                /* Fallback: NtAllocateVirtualMemory with ZeroBits to request lower 4GB */
-                if (!pNtAllocateVirtualMemory) {
-                    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
-                    if (ntdll) {
-                        pNtAllocateVirtualMemory = (void*)GetProcAddress(ntdll, "NtAllocateVirtualMemory");
-                    }
-                }
-                if (pNtAllocateVirtualMemory) {
-                    void* baseAddr = NULL;
-                    size_t regionSize = defaultSize;
-                    NTSTATUS st = pNtAllocateVirtualMemory(GetCurrentProcess(), &baseAddr, 32,
-                        &regionSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-                    if (st == STATUS_SUCCESS && baseAddr != NULL && (size_t)baseAddr < 0x100000000ULL) {
-                        arenaStart = baseAddr;
-                    }
-                }
-            }
-        }
-#endif
-        if (arenaStart == NULL) {
-            arenaStart = malloc(defaultSize);
-        }
-        if (arenaStart == NULL) {
-            OSPanic(__FILE__, __LINE__, "OSInitAlloc: Failed to allocate default arena");
-        }
-        if (needLow4GB && (size_t)arenaStart > 0xFFFFFFFFu) {
-            OSPanic(__FILE__, __LINE__,
-                "OSInitAlloc: Arena at %p is outside lower 4GB; games using u32 pointers will crash. "
-                "Try building for 32-bit or ensure low-memory allocation succeeds.", arenaStart);
-        }
-        arenaEnd = (u8*)arenaStart + defaultSize;
-        OSSetArenaLo(arenaStart);
-        OSSetArenaHi(arenaEnd);
-        OSReport("OSInitAlloc: NULL pointers detected, allocated %u bytes at %p\n", defaultSize, arenaStart);
-    }
-    
-    if (maxHeaps <= 0) {
-        OSPanic(__FILE__, __LINE__, "OSInitAlloc: Invalid maxHeaps %d", maxHeaps);
-    }
-    
-    if (arenaStart >= arenaEnd) {
-        OSReport("OSInitAlloc: ERROR - start (%p) >= end (%p)\n", arenaStart, arenaEnd);
-        OSPanic(__FILE__, __LINE__, "OSInitAlloc: Invalid arena range");
-    }
-    
-    // Place heap descriptor array at start of arena
-    arraySize = sizeof(HeapDesc) * maxHeaps;
-    s_heapArray = (HeapDesc*)arenaStart;
-    s_numHeaps = maxHeaps;
-    
-    // Initialize all heap descriptors as inactive
-    for (i = 0; i < s_numHeaps; i++) {
-        HeapDesc* hd = &s_heapArray[i];
-        hd->size = -1;
-        hd->free = NULL;
-        hd->allocated = NULL;
-    }
-    
-    __OSCurrHeap = -1; // No current heap
-    
-    // Adjust arena start past the descriptor array
-    arenaStart = (void*)((char*)s_heapArray + arraySize);
-    arenaStart = (void*)ROUND(arenaStart, ALIGNMENT);
-    
-    s_arenaStart = arenaStart;
-    s_arenaEnd = (void*)TRUNC(arenaEnd, ALIGNMENT);
-    
-    if ((char*)s_arenaEnd - (char*)s_arenaStart < MINOBJSIZE) {
-        OSPanic(__FILE__, __LINE__, "OSInitAlloc: Arena too small");
-    }
-    
-    return arenaStart;
+	// add the cell to the beginning of the allocated list
+	hd->allocated = DLAddFront(hd->allocated, cell);
+
+	return (u8*)cell + ALIGNMENT;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSAllocLow4GB
-
-  Description:  Allocates a block in the lower 4GB. For games that use u32
-                for pointers, the arena must be in 0x00000000-0xFFFFFFFF.
-                Returns NULL on failure.
-
-  Arguments:    size - Bytes to allocate
-
-  Returns:      Pointer to allocated block, or NULL
- *---------------------------------------------------------------------------*/
-void* OSAllocLow4GB(size_t size) {
-#ifdef _WIN32
-#if defined(_M_X64) || defined(__x86_64__)
-    static const uintptr_t addrs[] = {
-        (uintptr_t)0x10000000u, (uintptr_t)0x20000000u,
-        (uintptr_t)0x30000000u, (uintptr_t)0x40000000u
-    };
-    int i, n = (int)(sizeof(addrs) / sizeof(addrs[0]));
-    for (i = 0; i < n; i++) {
-        void* p = VirtualAlloc((void*)(uintptr_t)addrs[i], size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-        if (p != NULL) return p;
-    }
-    return NULL;
-#else
-    return malloc(size);
-#endif
-#else
-    return malloc(size);
-#endif
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000284
+ */
+void OSAllocFixed(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSCreateHeap
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00007C
+ */
+void OSFreeToHeap(OSHeapHandle heap, void* ptr)
+{
+	HeapCell* cell = (void*)((u8*)ptr - ALIGNMENT);
+	Heap* hd       = &HeapArray[heap];
+	HeapCell* list = hd->allocated;
 
-  Description:  Creates a new heap from the specified memory range.
-                The heap can then be used for allocations via OSAllocFromHeap
-                or by setting it as current with OSSetCurrentHeap.
-
-  Arguments:    start - Start of heap memory
-                end   - End of heap memory
-
-  Returns:      Heap handle (0 to maxHeaps-1), or -1 on failure
- *---------------------------------------------------------------------------*/
-OSHeapHandle OSCreateHeap(void* start, void* end) {
-    OSHeapHandle heap;
-    HeapDesc* hd;
-    Cell* cell;
-    
-    if (!s_heapArray) {
-        OSPanic(__FILE__, __LINE__, "OSCreateHeap: Call OSInitAlloc first");
-    }
-    
-    if (start >= end) {
-        OSReport("OSCreateHeap: Invalid range\n");
-        return -1;
-    }
-    
-    // Align boundaries
-    start = (void*)ROUND(start, ALIGNMENT);
-    end = (void*)TRUNC(end, ALIGNMENT);
-    
-    if (start >= end) {
-        OSReport("OSCreateHeap: Range too small after alignment\n");
-        return -1;
-    }
-    
-    if (!RangeSubset(start, end, s_arenaStart, s_arenaEnd)) {
-        OSPanic(__FILE__, __LINE__, "OSCreateHeap: Range outside arena");
-    }
-    
-    if ((char*)end - (char*)start < MINOBJSIZE) {
-        OSReport("OSCreateHeap: Range too small\n");
-        return -1;
-    }
-    
-    // Find free heap descriptor
-    for (heap = 0; heap < s_numHeaps; heap++) {
-        hd = &s_heapArray[heap];
-        if (hd->size < 0) {
-            // Found inactive descriptor
-            hd->size = (char*)end - (char*)start;
-            
-            // Create initial free cell covering entire heap
-            cell = (Cell*)start;
-            cell->prev = NULL;
-            cell->next = NULL;
-            cell->size = hd->size;
-            
-            hd->free = cell;
-            hd->allocated = NULL;
-            
-            return heap;
-        }
-    }
-    
-    // No free descriptors
-    OSReport("OSCreateHeap: No free heap descriptors\n");
-    return -1;
+	// remove cell from the allocated list
+	// hd->allocated = DLExtract(hd->allocated, cell);
+	if (cell->next != NULL)
+		cell->next->prev = cell->prev;
+	if (cell->prev == NULL)
+		list = cell->next;
+	else
+		cell->prev->next = cell->next;
+	hd->allocated = list;
+	hd->free      = DLInsert(hd->free, cell, list);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSDestroyHeap
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000010
+ */
+OSHeapHandle OSSetCurrentHeap(OSHeapHandle heap)
+{
+	OSHeapHandle old = __OSCurrHeap;
 
-  Description:  Destroys a heap and frees its descriptor. The memory is not
-                actually freed, but the heap handle becomes invalid.
-                
-                Warning: Any pointers allocated from this heap become invalid!
-
-  Arguments:    heap - Heap handle to destroy
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSDestroyHeap(OSHeapHandle heap) {
-    if (!s_heapArray) {
-        OSPanic(__FILE__, __LINE__, "OSDestroyHeap: No heaps initialized");
-    }
-    
-    if (heap < 0 || heap >= s_numHeaps) {
-        OSPanic(__FILE__, __LINE__, "OSDestroyHeap: Invalid heap %d", heap);
-    }
-    
-    HeapDesc* hd = &s_heapArray[heap];
-    
-    if (hd->size < 0) {
-        OSPanic(__FILE__, __LINE__, "OSDestroyHeap: Heap already destroyed");
-    }
-    
-    // Check if all memory was freed
-    long freeSize = DLSize(hd->free);
-    if (hd->size != freeSize) {
-        OSReport("OSDestroyHeap(%d): Warning - %ld bytes still allocated\n",
-                 heap, hd->size - freeSize);
-    }
-    
-    hd->size = -1;
-    hd->free = NULL;
-    hd->allocated = NULL;
-    
-    if (__OSCurrHeap == heap) {
-        __OSCurrHeap = -1;
-    }
+	__OSCurrHeap = heap;
+	return old;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSAddToHeap
+/**
+ * @TODO: Documentation
+ */
+void* OSInitAlloc(void* arenaStart, void* arenaEnd, int maxHeaps)
+{
+	u32 totalSize = maxHeaps * sizeof(struct Heap);
+	int i;
 
-  Description:  Adds an arbitrary memory range to an existing heap.
-                Used to create non-contiguous heaps or to free memory
-                previously allocated with OSAllocFixed.
+	HeapArray = arenaStart;
+	NumHeaps  = maxHeaps;
 
-  Arguments:    heap  - Heap handle
-                start - Start of memory to add
-                end   - End of memory to add
+	for (i = 0; i < NumHeaps; i++) {
+		Heap* heap = &HeapArray[i];
 
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSAddToHeap(OSHeapHandle heap, void* start, void* end) {
-    if (!s_heapArray) {
-        OSPanic(__FILE__, __LINE__, "OSAddToHeap: No heaps initialized");
-    }
-    
-    if (heap < 0 || heap >= s_numHeaps) {
-        OSPanic(__FILE__, __LINE__, "OSAddToHeap: Invalid heap");
-    }
-    
-    HeapDesc* hd = &s_heapArray[heap];
-    
-    if (hd->size < 0) {
-        OSPanic(__FILE__, __LINE__, "OSAddToHeap: Heap is inactive");
-    }
-    
-    if (start >= end) {
-        OSPanic(__FILE__, __LINE__, "OSAddToHeap: Invalid range");
-    }
-    
-    // Align boundaries
-    start = (void*)ROUND(start, ALIGNMENT);
-    end = (void*)TRUNC(end, ALIGNMENT);
-    
-    if ((char*)end - (char*)start < MINOBJSIZE) {
-        OSPanic(__FILE__, __LINE__, "OSAddToHeap: Range too small");
-    }
-    
-    if (!RangeSubset(start, end, s_arenaStart, s_arenaEnd)) {
-        OSPanic(__FILE__, __LINE__, "OSAddToHeap: Range outside arena");
-    }
-    
-    // Create new cell
-    Cell* cell = (Cell*)start;
-    cell->size = (char*)end - (char*)start;
-    
-    // Add to free list (will coalesce if adjacent)
-    hd->size += cell->size;
-    hd->free = DLInsert(hd->free, cell);
+		heap->size = -1;
+		heap->free = heap->allocated = NULL;
+	}
+
+	__OSCurrHeap = -1;
+
+	arenaStart = (u8*)HeapArray + totalSize;
+	arenaStart = (void*)OSRoundUp32B(arenaStart);
+
+	ArenaStart = arenaStart;
+	ArenaEnd   = (void*)OSRoundDown32B(arenaEnd);
+
+	return arenaStart;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSSetCurrentHeap
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00006C
+ */
+OSHeapHandle OSCreateHeap(void* start, void* end)
+{
+	int i;
+	HeapCell* cell = (void*)OSRoundUp32B(start);
 
-  Description:  Sets the current heap. OSAlloc() and OSFree() macros use
-                this heap.
+	end = (void*)OSRoundDown32B(end);
+	for (i = 0; i < NumHeaps; i++) {
+		Heap* hd = &HeapArray[i];
 
-  Arguments:    heap - Heap handle to make current
-
-  Returns:      Previous current heap handle
- *---------------------------------------------------------------------------*/
-OSHeapHandle OSSetCurrentHeap(OSHeapHandle heap) {
-    if (!s_heapArray) {
-        OSPanic(__FILE__, __LINE__, "OSSetCurrentHeap: No heaps initialized");
-    }
-    
-    if (heap < 0 || heap >= s_numHeaps) {
-        OSPanic(__FILE__, __LINE__, "OSSetCurrentHeap: Invalid heap");
-    }
-    
-    if (s_heapArray[heap].size < 0) {
-        OSPanic(__FILE__, __LINE__, "OSSetCurrentHeap: Heap is inactive");
-    }
-    
-    OSHeapHandle prev = __OSCurrHeap;
-    __OSCurrHeap = heap;
-    return prev;
+		if (hd->size < 0) {
+			hd->size      = (u8*)end - (u8*)cell;
+			cell->prev    = NULL;
+			cell->next    = NULL;
+			cell->size    = hd->size;
+			hd->free      = cell;
+			hd->allocated = NULL;
+			return i;
+		}
+	}
+	return -1;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSEnsureDefaultHeap
-
-  Description:  Lazily initialize a default heap for titles/demos that use
-                OSAlloc() without explicit OSInitAlloc()/OSCreateHeap setup.
-
-  Returns:      TRUE if a usable current heap is available.
- *---------------------------------------------------------------------------*/
-static BOOL OSEnsureDefaultHeap(void) {
-    if (!s_heapArray) {
-        void* start = OSInitAlloc(NULL, NULL, 1);
-        OSHeapHandle heap = OSCreateHeap(start, OSGetArenaHi());
-        if (heap < 0) {
-            return FALSE;
-        }
-        __OSCurrHeap = heap;
-        OSReport("OSAlloc: Auto-initialized default heap %d (%p..%p)\n",
-                 heap, start, OSGetArenaHi());
-    }
-
-    if (__OSCurrHeap >= 0 && __OSCurrHeap < s_numHeaps &&
-        s_heapArray[__OSCurrHeap].size >= 0) {
-        return TRUE;
-    }
-
-    for (OSHeapHandle i = 0; i < s_numHeaps; ++i) {
-        if (s_heapArray[i].size >= 0) {
-            __OSCurrHeap = i;
-            return TRUE;
-        }
-    }
-
-    return FALSE;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000014
+ */
+void OSDestroyHeap(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSAllocFromHeap
-
-  Description:  Allocates memory from the specified heap using first-fit
-                algorithm. Returns 32-byte aligned pointer.
-                
-                The allocation searches the free list for the first block
-                large enough to satisfy the request. If the block is larger,
-                it's split.
-
-  Arguments:    heap - Heap handle
-                size - Bytes to allocate
-
-  Returns:      Pointer to allocated memory, or NULL if out of memory
- *---------------------------------------------------------------------------*/
-void* OSAllocFromHeap(OSHeapHandle heap, u32 size) {
-    if (!s_heapArray || __OSCurrHeap < 0) {
-        if (!OSEnsureDefaultHeap()) {
-            OSPanic(__FILE__, __LINE__, "OSAllocFromHeap: No heaps initialized");
-        }
-    }
-    
-    if ((long)size <= 0) {
-        OSPanic(__FILE__, __LINE__, "OSAllocFromHeap: Invalid size");
-    }
-
-    if (heap < 0) {
-        heap = __OSCurrHeap;
-    }
-    
-    if (heap < 0 || heap >= s_numHeaps) {
-        OSPanic(__FILE__, __LINE__, "OSAllocFromHeap: Invalid heap");
-    }
-    
-    HeapDesc* hd = &s_heapArray[heap];
-    
-    if (hd->size < 0) {
-        OSPanic(__FILE__, __LINE__, "OSAllocFromHeap: Heap is inactive");
-    }
-    
-    // Add header size and round to alignment
-    size += HEADERSIZE;
-    size = (u32)ROUND(size, ALIGNMENT);
-    
-    // Search free list for first fit
-    Cell* cell;
-    for (cell = hd->free; cell != NULL; cell = cell->next) {
-        if ((long)size <= cell->size) {
-            break;
-        }
-    }
-    
-    if (cell == NULL) {
-        // Out of memory
-        return NULL;
-    }
-    
-    // Check if we should split the block
-    long leftoverSize = cell->size - (long)size;
-    
-    if (leftoverSize < MINOBJSIZE) {
-        // Too small to split, just use entire block
-        hd->free = DLExtract(hd->free, cell);
-    } else {
-        // Split the block
-        cell->size = (long)size;
-        
-        // Create new free cell from leftover
-        Cell* newCell = (Cell*)((char*)cell + size);
-        newCell->size = leftoverSize;
-        newCell->prev = cell->prev;
-        newCell->next = cell->next;
-        
-        if (newCell->next) {
-            newCell->next->prev = newCell;
-        }
-        
-        if (newCell->prev) {
-            newCell->prev->next = newCell;
-        } else {
-            hd->free = newCell; // New head
-        }
-    }
-    
-    // Add to allocated list
-    hd->allocated = DLAddFront(hd->allocated, cell);
-    
-    // Return pointer past header
-    return (void*)((char*)cell + HEADERSIZE);
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000060
+ */
+void OSAddToHeap(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSFreeToHeap
-
-  Description:  Frees memory back to the heap it was allocated from.
-                The block is added back to the free list and coalesced with
-                adjacent free blocks if possible.
-
-  Arguments:    heap - Heap handle (must match heap it was allocated from)
-                ptr  - Pointer previously returned by OSAllocFromHeap
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSFreeToHeap(OSHeapHandle heap, void* ptr) {
-    if (!s_heapArray || __OSCurrHeap < 0) {
-        if (!OSEnsureDefaultHeap()) {
-            OSPanic(__FILE__, __LINE__, "OSFreeToHeap: No heaps initialized");
-        }
-    }
-
-    if (heap < 0) {
-        heap = __OSCurrHeap;
-    }
-
-    if (heap < 0 || heap >= s_numHeaps) {
-        OSPanic(__FILE__, __LINE__, "OSFreeToHeap: Invalid heap");
-    }
-    
-    if (!InRange(ptr, (char*)s_arenaStart + HEADERSIZE, (char*)s_arenaEnd)) {
-        OSPanic(__FILE__, __LINE__, "OSFreeToHeap: Pointer outside arena");
-    }
-    
-    if (OFFSET(ptr, ALIGNMENT) != 0) {
-        OSPanic(__FILE__, __LINE__, "OSFreeToHeap: Unaligned pointer");
-    }
-    
-    if (s_heapArray[heap].size < 0) {
-        OSPanic(__FILE__, __LINE__, "OSFreeToHeap: Heap is inactive");
-    }
-    
-    // Get cell header
-    Cell* cell = (Cell*)((char*)ptr - HEADERSIZE);
-    HeapDesc* hd = &s_heapArray[heap];
-    
-    // Verify cell is in allocated list
-    if (!DLLookup(hd->allocated, cell)) {
-        OSPanic(__FILE__, __LINE__, "OSFreeToHeap: Pointer not allocated from this heap");
-    }
-    
-    // Remove from allocated list
-    hd->allocated = DLExtract(hd->allocated, cell);
-    
-    // Add to free list (will coalesce with adjacent blocks)
-    hd->free = DLInsert(hd->free, cell);
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000360
+ */
+s32 OSCheckHeap(int)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSAllocFixed
-
-  Description:  Allocates a specific range of memory, carving it out from
-                existing heaps as needed. This is used for DMA buffers or
-                memory-mapped I/O that needs to be at specific addresses.
-
-  Arguments:    rstart - Pointer to desired start address (will be adjusted)
-                rend   - Pointer to desired end address (will be adjusted)
-
-  Returns:      Allocated start address, or NULL on failure
- *---------------------------------------------------------------------------*/
-void* OSAllocFixed(void** rstart, void** rend) {
-    if (!s_heapArray) {
-        OSPanic(__FILE__, __LINE__, "OSAllocFixed: No heaps initialized");
-    }
-    
-    void* start = (void*)TRUNC(*rstart, ALIGNMENT);
-    void* end = (void*)ROUND(*rend, ALIGNMENT);
-    
-    if (start >= end) {
-        OSPanic(__FILE__, __LINE__, "OSAllocFixed: Invalid range");
-    }
-    
-    if (!RangeSubset(start, end, s_arenaStart, s_arenaEnd)) {
-        OSPanic(__FILE__, __LINE__, "OSAllocFixed: Range outside arena");
-    }
-    
-    // Check for overlap with allocated blocks
-    for (OSHeapHandle i = 0; i < s_numHeaps; i++) {
-        HeapDesc* hd = &s_heapArray[i];
-        if (hd->size < 0) continue;
-        
-        if (DLOverlap(hd->allocated, start, end)) {
-            OSReport("OSAllocFixed: Range overlaps allocated memory\n");
-            return NULL;
-        }
-    }
-    
-    // Carve out from free blocks in all heaps
-    for (OSHeapHandle i = 0; i < s_numHeaps; i++) {
-        HeapDesc* hd = &s_heapArray[i];
-        if (hd->size < 0) continue;
-        
-        for (Cell* cell = hd->free; cell; cell = cell->next) {
-            void* cellEnd = (char*)cell + cell->size;
-            
-            if ((char*)cellEnd <= (char*)start) continue;
-            if ((char*)end <= (char*)cell) break;
-            
-            // This cell overlaps with our range - handle it
-            if (InRange(cell, (char*)start - HEADERSIZE, end) &&
-                InRange((char*)cellEnd, start, (char*)end + MINOBJSIZE)) {
-                // Cell is completely consumed
-                if ((char*)cell < (char*)start) start = (void*)cell;
-                if ((char*)end < (char*)cellEnd) end = (void*)cellEnd;
-                
-                hd->free = DLExtract(hd->free, cell);
-                hd->size -= cell->size;
-                continue;
-            }
-            
-            // Partial overlaps - split the cell
-            // (Simplified version - full implementation would handle all cases)
-            hd->free = DLExtract(hd->free, cell);
-            hd->size -= cell->size;
-        }
-    }
-    
-    *rstart = start;
-    *rend = end;
-    return *rstart;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00000C
+ */
+void OSReferentSize(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSCheckHeap
-
-  Description:  Validates heap integrity for debugging. Walks the free and
-                allocated lists checking for corruption.
-
-  Arguments:    heap - Heap handle to check
-
-  Returns:      Number of free bytes, or -1 if heap is corrupted
- *---------------------------------------------------------------------------*/
-long OSCheckHeap(OSHeapHandle heap) {
-    if (!s_heapArray) return -1;
-    if (heap < 0 || heap >= s_numHeaps) return -1;
-    
-    HeapDesc* hd = &s_heapArray[heap];
-    if (hd->size < 0) return -1;
-    
-    long total = 0;
-    long free = 0;
-    
-    // Check allocated list
-    if (hd->allocated && hd->allocated->prev != NULL) return -1;
-    for (Cell* cell = hd->allocated; cell; cell = cell->next) {
-        if (!InRange(cell, s_arenaStart, s_arenaEnd)) return -1;
-        if (OFFSET(cell, ALIGNMENT) != 0) return -1;
-        if (cell->next && cell->next->prev != cell) return -1;
-        if (cell->size < MINOBJSIZE) return -1;
-        
-        total += cell->size;
-        if (total > hd->size) return -1;
-    }
-    
-    // Check free list
-    if (hd->free && hd->free->prev != NULL) return -1;
-    for (Cell* cell = hd->free; cell; cell = cell->next) {
-        if (!InRange(cell, s_arenaStart, s_arenaEnd)) return -1;
-        if (OFFSET(cell, ALIGNMENT) != 0) return -1;
-        if (cell->next && cell->next->prev != cell) return -1;
-        if (cell->size < MINOBJSIZE) return -1;
-        if (cell->next && (char*)cell + cell->size >= (char*)cell->next) return -1;
-        
-        total += cell->size;
-        free += cell->size - HEADERSIZE;
-        if (total > hd->size) return -1;
-    }
-    
-    if (total != hd->size) return -1;
-    
-    return free;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000104
+ */
+void OSDumpHeap(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSDumpHeap
-
-  Description:  Prints detailed information about a heap for debugging.
-
-  Arguments:    heap - Heap handle to dump
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSDumpHeap(OSHeapHandle heap) {
-    OSReport("\nOSDumpHeap(%d):\n", heap);
-    
-    if (!s_heapArray) {
-        OSReport("  No heaps initialized\n");
-        return;
-    }
-    
-    if (heap < 0 || heap >= s_numHeaps) {
-        OSReport("  Invalid heap handle\n");
-        return;
-    }
-    
-    HeapDesc* hd = &s_heapArray[heap];
-    
-    if (hd->size < 0) {
-        OSReport("  -------- Inactive\n");
-        return;
-    }
-    
-    long freeBytes = OSCheckHeap(heap);
-    if (freeBytes < 0) {
-        OSReport("  WARNING: Heap corrupted!\n");
-        return;
-    }
-    
-    OSReport("  Total size: %ld bytes\n", hd->size);
-    OSReport("  Free:       %ld bytes\n", freeBytes);
-    OSReport("  Allocated:  %ld bytes\n", hd->size - freeBytes);
-    
-    OSReport("  -------- Allocated Blocks:\n");
-    OSReport("  addr\t\tsize\t\tend\t\tprev\t\tnext\n");
-    for (Cell* cell = hd->allocated; cell; cell = cell->next) {
-        OSReport("  %p\t%ld\t%p\t%p\t%p\n",
-                 cell, cell->size, (char*)cell + cell->size,
-                 cell->prev, cell->next);
-    }
-    
-    OSReport("  -------- Free Blocks:\n");
-    OSReport("  addr\t\tsize\t\tend\t\tprev\t\tnext\n");
-    for (Cell* cell = hd->free; cell; cell = cell->next) {
-        OSReport("  %p\t%ld\t%p\t%p\t%p\n",
-                 cell, cell->size, (char*)cell + cell->size,
-                 cell->prev, cell->next);
-    }
-}
-
-/*---------------------------------------------------------------------------*
-  Name:         OSReferentSize
-
-  Description:  Returns the size of an allocated block (excluding header).
-
-  Arguments:    ptr - Pointer previously returned by OSAllocFromHeap
-
-  Returns:      Size of allocation in bytes
- *---------------------------------------------------------------------------*/
-u32 OSReferentSize(void* ptr) {
-    if (!s_heapArray) {
-        OSPanic(__FILE__, __LINE__, "OSReferentSize: No heaps initialized");
-    }
-    
-    if (!InRange(ptr, (char*)s_arenaStart + HEADERSIZE, (char*)s_arenaEnd)) {
-        OSPanic(__FILE__, __LINE__, "OSReferentSize: Pointer outside arena");
-    }
-    
-    if (OFFSET(ptr, ALIGNMENT) != 0) {
-        OSPanic(__FILE__, __LINE__, "OSReferentSize: Unaligned pointer");
-    }
-    
-    Cell* cell = (Cell*)((char*)ptr - HEADERSIZE);
-    return (u32)(cell->size - HEADERSIZE);
-}
-
-/*---------------------------------------------------------------------------*
-  Name:         OSVisitAllocated
-
-  Description:  Calls a visitor function for every allocated block in all
-                active heaps. Useful for debugging memory leaks or tracking
-                allocations.
-
-  Arguments:    visitor - Function to call for each block
-                          void visitor(void* ptr, u32 size)
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSVisitAllocated(OSAllocVisitor visitor) {
-    if (!s_heapArray || !visitor) return;
-    
-    for (u32 heap = 0; heap < s_numHeaps; heap++) {
-        HeapDesc* hd = &s_heapArray[heap];
-        if (hd->size < 0) continue;
-        
-        for (Cell* cell = hd->allocated; cell; cell = cell->next) {
-            void* ptr = (void*)((u8*)cell + HEADERSIZE);
-            u32 size = (u32)cell->size;
-            visitor(ptr, size);
-        }
-    }
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 00009C
+ */
+void OSVisitAllocated(void)
+{
+	TRAP_UNIMPLEMENTED;
 }

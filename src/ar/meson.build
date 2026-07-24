@@ -1,6 +1,6 @@
 libar_srcs = files(
-    'AR.c',
-    'ARQ.c'
+    'ar.c',
+    'arq.c'
 )
 
 libar = library('ar',

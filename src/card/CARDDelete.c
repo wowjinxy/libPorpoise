@@ -1,99 +1,108 @@
-/*---------------------------------------------------------------------------*
-  CARDDelete.c - File Deletion Operations
- *---------------------------------------------------------------------------*/
-
 #include <dolphin/card.h>
-#include <dolphin/card_internal.h>
-#include <dolphin/os.h>
-#include <dolphin/porpoise/Guard.h>
-#include <stdio.h>
+#include <stddef.h>
+#include <string.h>
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDDeleteAsync
+/**
+ * @TODO: Documentation
+ */
+static void DeleteCallback(s32 channel, s32 result)
+{
+	CARDControl* card;
+	CARDCallback callback;
 
-  Description:  Delete file by name (asynchronous).
+	card              = &__CARDBlock[channel];
+	callback          = card->apiCallback;
+	card->apiCallback = NULL;
 
-  Arguments:    chan      Card channel
-                fileName  File to delete
-                callback  Completion callback
+	if (result < CARD_RESULT_READY) {
+		goto error;
+	}
 
-  Returns:      CARD_RESULT_READY on success
- *---------------------------------------------------------------------------*/
-s32 CARDDeleteAsync(s32 chan, const char* fileName, CARDCallback callback) {
-    PP_GUARD_RET(chan >= 0 && chan < CARD_MAX_CHAN, CARD_RESULT_FATAL_ERROR, "invalid channel");
-    PP_GUARD_PTR_RET(fileName, CARD_RESULT_FATAL_ERROR);
-    
-    if (!__CARDCards[chan].mounted) {
-        return CARD_RESULT_NOCARD;
-    }
-    
-    char path[512];
-    __CARDBuildFilePath(chan, fileName, path, sizeof(path));
-    
-    if (remove(path) != 0) {
-        OSReport("CARD: Failed to delete '%s'\n", fileName);
-        return CARD_RESULT_NOFILE;
-    }
-    
-    OSReport("CARD: Deleted '%s'\n", fileName);
-    
-    if (callback) {
-        callback(chan, CARD_RESULT_READY);
-    }
-    
-    return CARD_RESULT_READY;
+	result = __CARDFreeBlock(channel, card->startBlock, callback);
+	if (result < CARD_RESULT_READY) {
+		goto error;
+	}
+	return;
+
+error:
+	__CARDPutControlBlock(card, result);
+	if (callback) {
+		callback(channel, result);
+	}
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDDelete
+/**
+ * @TODO: Documentation
+ */
+s32 CARDFastDeleteAsync(s32 channel, s32 fileNo, CARDCallback callback)
+{
+	CARDControl* card;
+	CARDDirectoryBlock* dir;
+	CARDDir* ent;
+	s32 result;
 
-  Description:  Delete file (synchronous).
+	if (fileNo < 0 || CARD_MAX_FILE <= fileNo) {
+		return CARD_RESULT_FATAL_ERROR;
+	}
 
-  Arguments:    chan      Card channel
-                fileName  File to delete
+	result = __CARDGetControlBlock(channel, &card);
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
 
-  Returns:      CARD_RESULT_READY on success
- *---------------------------------------------------------------------------*/
-s32 CARDDelete(s32 chan, const char* fileName) {
-    return CARDDeleteAsync(chan, fileName, NULL);
+	dir = __CARDGetDirBlock(card);
+	ent = &dir->entries[fileNo];
+#if OS_BUILD_VERSION >= 20011112L
+	result = __CARDAccess(card, ent);
+#else
+	result = __CARDAccess(ent);
+#endif
+	if (result < CARD_RESULT_READY) {
+		return __CARDPutControlBlock(card, result);
+	}
+
+	if (__CARDIsOpened(card, fileNo)) {
+		return __CARDPutControlBlock(card, CARD_RESULT_BUSY);
+	}
+
+	card->startBlock = ent->startBlock;
+	memset(ent, 0xff, sizeof(CARDDir));
+
+	card->apiCallback = callback ? callback : __CARDDefaultApiCallback;
+	result            = __CARDUpdateDir(channel, DeleteCallback);
+	if (result < CARD_RESULT_READY) {
+		__CARDPutControlBlock(card, result);
+	}
+	return result;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDFastDeleteAsync
+/**
+ * @TODO: Documentation
+ */
+s32 CARDFastDelete(s32 channel, s32 fileNo)
+{
+	s32 result = CARDFastDeleteAsync(channel, fileNo, __CARDSyncCallback);
 
-  Description:  Delete file by number (asynchronous).
-
-  Arguments:    chan      Card channel
-                fileNo    File number
-                callback  Completion callback
-
-  Returns:      CARD_RESULT_READY on success
- *---------------------------------------------------------------------------*/
-s32 CARDFastDeleteAsync(s32 chan, s32 fileNo, CARDCallback callback) {
-    PP_GUARD_RET(chan >= 0 && chan < CARD_MAX_CHAN, CARD_RESULT_FATAL_ERROR, "invalid channel");
-    PP_GUARD_RET(fileNo >= 0 && fileNo < 127, CARD_RESULT_FATAL_ERROR, "invalid file number");
-    if (!__CARDCards[chan].mounted) {
-        return CARD_RESULT_NOCARD;
-    }
-    
-    if (callback) {
-        callback(chan, CARD_RESULT_READY);
-    }
-    
-    return CARD_RESULT_READY;
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
+	return __CARDSync(channel);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         CARDFastDelete
-
-  Description:  Delete file by number (synchronous).
-
-  Arguments:    chan    Card channel
-                fileNo  File number
-
-  Returns:      CARD_RESULT_READY on success
- *---------------------------------------------------------------------------*/
-s32 CARDFastDelete(s32 chan, s32 fileNo) {
-    return CARDFastDeleteAsync(chan, fileNo, NULL);
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000110
+ */
+s32 CARDDeleteAsync(s32 chan, const char* fileName, CARDCallback callback)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000048
+ */
+void CARDDelete(void)
+{
+	TRAP_UNIMPLEMENTED;
+}

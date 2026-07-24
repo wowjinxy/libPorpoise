@@ -1,0 +1,50 @@
+#ifndef FILECACHE_H
+#define FILECACHE_H
+
+#include <charPipeline/structures.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#ifdef  __MWERKS__
+#pragma warn_padding off
+#endif
+
+#define DS_AUTO_PURGE   0
+#define DS_NO_PURGE 1
+
+typedef struct
+{
+    DSLink  Link;
+    void    (*Free)(Ptr *data);
+    char    *Name;
+    Ptr Data;
+    u16 ReferenceCount;
+}DSCacheNode, *DSCacheNodePtr;
+
+typedef struct
+{
+    u8  PurgeFlag;
+    DSList  CacheNodeList;
+}DSCache, *DSCachePtr;
+
+DSCacheNodePtr DSAddCacheNode(DSCachePtr cache, char *name, Ptr data, Ptr freeFunc);
+void DSEmptyCache(DSCachePtr cache);
+Ptr DSGetCacheObj(DSCachePtr cache, char *name);
+void DSInitCache(DSCachePtr cache);
+void DSPurgeCache(DSCachePtr cache);
+void DSReleaseCacheObj(DSCachePtr cache, Ptr data);
+void DSSetCachePurgeFlag(DSCachePtr cache, u8 purgeFlag);
+void CSHInitDisplayCache();
+
+
+#ifdef  __MWERKS__
+#pragma warn_padding reset
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

@@ -1,5 +1,7 @@
 libmtx_srcs = files(
-    'mtx.c'
+    'mtx.c',
+	'mtx44.c',
+	'vec.c'
 )
 
 libmtx = library('mtx',

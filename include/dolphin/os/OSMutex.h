@@ -1,37 +1,47 @@
-#ifndef DOLPHIN_OSMUTEX_H
-#define DOLPHIN_OSMUTEX_H
+#ifndef _DOLPHIN_OS_OSMUTEX_H
+#define _DOLPHIN_OS_OSMUTEX_H
 
-#include <dolphin/types.h>
 #include <dolphin/os/OSThread.h>
+#include <dolphin/os/OSUtil.h>
+#include <dolphin/types.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+BEGIN_SCOPE_EXTERN_C
 
-struct OSMutex
-{
-    OSThreadQueue   queue;
-    OSThread*       thread;
-    s32             count;
-    OSMutexLink     link;
+////////// MUTEX TYPES ///////////
+// Main mutually exclusive (mutex) locking struct.
+struct OSMutex {
+	OSThreadQueue queue; // _00
+	OSThread* thread;    // _08, current owner.
+	int count;           // _0C, lock count.
+	OSMutexLink link;    // _10
 };
 
-struct OSCond
-{
-    OSThreadQueue   queue;
-};
+// Cond struct (?) (size 0x8).
+typedef struct OSCond {
+	OSThreadQueue queue; // _00
+} OSCond;
 
-void OSInitMutex   (OSMutex* mutex);
-void OSLockMutex   (OSMutex* mutex);
-void OSUnlockMutex (OSMutex* mutex);
+//////////////////////////////////
+
+//////// MUTEX FUNCTIONS /////////
+// Mutex functions.
+void OSInitMutex(OSMutex* mutex);
+void OSLockMutex(OSMutex* mutex);
+void OSUnlockMutex(OSMutex* mutex);
 BOOL OSTryLockMutex(OSMutex* mutex);
-void OSInitCond    (OSCond* cond);
-void OSWaitCond    (OSCond* cond, OSMutex* mutex);
-void OSSignalCond  (OSCond* cond);
 
-#ifdef __cplusplus
-}
+void __OSUnlockAllMutex(OSThread* thread);
+BOOL __OSCheckMutex(OSMutex* mutex);
+BOOL __OSCheckDeadLock(OSThread* thread);
+BOOL __OSCheckMutexes(OSThread* thread);
+
+// Cond functions.
+void OSInitCond(OSCond* cond);
+void OSWaitCond(OSCond* cond, OSMutex* mutex);
+void OSSignalCond(OSCond* cond);
+
+//////////////////////////////////
+
+END_SCOPE_EXTERN_C
+
 #endif
-
-#endif /* DOLPHIN_OSMUTEX_H */
-

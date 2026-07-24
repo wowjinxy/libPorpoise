@@ -1,38 +1,48 @@
-#ifndef DOLPHIN_OSMESSAGE_H
-#define DOLPHIN_OSMESSAGE_H
+#ifndef _DOLPHIN_OS_OSMESSAGE_H
+#define _DOLPHIN_OS_OSMESSAGE_H
 
-#include <dolphin/types.h>
 #include <dolphin/os/OSThread.h>
+#include <dolphin/os/OSUtil.h>
+#include <dolphin/types.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+BEGIN_SCOPE_EXTERN_C
 
-typedef struct OSMessageQueue   OSMessageQueue;
-typedef void*                   OSMessage;
+///////// MESSAGE TYPES //////////
+typedef struct OSMesgQueue_s OSMesgQueue_s;
+typedef struct OSMesgQueue_s OSMessageQueue;
 
-struct OSMessageQueue
-{
-    OSThreadQueue   queueSend;
-    OSThreadQueue   queueReceive;
-    OSMessage*      msgArray;
-    s32             msgCount;
-    s32             firstIndex;
-    s32             usedCount;
+// Useful typedef for messages.
+typedef void* OSMessage;
+
+// Struct for managing the message queue.
+struct OSMesgQueue_s {
+	OSThreadQueue queueSend;    // _00
+	OSThreadQueue queueReceive; // _08
+	OSMessage* msgArray;        // _10, array of messages.
+	s32 msgCount;               // _14, array limit size.
+	s32 firstIndex;             // _18, first message index in array.
+	s32 usedCount;              // _1C, actual number of used messages.
 };
 
-// Flags to turn blocking on/off when sending/receiving message
-#define OS_MESSAGE_NOBLOCK  0
-#define OS_MESSAGE_BLOCK    1
+// Defines for message flags for sending/receiving.
+#define OS_MESSAGE_NOBLOCK (0)
+#define OS_MESSAGE_BLOCK   (1)
 
-void OSInitMessageQueue (OSMessageQueue* mq, OSMessage* msgArray, s32 msgCount);
-BOOL OSSendMessage      (OSMessageQueue* mq, OSMessage msg, s32 flags);
-BOOL OSJamMessage       (OSMessageQueue* mq, OSMessage msg, s32 flags);
-BOOL OSReceiveMessage   (OSMessageQueue* mq, OSMessage* msg, s32 flags);
+typedef enum {
+	OS_MSG_PERSISTENT = (1 << 0),
+} OSMessageFlags;
 
-#ifdef __cplusplus
-}
+//////////////////////////////////
+
+/////// MESSAGE FUNCTIONS ////////
+// Functions for handling messages.
+void OSInitMessageQueue(OSMessageQueue* queue, OSMessage* msgArray, s32 msgCount);
+BOOL OSSendMessage(OSMessageQueue* queue, OSMessage msg, s32 flags);
+BOOL OSJamMessage(OSMessageQueue* queue, OSMessage msg, s32 flags);
+BOOL OSReceiveMessage(OSMessageQueue* queue, OSMessage* msgPtr, s32 flags);
+
+//////////////////////////////////
+
+END_SCOPE_EXTERN_C
+
 #endif
-
-#endif /* DOLPHIN_OSMESSAGE_H */
-

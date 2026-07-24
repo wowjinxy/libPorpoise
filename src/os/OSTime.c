@@ -1,574 +1,210 @@
-/*---------------------------------------------------------------------------*
-  OSTime.c - Time Base and Calendar Functions
-  
-  HARDWARE TIME SYSTEM (GC/Wii):
-  ===============================
-  
-  The PowerPC processors have hardware "Time Base" registers:
-  
-  **Time Base Registers (TBR):**
-  - **TBU** (Time Base Upper) - Upper 32 bits
-  - **TBL** (Time Base Lower) - Lower 32 bits
-  - Combined: 64-bit counter
-  - Increments at **40.5 MHz** on GameCube/Wii
-  - Never stops (runs continuously)
-  - Assembly instructions: `mftb`, `mftbu`
-  
-  **Why 40.5 MHz?**
-  - Bus clock is 162 MHz
-  - Time base is bus clock / 4 = 40.5 MHz
-  - Provides ~7000 years before overflow
-  
-  **Reading Time Base:**
-  Original hardware (PowerPC assembly):
-  ```asm
-  _loop:
-      mftbu   r3      ; Read upper
-      mftb    r4      ; Read lower
-      mftbu   r5      ; Read upper again
-      cmpw    r3, r5  ; Did upper change?
-      bne     _loop   ; If yes, retry (lower wrapped)
-      blr             ; Return r3:r4 (64-bit)
-  ```
-  
-  The loop is necessary because reading is not atomic - if the lower
-  32 bits wrap between reads, you get inconsistent values.
-  
-  **System Time vs Time Base:**
-  - **Time Base**: Raw hardware counter (resets on power cycle)
-  - **System Time**: Time since OS boot (adjusted)
-  - Adjustment stored in low memory, preserved across soft resets
-  
-  PC PORT IMPLEMENTATION:
-  =======================
-  
-  **What We Use:**
-  
-  Windows:
-  - `QueryPerformanceCounter()` - High-resolution counter
-  - `QueryPerformanceFrequency()` - Counter frequency
-  - Typically 10 MHz or higher
-  - Convert to 40.5 MHz equivalent
-  
-  Linux/Mac:
-  - `gettimeofday()` - Microsecond precision
-  - Convert to 40.5 MHz ticks
-  - Or `clock_gettime(CLOCK_MONOTONIC)` for better precision
-  
-  **Conversion:**
-  ```c
-  // Windows
-  ticks = (counter * 40500000) / frequency
-  
-  // Linux
-  ticks = (seconds * 40500000) + (microseconds * 40.5)
-  ```
-  
-  CALENDAR TIME SYSTEM:
-  =====================
-  
-  **OSCalendarTime Structure:**
-  ```c
-  typedef struct {
-      int sec;    // 0-59
-      int min;    // 0-59
-      int hour;   // 0-23
-      int mday;   // 1-31 (day of month)
-      int mon;    // 0-11 (January = 0)
-      int year;   // Years since 0000
-      int wday;   // 0-6 (Sunday = 0)
-      int yday;   // 0-365 (day of year)
-      int msec;   // 0-999 (milliseconds)
-      int usec;   // 0-999 (microseconds)
-  } OSCalendarTime;
-  ```
-  
-  **Leap Year Calculation:**
-  - Divisible by 4: Leap year
-  - EXCEPT divisible by 100: Not leap year
-  - EXCEPT divisible by 400: Leap year
-  - Examples: 2000 (leap), 1900 (not), 2024 (leap)
-  
-  **Day of Week (Zeller's Congruence):**
-  Original uses simpler algorithm:
-  - Days since year 0000 + 6 (offset) mod 7
-  - January 1, year 0001 was Monday
-  
-  **Conversion Algorithm:**
-  
-  Ticks → Calendar:
-  1. Extract subsecond (msec, usec)
-  2. Convert to total seconds
-  3. Calculate days since epoch (year 2000 bias)
-  4. Calculate year from days
-  5. Calculate month and day within year
-  6. Calculate hour, minute, second
-  
-  Calendar → Ticks:
-  1. Calculate days since year 0000
-  2. Add days in year up to month
-  3. Add day of month
-  4. Convert to seconds
-  5. Add hour/minute/second
-  6. Convert to ticks
-  
-  TYPICAL USAGE:
-  ==============
-  
-  ```c
-  // Get current time
-  OSTime start = OSGetTime();
-  
-  // Do work...
-  
-  // Calculate elapsed time
-  OSTime elapsed = OSGetTime() - start;
-  u32 milliseconds = OSTicksToMilliseconds(elapsed);
-  
-  // Convert to calendar
-  OSCalendarTime cal;
-  OSTicksToCalendarTime(OSGetTime(), &cal);
-  OSReport("Date: %04d-%02d-%02d %02d:%02d:%02d\n",
-           cal.year, cal.mon+1, cal.mday,
-           cal.hour, cal.min, cal.sec);
-  ```
-  
-  IMPORTANT NOTES:
-  ================
-  
-  **Precision:**
-  - Original: 40.5 MHz = ~24.7 ns per tick
-  - PC: Varies, but typically better
-  - OSTicksToMicroseconds() is accurate
-  - OSTicksToNanoseconds() may have rounding errors
-  
-  **Range:**
-  - 64-bit signed: ~7000 years @ 40.5 MHz
-  - More than enough for any game
-  
-  **Thread Safety:**
-  - OSGetTime() is thread-safe (reads hardware register)
-  - Calendar functions are thread-safe (no shared state)
- *---------------------------------------------------------------------------*/
+#include <dolphin/os/OSTime.h>
 
 #include <dolphin/os.h>
-#include <stdio.h>
+
+#ifdef LIBPORPOISE_PORT
 #include <time.h>
-#include <stdlib.h>
-#include <string.h>
-#include <limits.h>
-
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <sys/time.h>
-#include <time.h>
+#include <SDL2/SDL.h>
 #endif
 
-/*===========================================================================*
-  TIME BASE IMPLEMENTATION
- *===========================================================================*/
+#define OS_TIME_MONTH_MAX    12
+#define OS_TIME_WEEK_DAY_MAX 7
+#define OS_TIME_YEAR_DAY_MAX 365
+#define BIAS                 (2000 * 365 + (2000 + 3) / 4 - (2000 - 1) / 100 + (2000 - 1) / 400)
 
-/* Start time for relative measurements */
-static OSTime s_startTime = 0;
-static OSTime s_systemTimeBase = 0;  /* Adjustment for system time */
-static BOOL s_timeInitialized = FALSE;
+// End of each month in standard year
+static s32 YearDays[OS_TIME_MONTH_MAX] = { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
+// End of each month in leap year
+static s32 LeapYearDays[OS_TIME_MONTH_MAX] = { 0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335 };
 
-/*---------------------------------------------------------------------------*
-  Name:         __OSInitTime (Internal)
+/**
+ * @TODO: Documentation
+ */
+ASM OSTime OSGetTime(void) {
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
 
-  Description:  Initializes the time system. Called once by OSInit().
+	mftbu  r3
+	mftb   r4
 
-  Arguments:    None
- *---------------------------------------------------------------------------*/
-static void __OSInitTime(void) {
-    if (s_timeInitialized) return;
-    
-#ifdef _WIN32
-    LARGE_INTEGER freq, counter;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&counter);
-    /* Convert to 40.5 MHz ticks */
-    s_startTime = (OSTime)((counter.QuadPart * OS_TIMER_CLOCK) / freq.QuadPart);
-#else
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    /* Convert to 40.5 MHz ticks */
-    s_startTime = (OSTime)(tv.tv_sec * OS_TIMER_CLOCK) + 
-                  (OSTime)(tv.tv_usec * (OS_TIMER_CLOCK / 1000000));
-#endif
-    
-    s_systemTimeBase = 0;
-    s_timeInitialized = TRUE;
-}
+	// Check for possible carry from TBL to TBU
+	mftbu  r5
+	cmpw   r3, r5
+	bne    OSGetTime
 
-/*---------------------------------------------------------------------------*
-  Name:         OSGetTime
-
-  Description:  Returns the current time base value.
-                
-                On original hardware (PowerPC assembly):
-                - Reads TBU and TBL registers atomically
-                - Loop to handle wraparound
-                
-                On PC:
-                - Uses high-resolution performance counter
-                - Converts to 40.5 MHz equivalent
-
-  Returns:      64-bit time value in 40.5 MHz ticks
-  
-  Thread Safety: Safe to call from any thread
- *---------------------------------------------------------------------------*/
-OSTime OSGetTime(void) {
-    if (!s_timeInitialized) {
-        __OSInitTime();
-    }
-    
-#ifdef _WIN32
-    LARGE_INTEGER freq, counter;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&counter);
-    OSTime currentTime = (OSTime)((counter.QuadPart * OS_TIMER_CLOCK) / freq.QuadPart);
-    return currentTime - s_startTime;
-#else
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    OSTime currentTime = (OSTime)(tv.tv_sec * OS_TIMER_CLOCK) + 
-                         (OSTime)(tv.tv_usec * (OS_TIMER_CLOCK / 1000000));
-    return currentTime - s_startTime;
+	blr
+#endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	OSTime result = (OSTime)time(NULL);
+	return result;
 #endif
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSGetTick
+/**
+ * @TODO: Documentation
+ */
+ASM u32 OSGetTick(void)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
 
-  Description:  Returns the lower 32 bits of the time base.
-                
-                On original hardware: `mftb r3` instruction
-                On PC: Lower 32 bits of OSGetTime()
-                
-                Useful for quick timing when 32 bits is enough
-                (wraps every ~106 seconds @ 40.5 MHz)
-
-  Returns:      32-bit tick value
- *---------------------------------------------------------------------------*/
-OSTick OSGetTick(void) {
-    return (OSTick)(OSGetTime() & 0xFFFFFFFF);
+	mftb  r3
+	blr
+#endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	return OSMillisecondsToTicks(SDL_GetTicks());
+#endif
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSGetSystemTime
-
-  Description:  Returns system time (time since OS boot).
-                
-                On original hardware:
-                - Reads adjustment from low memory
-                - Adds to current time base
-                - Survives soft resets
-                
-                On PC:
-                - Adds adjustment to current time
-                - Simulates soft reset behavior
-
-  Returns:      System time in ticks
- *---------------------------------------------------------------------------*/
-OSTime OSGetSystemTime(void) {
-    return s_systemTimeBase + OSGetTime();
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000014
+ */
+void __SetTime(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         __OSSetTime (Internal)
-
-  Description:  Sets the time base to a specific value.
-                
-                On original hardware:
-                - Writes to TBL and TBU registers
-                - Updates adjustment in low memory
-                - Used for synchronizing time
-                
-                On PC:
-                - Adjusts start time to match requested value
-                - Updates system time base
-
-  Arguments:    time - New time value
- *---------------------------------------------------------------------------*/
-void __OSSetTime(OSTime time) {
-    BOOL enabled = OSDisableInterrupts();
-    
-    /* Calculate how much to adjust */
-    OSTime current = OSGetTime();
-    s_systemTimeBase += current - time;
-    
-    /* Reset start time to "set" the clock */
-    s_startTime += (current - time);
-    
-    OSRestoreInterrupts(enabled);
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000084
+ */
+void __OSSetTime(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*===========================================================================*
-  CALENDAR TIME CONVERSION
-  
-  Based on the reference implementation with proper leap year handling
-  and day-of-week calculation.
- *===========================================================================*/
+/**
+ * @TODO: Documentation
+ */
+OSTime __OSGetSystemTime(void)
+{
+	BOOL enabled;
+	OSTime* timeAdjustAddr = (OSTime*)(OSPhysicalToCached(0x30D8));
+	OSTime result;
 
-/* Year 2000 bias for day calculations */
-#define BIAS (2000 * 365 + (2000 + 3) / 4 - (2000 - 1) / 100 + (2000 - 1) / 400)
+	enabled = OSDisableInterrupts();
+	#ifdef LIBPORPOISE_PORT
+	result = OSGetTime();
+	#else
+	result  = *timeAdjustAddr + OSGetTime();
+	#endif
+	OSRestoreInterrupts(enabled);
 
-/* Days accumulated at start of each month (non-leap year) */
-static const int YearDays[] = {
-    0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334
-};
-
-/* Days accumulated at start of each month (leap year) */
-static const int LeapYearDays[] = {
-    0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335
-};
-
-/*---------------------------------------------------------------------------*
-  Name:         IsLeapYear
-
-  Description:  Checks if a year is a leap year.
-                
-                Rules:
-                - Divisible by 4: YES
-                - Divisible by 100: NO
-                - Divisible by 400: YES
-
-  Arguments:    year - Year to check
-
-  Returns:      TRUE if leap year, FALSE otherwise
- *---------------------------------------------------------------------------*/
-static BOOL IsLeapYear(int year) {
-    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+	return result;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         GetYearDays
-
-  Description:  Gets days from January 1 to the start of specified month.
-
-  Arguments:    year  - Year (for leap year check)
-                month - Month (0-11, 0 = January)
-
-  Returns:      Number of days
- *---------------------------------------------------------------------------*/
-static int GetYearDays(int year, int month) {
-    const int* md = IsLeapYear(year) ? LeapYearDays : YearDays;
-    return md[month];
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000008 (Matching by size)
+ */
+ASM void __OSSetTick(register u32 tick)
+{
+#ifdef __MWERKS__ // clang-format off
+	nofralloc
+	mttbl  tick  // An educated guess
+	blr
+#endif // clang-format on
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         GetLeapDays
-
-  Description:  Calculates number of leap days from year 0 to specified year.
-
-  Arguments:    year - Years since year 0
-
-  Returns:      Number of leap days (February 29ths)
- *---------------------------------------------------------------------------*/
-static int GetLeapDays(int year) {
-    if (year < 1) return 0;
-    return (year + 3) / 4 - (year - 1) / 100 + (year - 1) / 400;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000088 (Matching by size)
+ */
+static BOOL IsLeapYear(s32 year)
+{
+	return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSTicksToCalendarTime
-
-  Description:  Converts time base ticks to calendar time.
-                
-                Algorithm:
-                1. Extract subsecond portion (msec, usec)
-                2. Convert remaining to total seconds
-                3. Calculate days since epoch (with year 2000 bias)
-                4. Determine year from days (accounting for leap years)
-                5. Determine month and day within year
-                6. Extract hour, minute, second from remaining seconds
-                7. Calculate day of week
-
-  Arguments:    ticks - Time in OS ticks (40.5 MHz)
-                year  - Pointer to receive year (can be NULL)
-                month - Pointer to receive month 1-12 (can be NULL)
-                day   - Pointer to receive day 1-31 (can be NULL)
-                hour  - Pointer to receive hour 0-23 (can be NULL)
-                minute- Pointer to receive minute 0-59 (can be NULL)
-                second- Pointer to receive second 0-59 (can be NULL)
-
-  Returns:      None
- *---------------------------------------------------------------------------*/
-void OSTicksToCalendarTime(OSTime ticks, OSCalendarTime* cal) {
-    if (!cal) {
-        return;
-    }
-
-    OSTime d = ticks % OSSecondsToTicks(1);
-    if (d < 0) {
-        d += OSSecondsToTicks(1);
-    }
-
-    cal->usec = (int)(OSTicksToMicroseconds(d) % 1000);
-    cal->msec = (int)(OSTicksToMilliseconds(d) % 1000);
-
-    ticks -= d;
-
-    int days = (int)(OSTicksToSeconds(ticks) / 86400 + BIAS);
-    int secs = (int)(OSTicksToSeconds(ticks) % 86400);
-
-    if (secs < 0) {
-        days -= 1;
-        secs += 86400;
-    }
-
-    int totalDays = days;
-    cal->wday = (totalDays + 6) % 7;
-
-    int yr;
-    int n;
-    for (yr = days / 365; days < (n = GetLeapDays(yr) + 365 * yr); ) {
-        --yr;
-    }
-    days -= n;
-
-    cal->year = yr;
-    cal->yday = days;
-
-    const int* md = IsLeapYear(yr) ? LeapYearDays : YearDays;
-    int mon = 12;
-    while (days < md[--mon]) {
-        /* find month */
-    }
-    cal->mon = mon;
-    cal->mday = days - md[mon] + 1;
-
-    cal->hour = secs / 3600;
-    cal->min = (secs / 60) % 60;
-    cal->sec = secs % 60;
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0000A8
+ */
+void GetYearDays(void)
+{
+	TRAP_UNIMPLEMENTED;
 }
 
-/*---------------------------------------------------------------------------*
-  Name:         OSCalendarTimeToTicks
-
-  Description:  Converts calendar time to time base ticks.
-                
-                Algorithm:
-                1. Calculate total days since year 0
-                2. Add leap days
-                3. Add days in current year up to month
-                4. Add day of month
-                5. Convert to seconds
-                6. Add hour/minute/second
-                7. Convert to ticks
-
-  Arguments:    year   - Year (e.g., 2024)
-                month  - Month 1-12 (1 = January)
-                day    - Day 1-31
-                hour   - Hour 0-23
-                minute - Minute 0-59
-                second - Second 0-59
-
-  Returns:      Time in OS ticks (40.5 MHz)
- *---------------------------------------------------------------------------*/
-static OSTime OSCalendarComponentsToTicks(u16 year, u8 month, u8 day,
-                                          u8 hour, u8 minute, u8 second) {
-    OSTime secs;
-    int days;
-    
-    /* Validate inputs */
-    if (month < 1) month = 1;
-    if (month > 12) month = 12;
-    if (day < 1) day = 1;
-    if (day > 31) day = 31;
-    if (hour > 23) hour = 23;
-    if (minute > 59) minute = 59;
-    if (second > 59) second = 59;
-    
-    /* Calculate days since year 0 */
-    days = (int)year * 365 + GetLeapDays(year);
-    
-    /* Add days in current year up to month */
-    days += GetYearDays(year, month - 1);
-    
-    /* Add day of month (day is 1-based) */
-    days += day - 1;
-    
-    /* Remove bias to get days since epoch */
-    days -= BIAS;
-    
-    /* Convert to seconds */
-    secs = (OSTime)days * 86400;
-    secs += hour * 3600;
-    secs += minute * 60;
-    secs += second;
-    
-    /* Convert to ticks */
-    return OSSecondsToTicks(secs);
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 000050 (Matching by size)
+ */
+static s32 GetLeapDays(s32 year)
+{
+	if (year < 1) {
+		return 0;
+	}
+	return (year + 3) / 4 - (year - 1) / 100 + (year - 1) / 400;
 }
 
-OSTime OSCalendarTimeToTicks(const OSCalendarTime* timeDate) {
-    if (!timeDate) {
-        return 0;
-    }
+/**
+ * @TODO: Documentation
+ */
+static void GetDates(s32 days, OSCalendarTime* cal)
+{
+	s32 year;
+	s32 totalDays;
+	s32* p_days;
+	s32 month;
+	cal->wday = (days + 6) % OS_TIME_WEEK_DAY_MAX;
 
-    u16 year = (u16)timeDate->year;
-    u8 month = (u8)(timeDate->mon + 1);
-    u8 day = (u8)timeDate->mday;
-    u8 hour = (u8)timeDate->hour;
-    u8 minute = (u8)timeDate->min;
-    u8 second = (u8)timeDate->sec;
+	for (year = days / OS_TIME_YEAR_DAY_MAX; days < (totalDays = year * OS_TIME_YEAR_DAY_MAX + GetLeapDays(year));) {
+		year--;
+	}
 
-    OSTime ticks = OSCalendarComponentsToTicks(year, month, day, hour, minute, second);
-    if (timeDate->msec) {
-        ticks += OSMillisecondsToTicks(timeDate->msec);
-    }
-    if (timeDate->usec) {
-        ticks += OSMicrosecondsToTicks(timeDate->usec);
-    }
-    return ticks;
+	days -= totalDays;
+	cal->year = year;
+	cal->yday = days;
+
+	p_days = IsLeapYear(year) ? LeapYearDays : YearDays;
+	month  = OS_TIME_MONTH_MAX;
+	while (days < p_days[--month]) {
+		;
+	}
+	cal->mon  = month;
+	cal->mday = days - p_days[month] + 1;
 }
 
-/*===========================================================================*
-  DEBUG UTILITIES
- *===========================================================================*/
+#pragma dont_inline on
 
-#ifdef _DEBUG
+/**
+ * @TODO: Documentation
+ */
+void OSTicksToCalendarTime(OSTime ticks, OSCalendarTime* cal)
+{
+	int days;
+	int secs;
+	OSTime d;
 
-/*---------------------------------------------------------------------------*
-  Name:         OSTimeToString (Debug utility)
+	d = ticks % OSSecondsToTicks(1);
+	if (d < 0) {
+		d += OSSecondsToTicks(1);
+	}
+	cal->usec = (int)(OSTicksToMicroseconds(d) % 1000);
+	cal->msec = (int)(OSTicksToMilliseconds(d) % 1000);
 
-  Description:  Converts OSTime to human-readable string.
-                Not in original SDK, but useful for debugging.
+	ticks -= d;
+	days = (int)(OSTicksToSeconds(ticks) / 86400 + BIAS);
+	secs = (int)(OSTicksToSeconds(ticks) % 86400);
+	if (secs < 0) {
+		days -= 1;
+		secs += 24 * 60 * 60;
+	}
 
-  Arguments:    time   - Time in ticks
-                buffer - Buffer to write string (at least 32 bytes)
+	GetDates(days, cal);
 
-  Returns:      Pointer to buffer
- *---------------------------------------------------------------------------*/
-char* OSTimeToString(OSTime time, char* buffer) {
-    OSCalendarTime cal = {0};
-    OSTicksToCalendarTime(time, &cal);
-    
-    sprintf(buffer, "%04d-%02d-%02d %02d:%02d:%02d",
-            cal.year, cal.mon + 1, cal.mday,
-            cal.hour, cal.min, cal.sec);
-    
-    return buffer;
+	cal->hour = secs / 60 / 60;
+	cal->min  = (secs / 60) % 60;
+	cal->sec  = secs % 60;
 }
 
-#endif /* _DEBUG */
+#pragma dont_inline reset
 
-/*---------------------------------------------------------------------------*
-  Name:         __OSGetSystemTime
-
-  Description:  Get raw system time in ticks. Internal function used by
-                various subsystems to get the current time base value.
-                
-                On GC/Wii: Reads TBR (Time Base Register) directly
-                On PC: Wraps OSGetTime()
-
-  Arguments:    None
-
-  Returns:      Current time in ticks (OSTime)
- *---------------------------------------------------------------------------*/
-OSTime __OSGetSystemTime(void) {
-    return OSGetTime();
+/**
+ * @TODO: Documentation
+ * @note UNUSED Size: 0002E0
+ */
+OSTime OSCalendarTimeToTicks(OSCalendarTime*)
+{
+	TRAP_UNIMPLEMENTED;
 }

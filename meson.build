@@ -1,7 +1,7 @@
 project('libporpoise', 'c', 'cpp',
     default_options: {
         'default_library': 'static',
-        'prefer_static':    true
+        'prefer_static':    false
     },
     meson_version: '>=1.2.0',
     version: '1.0'
@@ -40,6 +40,7 @@ libporpoise_cpp_args = [
 
 if (build_target == 'win64')
     libporpoise_shared_args += [
+        '-DLIBPORPOISE_PORT',
         '-DLIBPORPOISE_BUILD_WIN64',
         '-w'
     ]
@@ -47,6 +48,7 @@ endif
 
 if (build_target == 'linux')
     libporpoise_shared_args += [
+        '-DLIBPORPOISE_PORT',
         '-DLIBPORPOISE_BUILD_LINUX',
         '-D_POSIX_C_SOURCE=200112L',
         '-w'

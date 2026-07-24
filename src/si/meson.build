@@ -1,5 +1,6 @@
 libsi_srcs = files(
-    'SI.c'
+    'SIBios.c',
+	'SISamplingRate.c'
 )
 
 libsi = library('si',
