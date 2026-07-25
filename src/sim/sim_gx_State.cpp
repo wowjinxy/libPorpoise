@@ -77,6 +77,7 @@ void GlobalState::Reset() {
     for (auto& matrix : mTextureMatrices) {
         matrix = IdentityMatrix();
     }
+    mTexCoordGens = {};
     mProjectionMatrix = IdentityMatrix();
     mProjectionMatrixValid = false;
     mViewportTransform.fill(0.0f);
@@ -321,6 +322,29 @@ const TextureState& GlobalState::GetTextureState(size_t index) const {
     }
     static const TextureState empty = {};
     return empty;
+}
+
+const TexCoordGenState& GlobalState::GetTexCoordGenState(size_t index) const {
+    if (index < mTexCoordGens.size()) {
+        return mTexCoordGens[index];
+    }
+    static const TexCoordGenState empty = {};
+    return empty;
+}
+
+const std::array<float, 16>& GlobalState::GetTexCoordGenMatrix(
+    size_t index) const {
+    const auto& texGen = GetTexCoordGenState(index);
+    if (texGen.matrixId >= GX_TEXMTX0 &&
+        texGen.matrixId <= GX_TEXMTX9 &&
+        ((texGen.matrixId - GX_TEXMTX0) % 3u) == 0u) {
+        return GetTextureMatrix(
+            static_cast<size_t>(
+                (texGen.matrixId - GX_TEXMTX0) / 3u));
+    }
+
+    static const std::array<float, 16> identity = IdentityMatrix();
+    return identity;
 }
 
 const TevStageState& GlobalState::GetTevStageState(size_t index) const {
@@ -654,6 +678,7 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
     const u32 endAddress = address + static_cast<u32>(writableWords);
     RefreshPositionMatrices(address, endAddress);
     RefreshTextureMatrices(address, endAddress);
+    RefreshTexCoordGenState(address, endAddress);
     RefreshProjectionMatrix(address, endAddress);
     RefreshViewportTransform(address, endAddress);
     RefreshChannelState(address, endAddress);
@@ -701,6 +726,68 @@ void GlobalState::RefreshTextureMatrices(u32 firstAddress, u32 endAddress) {
             }
         }
         mTextureMatrixValid[slot] = true;
+    }
+}
+
+void GlobalState::RefreshTexCoordGenState(
+    u32 firstAddress,
+    u32 endAddress) {
+    constexpr u32 matrixIndexA = 0x1018;
+    constexpr u32 matrixIndexB = 0x1019;
+    constexpr u32 texGenStart = 0x1040;
+    constexpr u32 texGenEnd = texGenStart + 8;
+    const bool matrixIndicesChanged =
+        firstAddress < matrixIndexB + 1u && endAddress > matrixIndexA;
+    const bool generatorsChanged =
+        firstAddress < texGenEnd && endAddress > texGenStart;
+    if (!matrixIndicesChanged && !generatorsChanged) {
+        return;
+    }
+
+    const u32 matrixWords[2] = {
+        mXfMemory[matrixIndexA],
+        mXfMemory[matrixIndexB],
+    };
+    for (size_t index = 0; index < mTexCoordGens.size(); ++index) {
+        const u32 texGenWord =
+            mXfMemory[texGenStart + static_cast<u32>(index)];
+        const u32 row = (texGenWord >> 7u) & 0x1fu;
+        GXTexGenSrc source = GX_TG_TEX0;
+        switch (row) {
+            case 0:
+                source = GX_TG_POS;
+                break;
+            case 1:
+                source = GX_TG_NRM;
+                break;
+            case 2:
+                source =
+                    ((texGenWord >> 4u) & 0x07u) == 3u
+                        ? GX_TG_COLOR1
+                        : GX_TG_COLOR0;
+                break;
+            case 3:
+                source = GX_TG_BINRM;
+                break;
+            case 4:
+                source = GX_TG_TANGENT;
+                break;
+            default:
+                if (row >= 5u && row <= 12u) {
+                    source = static_cast<GXTexGenSrc>(
+                        GX_TG_TEX0 + row - 5u);
+                }
+                break;
+        }
+
+        const size_t matrixWord = index < 4u ? 0u : 1u;
+        const u32 matrixShift =
+            index < 4u
+                ? 6u + static_cast<u32>(index) * 6u
+                : static_cast<u32>(index - 4u) * 6u;
+        mTexCoordGens[index].source = source;
+        mTexCoordGens[index].matrixId = static_cast<u8>(
+            (matrixWords[matrixWord] >> matrixShift) & 0x3fu);
     }
 }
 

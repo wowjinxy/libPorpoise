@@ -1,5 +1,9 @@
 #include <dolphin/base/PPCArch.h>
 
+#ifdef LIBPORPOISE_PORT
+#include <stdlib.h>
+#endif
+
 /**
  * @TODO: Documentation
  */
@@ -152,6 +156,15 @@ void PPCEieio(void)
  */
 void PPCHalt(void)
 {
+#ifdef LIBPORPOISE_PORT
+	/*
+	 * A console halt intentionally stops execution forever. Spinning here on
+	 * a desktop host prevents SDL from processing messages, leaves the game
+	 * window unresponsive, and consumes an entire CPU core. Terminate the host
+	 * process instead; PPCHalt remains non-returning without wedging Windows.
+	 */
+	exit(EXIT_FAILURE);
+#else
 #ifdef __MWERKS__
 	__mwerks_sync();
 #endif
@@ -164,6 +177,7 @@ void PPCHalt(void)
 		}
 #endif
 	}
+#endif
 }
 
 /**

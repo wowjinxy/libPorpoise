@@ -761,6 +761,8 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_modelview");
     const GLint textureMatrixLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texmatrix0");
+    const GLint textureSourceLocation =
+        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texgen0_source");
     const GLint useTextureLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_use_texture0");
     const GLint tevColorModeLocation =
@@ -782,11 +784,21 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             gxState.GetPositionMatrix().data());
     }
     if (textureMatrixLocation >= 0) {
+        const auto& firstStage = gxState.GetTevStageState(0);
         glUniformMatrix4fv(
             textureMatrixLocation,
             1,
             GL_TRUE,
-            gxState.GetTextureMatrix(0).data());
+            gxState.GetTexCoordGenMatrix(
+                firstStage.textureCoordinate).data());
+    }
+    if (textureSourceLocation >= 0) {
+        const auto& firstStage = gxState.GetTevStageState(0);
+        glUniform1i(
+            textureSourceLocation,
+            static_cast<GLint>(
+                gxState.GetTexCoordGenState(
+                    firstStage.textureCoordinate).source));
     }
 
     bool useTexture = false;

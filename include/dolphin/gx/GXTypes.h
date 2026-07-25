@@ -38,11 +38,7 @@ typedef struct _GXColorS10 {
 
 // Generic struct for texture objects.
 typedef struct _GXTexObj {
-#ifdef LIBPORPOISE_PORT
-	u8 pad[0x28]; // Native pointers make the host-side private object larger.
-#else
 	u8 pad[0x20]; // _00
-#endif
 } GXTexObj;       // size 0x20
 
 // Internal struct for texture objects.
@@ -51,7 +47,7 @@ typedef struct _GXTexObjPriv {
 	u32 mode1;       // _04
 	u32 image0;      // _08
 	u32 image3;      // _0C
-	void* userData;  // _10
+	u32 userData;    // _10, target pointer value
 	GXTexFmt format; // _14
 	u32 tlutName;    // _18
 	u16 loadCount;   // _1C
