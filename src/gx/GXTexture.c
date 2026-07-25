@@ -12,7 +12,13 @@ typedef struct GXHostTexUserDataEntry {
 	void* userData;
 } GXHostTexUserDataEntry;
 
+typedef struct GXHostTexImageDataEntry {
+	const GXTexObj* object;
+	void* imageData;
+} GXHostTexImageDataEntry;
+
 static GXHostTexUserDataEntry gxHostTexUserData[GX_HOST_TEX_USER_DATA_SLOTS];
+static GXHostTexImageDataEntry gxHostTexImageData[GX_HOST_TEX_USER_DATA_SLOTS];
 
 static void GXHostSetTexUserData(const GXTexObj* object, void* userData)
 {
@@ -53,6 +59,50 @@ static void* GXHostGetTexUserData(const GXTexObj* object)
 	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
 		if (gxHostTexUserData[i].object == object) {
 			return gxHostTexUserData[i].userData;
+		}
+	}
+	return NULL;
+}
+
+static void GXHostSetTexImageData(const GXTexObj* object, void* imageData)
+{
+	s32 firstFree = -1;
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTexImageData[i].object == object) {
+			if (imageData == NULL) {
+				gxHostTexImageData[i].object = NULL;
+			}
+			gxHostTexImageData[i].imageData = imageData;
+			return;
+		}
+		if (firstFree < 0 && gxHostTexImageData[i].object == NULL) {
+			firstFree = (s32)i;
+		}
+	}
+
+	if (imageData == NULL) {
+		return;
+	}
+	if (firstFree >= 0) {
+		gxHostTexImageData[firstFree].object = object;
+		gxHostTexImageData[firstFree].imageData = imageData;
+		return;
+	}
+
+	i = (u32)(((uintptr_t)object >> 2) % GX_HOST_TEX_USER_DATA_SLOTS);
+	gxHostTexImageData[i].object = object;
+	gxHostTexImageData[i].imageData = imageData;
+}
+
+static void* GXHostGetTexImageData(const GXTexObj* object)
+{
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTexImageData[i].object == object) {
+			return gxHostTexImageData[i].imageData;
 		}
 	}
 	return NULL;
@@ -238,13 +288,12 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFm
 	}
 #endif
 #ifdef LIBPORPOISE_PORT
-	memset(t, 0, sizeof(*t));
+	memset(t, 0, 0x20);
 	/*
-	 * Keep the complete native image pointer in the existing pointer-sized
-	 * field. Application user data lives in a host-side table so GXTexObj
-	 * remains ABI-compatible with objects compiled before pointer support.
+	 * GXTexObj is fixed at 0x20 bytes by the SDK ABI. Keep native image and
+	 * application pointers in host-side tables instead of enlarging it.
 	 */
-	t->userData = image_ptr;
+	GXHostSetTexImageData(obj, image_ptr);
 	GXHostSetTexUserData(obj, NULL);
 #else
 	memset(t, 0, 0x20);
@@ -505,7 +554,7 @@ void GXInitTexObjData(GXTexObj* obj, void* image_ptr)
 	imageBase = ((u32)image_ptr >> 5) & 0x01FFFFFF;
 	SET_REG_FIELD(0x301, t->image3, 21, 0, imageBase);
 #ifdef LIBPORPOISE_PORT
-	t->userData = image_ptr;
+	GXHostSetTexImageData(obj, image_ptr);
 #endif
 }
 
@@ -581,7 +630,7 @@ void GXGetTexObjAll(const GXTexObj* obj, void** image_ptr, u16* width, u16* heig
 
 	OSAssertMsgLine(0x359, obj, "Texture Object Pointer is null");
 #ifdef LIBPORPOISE_PORT
-	*image_ptr = t->userData;
+	*image_ptr = GXHostGetTexImageData(obj);
 #else
 	*image_ptr = (void*)(GET_REG_FIELD(t->image3, 21, 0) << 5);
 #endif
@@ -603,7 +652,7 @@ void* GXGetTexObjData(const GXTexObj* to)
 
 	OSAssertMsgLine(0x366, to, "Texture Object Pointer is null");
 #ifdef LIBPORPOISE_PORT
-	return t->userData;
+	return GXHostGetTexImageData(to);
 #else
 	return (void*)(GET_REG_FIELD(t->image3, 21, 0) << 5);
 #endif
@@ -853,7 +902,7 @@ void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion* region, GXTexMapID id)
 	gx->dirtyState |= 1;
 #ifdef LIBPORPOISE_PORT
 	SIM_GX_CommandProcessor_LoadTexture(
-	    id, t->userData,
+	    id, GXHostGetTexImageData(obj),
 	    (u16)(GET_REG_FIELD(t->image0, 10, 0) + 1),
 	    (u16)(GET_REG_FIELD(t->image0, 10, 10) + 1),
 	    (u32)t->format,
