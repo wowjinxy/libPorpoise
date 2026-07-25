@@ -578,6 +578,68 @@ void DecodeRGBA8(
     }
 }
 
+void DecodeRGB5A3(
+    const u8* source,
+    std::vector<u8>& rgba,
+    u16 width,
+    u16 height) {
+    const size_t blockColumns = (static_cast<size_t>(width) + 3u) / 4u;
+    const size_t blockRows = (static_cast<size_t>(height) + 3u) / 4u;
+    rgba.assign(
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u,
+        0);
+
+    for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+        for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+            for (size_t y = 0; y < 4u; ++y) {
+                for (size_t x = 0; x < 4u; ++x) {
+                    const u16 packed =
+                        static_cast<u16>(
+                            (static_cast<u16>(source[0]) << 8u) |
+                            static_cast<u16>(source[1]));
+                    source += 2u;
+
+                    const size_t destinationX = blockX * 4u + x;
+                    const size_t destinationY = blockY * 4u + y;
+                    if (destinationX >= width || destinationY >= height) {
+                        continue;
+                    }
+
+                    u8 red;
+                    u8 green;
+                    u8 blue;
+                    u8 alpha;
+                    if ((packed & 0x8000u) != 0u) {
+                        red = static_cast<u8>(
+                            ((packed >> 10u) & 0x1fu) * 255u / 31u);
+                        green = static_cast<u8>(
+                            ((packed >> 5u) & 0x1fu) * 255u / 31u);
+                        blue = static_cast<u8>(
+                            (packed & 0x1fu) * 255u / 31u);
+                        alpha = 255u;
+                    } else {
+                        alpha = static_cast<u8>(
+                            ((packed >> 12u) & 0x07u) * 255u / 7u);
+                        red = static_cast<u8>(
+                            ((packed >> 8u) & 0x0fu) * 17u);
+                        green = static_cast<u8>(
+                            ((packed >> 4u) & 0x0fu) * 17u);
+                        blue = static_cast<u8>(
+                            (packed & 0x0fu) * 17u);
+                    }
+
+                    const size_t destination =
+                        (destinationY * width + destinationX) * 4u;
+                    rgba[destination] = red;
+                    rgba[destination + 1u] = green;
+                    rgba[destination + 2u] = blue;
+                    rgba[destination + 3u] = alpha;
+                }
+            }
+        }
+    }
+}
+
 }
 
 namespace SIM::GX {
@@ -738,6 +800,7 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             texture.width > 0 &&
             texture.height > 0 &&
             (texture.format == GX_TF_I4 ||
+             texture.format == GX_TF_RGB5A3 ||
              texture.format == GX_TF_RGBA8)) {
             if (mTextures[textureIndex] == 0u) {
                 glGenTextures(1, &mTextures[textureIndex]);
@@ -748,6 +811,12 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
                 std::vector<u8> rgba;
                 if (texture.format == GX_TF_RGBA8) {
                     DecodeRGBA8(
+                        static_cast<const u8*>(texture.data),
+                        rgba,
+                        texture.width,
+                        texture.height);
+                } else if (texture.format == GX_TF_RGB5A3) {
+                    DecodeRGB5A3(
                         static_cast<const u8*>(texture.data),
                         rgba,
                         texture.width,
