@@ -129,6 +129,7 @@ void GXInitFifoBase(GXFifoObj* fifo, void* base, u32 size)
 	realFifo->end        = (u8*)base + size - 4;
 	realFifo->size       = size;
 	realFifo->rwDistance = 0;
+	((struct __GXFifoObj*)fifo)->wrap = GX_FALSE;
 	GXInitFifoLimits(fifo, size - 0x4000, (size >> 1) & ~0x1F);
 	GXInitFifoPtrs(fifo, base, base);
 }
@@ -299,6 +300,7 @@ void __GXSaveCPUFifoAux(struct __GXFifoObj* realFifo)
 	realFifo->base  = OSPhysicalToCached(__piReg[PI_FIFO_START]);
 	realFifo->top   = OSPhysicalToCached(__piReg[PI_FIFO_END]);
 	realFifo->wrPtr = OSPhysicalToCached(__piReg[PI_FIFO_PTR] & 0xFBFFFFFF);
+	realFifo->wrap  = GET_REG_FIELD(__piReg[PI_FIFO_PTR], 1, 26);
 	if (CPGPLinked) {
 		SOME_MACRO1(realFifo);
 		SOME_MACRO2(realFifo);
@@ -362,11 +364,11 @@ void GXGetFifoStatus(GXFifoObj* fifo, GXBool* overhi, GXBool* underflow, u32* fi
 	}
 	if (realFifo == CPUFifo) {
 		__GXSaveCPUFifoAux(realFifo);
-		*fifowrap = (int)GET_REG_FIELD(__piReg[PI_FIFO_PTR], 1, 26);
 	}
 	*overhi    = (realFifo->count > realFifo->hiWatermark);
 	*underflow = (realFifo->count < realFifo->loWatermark);
 	*fifoCount = (realFifo->count);
+	*fifowrap  = realFifo->wrap;
 	*cpuWrite  = (CPUFifo == realFifo);
 	*gpRead    = (GPFifo == realFifo);
 }
@@ -382,6 +384,7 @@ void GXGetFifoPtrs(GXFifoObj* fifo, void** readPtr, void** writePtr)
 	OSAssertMsgLine(0x3F2, realFifo == CPUFifo || realFifo == GPFifo, "GXGetFifoPtrs: fifo is not CPU or GP fifo");
 	if (realFifo == CPUFifo) {
 		realFifo->wrPtr = OSPhysicalToCached(__piReg[PI_FIFO_PTR] & 0xFBFFFFFF);
+		realFifo->wrap  = GET_REG_FIELD(__piReg[PI_FIFO_PTR], 1, 26);
 	}
 	if (realFifo == GPFifo) {
 		SOME_MACRO1(realFifo);
@@ -400,9 +403,9 @@ void GXGetFifoPtrs(GXFifoObj* fifo, void** readPtr, void** writePtr)
  * @TODO: Documentation
  * @note UNUSED Size: 000008
  */
-void* GXGetFifoBase(GXFifoObj* fifo)
+void* GXGetFifoBase(const GXFifoObj* fifo)
 {
-	struct __GXFifoObj* realFifo = (struct __GXFifoObj*)fifo;
+	const struct __GXFifoObj* realFifo = (const struct __GXFifoObj*)fifo;
 
 	return realFifo->base;
 }
@@ -411,9 +414,9 @@ void* GXGetFifoBase(GXFifoObj* fifo)
  * @TODO: Documentation
  * @note UNUSED Size: 000008
  */
-u32 GXGetFifoSize(GXFifoObj* fifo)
+u32 GXGetFifoSize(const GXFifoObj* fifo)
 {
-	struct __GXFifoObj* realFifo = (struct __GXFifoObj*)fifo;
+	const struct __GXFifoObj* realFifo = (const struct __GXFifoObj*)fifo;
 
 	return realFifo->size;
 }
@@ -422,12 +425,26 @@ u32 GXGetFifoSize(GXFifoObj* fifo)
  * @TODO: Documentation
  * @note UNUSED Size: 000014
  */
-void GXGetFifoLimits(GXFifoObj* fifo, u32* hi, u32* lo)
+void GXGetFifoLimits(const GXFifoObj* fifo, u32* hi, u32* lo)
 {
-	struct __GXFifoObj* realFifo = (struct __GXFifoObj*)fifo;
+	const struct __GXFifoObj* realFifo = (const struct __GXFifoObj*)fifo;
 
 	*hi = realFifo->hiWatermark;
 	*lo = realFifo->loWatermark;
+}
+
+u32 GXGetFifoCount(const GXFifoObj* fifo)
+{
+	const struct __GXFifoObj* realFifo = (const struct __GXFifoObj*)fifo;
+
+	return (u32)realFifo->count;
+}
+
+GXBool GXGetFifoWrap(const GXFifoObj* fifo)
+{
+	const struct __GXFifoObj* realFifo = (const struct __GXFifoObj*)fifo;
+
+	return realFifo->wrap;
 }
 
 /**
@@ -621,6 +638,11 @@ GXFifoObj* GXGetCPUFifo(void)
 GXFifoObj* GXGetGPFifo(void)
 {
 	return (GXFifoObj*)GPFifo;
+}
+
+GXBool GXIsCPUGPFifoLinked(void)
+{
+	return CPGPLinked;
 }
 
 /**

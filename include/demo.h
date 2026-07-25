@@ -2,6 +2,7 @@
 #define __DEMO_H__
 
 #include <dolphin.h>
+#include <revolution/mem.h>
 #include <charPipeline/texPalette.h>
 #include <stdio.h>
 
@@ -20,6 +21,9 @@ extern void DEMODoneRender();
 extern void DEMOSwapBuffers();
 extern GXRenderModeObj* DEMOGetRenderModeObj();
 extern void* DEMOGetCurrentBuffer();
+
+extern MEMAllocator DemoAllocator1;
+extern MEMAllocator DemoAllocator2;
 
 extern void DEMOEnableGPHangWorkaround(u32 timeoutFrames);
 extern void DEMOReInit(GXRenderModeObj *mode);
@@ -47,4 +51,3 @@ void DEMOSetTevOp(GXTevStageID stage, GXTevMode mode);
 #endif
 
 #endif
-

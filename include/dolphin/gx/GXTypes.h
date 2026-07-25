@@ -38,7 +38,11 @@ typedef struct _GXColorS10 {
 
 // Generic struct for texture objects.
 typedef struct _GXTexObj {
+#ifdef LIBPORPOISE_PORT
+	u8 pad[0x28]; // Native pointers make the host-side private object larger.
+#else
 	u8 pad[0x20]; // _00
+#endif
 } GXTexObj;       // size 0x20
 
 // Internal struct for texture objects.
@@ -117,7 +121,7 @@ typedef struct _GXVtxDescList {
 // Struct for vertex attribute formats.
 typedef struct _GXVtxAttrFmtList {
 	GXAttr attr;     // _00
-	GXCompCnt count; // _04
+	GXCompCnt cnt;   // _04
 	GXCompType type; // _08
 	u8 frac;         // _0C
 } GXVtxAttrFmtList;

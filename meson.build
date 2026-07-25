@@ -152,3 +152,5 @@ standalone = get_option('standalone')
 if(standalone) 
     subdir('standalone')
 endif
+
+subdir('tests')

@@ -13,6 +13,15 @@
 static SDL_GLContext context;
 static SDL_Window * window;
 
+static void UpdateDrawableViewport() {
+    int drawableWidth = 0;
+    int drawableHeight = 0;
+    SDL_GL_GetDrawableSize(window, &drawableWidth, &drawableHeight);
+    if (drawableWidth > 0 && drawableHeight > 0) {
+        glViewport(0, 0, drawableWidth, drawableHeight);
+    }
+}
+
 extern const char * SIM_GXVertexShader;
 extern const char * SIM_GXFragmentShader;
 
@@ -98,7 +107,7 @@ static GLuint gxShaderProgramId;
 static GLuint gxVertexShader;
 static GLuint gxFragmentShader;
 
-void DolphinMain();
+extern "C" void DolphinMain();
 
 int main(int argc, char** argv) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK) != 0) {
@@ -133,7 +142,7 @@ int main(int argc, char** argv) {
     }
     SDL_GL_SetSwapInterval(1);
 
-    glViewport(0, 0, windowWidth, windowHeight);
+    UpdateDrawableViewport();
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
 
@@ -169,14 +178,24 @@ void SIM_Render() {
 
         if (Event.type == SDL_WINDOWEVENT &&
             Event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-            glViewport(0, 0, Event.window.data1, Event.window.data2);
+            UpdateDrawableViewport();
         }
     }
 
-    //DrawTestTriangle();
+    // Present the EFB contents, then apply a requested GX copy clear to the
+    // next frame just as GXCopyDisp(..., GX_TRUE) does on the console.
     SDL_GL_SwapWindow(window);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f );
-    glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT );
+    auto& gxState = SIM::GX::GetGlobalState();
+    if (gxState.ConsumeCopyClearRequest()) {
+        const auto& clearColor = gxState.GetCopyClearColor();
+        glClearColor(
+            clearColor[0],
+            clearColor[1],
+            clearColor[2],
+            clearColor[3]);
+        glClearDepth(gxState.GetCopyClearDepth());
+        glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+    }
 }
 
 void SIM_DebugBreak() {

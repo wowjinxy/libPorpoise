@@ -1,5 +1,7 @@
 #include <demo.h>
 
+extern "C" void DolphinMain(void);
+
 #define STRUT_LN 130
 #define STRUT_SD 4
 #define JOINT_SD 10

@@ -15,6 +15,7 @@ void GXDrawCube(void);
 void GXDrawDodeca(void);
 void GXDrawOctahedron(void);
 void GXDrawIcosahedron(void);
+u32 GXGenNormalTable(u8 depth, f32* table);
 
 #ifdef __cplusplus
 }

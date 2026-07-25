@@ -3,8 +3,6 @@
   File:     DEMOInit.h
   
   Demo initialization framework header.
-  
-  Based on Nintendo's Revolution SDK demo library.
  *---------------------------------------------------------------------------*/
 
 #ifndef DOLPHIN_DEMO_INIT_H
@@ -16,6 +14,7 @@ extern "C" {
 
 #include <dolphin/types.h>
 #include <dolphin/gx/GXStruct.h>
+#include <revolution/mem/allocator.h>
 
 /*---------------------------------------------------------------------------*
  * Global Variables
@@ -35,8 +34,8 @@ extern u32  DemoUseMEMHeap;    /* Set to 1 before DEMOInit() to use MEM heap */
 extern BOOL DemoUseMEM2XFB;    /* Set to TRUE before DEMOInit() to use MEM2 for XFB */
 
 /* Memory allocators */
-extern void* DemoAllocator1;  /* MEM1 allocator (MEMAllocator or OSHeapHandle) */
-extern void* DemoAllocator2;  /* MEM2 allocator (MEMAllocator or OSHeapHandle) */
+extern MEMAllocator DemoAllocator1;
+extern MEMAllocator DemoAllocator2;
 
 /*---------------------------------------------------------------------------*
  * Function Prototypes

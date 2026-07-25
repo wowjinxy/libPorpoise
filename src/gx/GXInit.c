@@ -3,16 +3,6 @@
 #include <dolphin/hw_regs.h>
 #include <stddef.h>
 
-static struct __GXData_struct gxData;
-struct __GXData_struct* gx = &gxData;
-vu16* __memReg;
-vu16* __peReg;
-vu16* __cpReg;
-vu32* __piReg;
-#if DEBUG
-GXBool __GXinBegin;
-#endif
-
 /**
  * @TODO: Documentation
  * @note UNUSED Size: 000010
@@ -53,7 +43,7 @@ static void DisableWriteGatherPipe(void)
 /**
  * @TODO: Documentation
  */
-static GXTexRegion* __GXDefaultTexRegionCallback(GXTexObj* t_obj, GXTexMapID unused)
+static GXTexRegion* __GXDefaultTexRegionCallback(const GXTexObj* t_obj, GXTexMapID unused)
 {
 	GXTexFmt fmt = GXGetTexObjFmt(t_obj);
 
@@ -96,6 +86,9 @@ GXFifoObj* GXInit(void* base, u32 size)
 
 	gx->inDispList    = FALSE;
 	gx->dlSaveContext = TRUE;
+	gx->abtWaitPECopy = TRUE;
+	gx->zOffset       = 0.0f;
+	gx->zScale        = 16777216.0f;
 #if DEBUG
 	__GXinBegin = FALSE;
 #endif
