@@ -20,7 +20,7 @@ libgx = library('gx',
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libgx_srcs],
-    native: true
+    native: build_target != 'gc'
 )
 
 libporpoise_libs += libgx

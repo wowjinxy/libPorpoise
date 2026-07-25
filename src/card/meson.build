@@ -21,7 +21,7 @@ libcard = library('card',
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libcard_srcs],
-    native: true
+    native: build_target != 'gc'
 )
 
 libporpoise_libs += libcard

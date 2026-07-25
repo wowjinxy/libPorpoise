@@ -13,5 +13,8 @@ subdir('mtx')
 subdir('os')
 subdir('pad')
 subdir('si')
-subdir('sim')
 subdir('vi')
+
+if(build_target != 'gc')
+subdir('sim')
+endif

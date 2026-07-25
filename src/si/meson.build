@@ -7,7 +7,7 @@ libsi = library('si',
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libsi_srcs],
-    native: true
+    native: build_target != 'gc'
 )
 
 libporpoise_libs += libsi

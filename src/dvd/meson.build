@@ -11,7 +11,7 @@ libdvd = library('dvd',
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libdvd_srcs],
-    native: true
+    native: build_target != 'gc'
 )
 
 libporpoise_libs += libdvd

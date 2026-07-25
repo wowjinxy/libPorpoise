@@ -6,7 +6,7 @@ libdb = library('db',
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libdb_srcs],
-    native: true
+    native: build_target != 'gc'
 )
 
 libporpoise_libs += libdb

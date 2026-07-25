@@ -6,7 +6,7 @@ libbase = library('base',
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libbase_srcs],
-    native: true
+    native: build_target != 'gc'
 )
 
 libporpoise_libs += libbase

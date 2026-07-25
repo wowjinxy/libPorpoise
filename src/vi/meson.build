@@ -6,7 +6,7 @@ libvi = library('vi',
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libvi_srcs],
-    native: true
+    native: build_target != 'gc'
 )
 
 libporpoise_libs += libvi
