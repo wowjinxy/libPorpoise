@@ -7,6 +7,7 @@ static GXDrawSyncCallback TokenCB;
 static GXDrawDoneCallback DrawDoneCB;
 static u8 DrawDone;
 static OSThreadQueue FinishQueue;
+static GXBool ResetWritePipe;
 
 /**
  * @TODO: Documentation
@@ -30,6 +31,11 @@ void GXSetMisc(GXMiscToken token, u32 val)
 	{
 		OSAssertMsgLine(210, !gx->inDispList, "GXSetMisc: Cannot change DL context setting while making a display list");
 		gx->dlSaveContext = (val > 0);
+		break;
+	}
+	case GX_MT_ABORT_WAIT_COPYOUT:
+	{
+		gx->abtWaitPECopy = (val > 0);
 		break;
 	}
 	case GX_MT_NULL:
@@ -67,6 +73,11 @@ void GXFlush(void)
 	}
 #endif
 	PPCSync();
+}
+
+void GXSetResetWritePipe(GXBool reset)
+{
+	ResetWritePipe = reset;
 }
 
 /**

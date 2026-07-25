@@ -6,9 +6,9 @@ static void OSStopwatchClearStats(OSStopwatch* sw) {
     sw->min = LLONG_MAX;
     sw->max = 0;
     sw->last = 0;
-    sw->start = 0;
     sw->hits = 0;
     sw->running = FALSE;
+    sw->_padding = 0;
 }
 
 void OSInitStopwatch(OSStopwatch* sw, char* name) {
@@ -29,7 +29,7 @@ void OSStartStopwatch(OSStopwatch* sw) {
         return;
     }
 
-    sw->start = OSGetTime();
+    sw->last = OSGetTime();
     sw->running = TRUE;
 }
 
@@ -46,13 +46,12 @@ void OSStopStopwatch(OSStopwatch* sw) {
     }
 
     now = OSGetTime();
-    elapsed = now - sw->start;
+    elapsed = now - sw->last;
     if (elapsed < 0) {
         elapsed = 0;
     }
 
     sw->running = FALSE;
-    sw->last = elapsed;
     sw->total += elapsed;
     sw->hits += 1;
 
@@ -73,7 +72,7 @@ OSTime OSCheckStopwatch(OSStopwatch* sw) {
         return sw->total;
     }
 
-    return sw->total + (OSGetTime() - sw->start);
+    return sw->total + (OSGetTime() - sw->last);
 }
 
 void OSResetStopwatch(OSStopwatch* sw) {
@@ -89,7 +88,6 @@ void OSDumpStopwatch(OSStopwatch* sw) {
     OSTime minv;
     OSTime maxv;
     OSTime avg;
-    OSTime last;
     u32 hits;
     const char* name;
 
@@ -102,7 +100,6 @@ void OSDumpStopwatch(OSStopwatch* sw) {
     minv = (sw->hits > 0) ? sw->min : 0;
     maxv = (sw->hits > 0) ? sw->max : 0;
     avg = (sw->hits > 0) ? (total / (OSTime)sw->hits) : 0;
-    last = sw->last;
     hits = sw->hits;
     name = sw->name ? sw->name : "(unnamed)";
 
@@ -121,9 +118,6 @@ void OSDumpStopwatch(OSStopwatch* sw) {
     OSReport("  max   : %lld ticks (%lld us)\n",
              (long long)maxv,
              (long long)OSTicksToMicroseconds(maxv));
-    OSReport("  last  : %lld ticks (%lld us)\n",
-             (long long)last,
-             (long long)OSTicksToMicroseconds(last));
     OSReport("  state : %s\n", sw->running ? "running" : "stopped");
 }
 

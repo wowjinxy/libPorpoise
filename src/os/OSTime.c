@@ -35,8 +35,14 @@ ASM OSTime OSGetTime(void) {
 	blr
 #endif // clang-format on
 #ifdef LIBPORPOISE_PORT
-	OSTime result = (OSTime)time(NULL);
-	return result;
+	const Uint64 counter = SDL_GetPerformanceCounter();
+	const Uint64 frequency = SDL_GetPerformanceFrequency();
+	const Uint64 timerClock = (Uint64)OS_TIMER_CLOCK;
+	if (frequency == 0 || timerClock == 0) {
+		return 0;
+	}
+	return (OSTime)((counter / frequency) * timerClock +
+	                ((counter % frequency) * timerClock) / frequency);
 #endif
 }
 

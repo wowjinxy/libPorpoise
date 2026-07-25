@@ -165,8 +165,8 @@ set(PORPOISE_SOURCES
     src/db/dbprintf.c
     
     # PAD (Controller)
-    src/pad/PAD.c
-    src/pad/PADClamp.c
+    src/pad/PadHost.c
+    src/pad/Padclamp.c
     src/pad/PADConfig.c
     
     # DVD (File System)

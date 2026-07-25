@@ -202,6 +202,17 @@ ASM void WriteMTXPS3x3(register const Mtx33 mtx, register volatile f32* dest) {
     psq_st  f3, 0 (dest), 0, 0
     stfs    f4, 0 (dest)
 	#endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	GX_WRITE_F32(mtx[0][0]);
+	GX_WRITE_F32(mtx[0][1]);
+	GX_WRITE_F32(mtx[0][2]);
+	GX_WRITE_F32(mtx[1][0]);
+	GX_WRITE_F32(mtx[1][1]);
+	GX_WRITE_F32(mtx[1][2]);
+	GX_WRITE_F32(mtx[2][0]);
+	GX_WRITE_F32(mtx[2][1]);
+	GX_WRITE_F32(mtx[2][2]);
+#endif
 }
 
 /**
@@ -218,6 +229,16 @@ ASM void WriteMTXPS4x2(register const Mtx mtx, register volatile f32* dest) {
     psq_st  f2, 0 (dest), 0, 0
     psq_st  f3, 0 (dest), 0, 0
 	#endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	GX_WRITE_F32(mtx[0][0]);
+	GX_WRITE_F32(mtx[0][1]);
+	GX_WRITE_F32(mtx[0][2]);
+	GX_WRITE_F32(mtx[0][3]);
+	GX_WRITE_F32(mtx[1][0]);
+	GX_WRITE_F32(mtx[1][1]);
+	GX_WRITE_F32(mtx[1][2]);
+	GX_WRITE_F32(mtx[1][3]);
+#endif
 }
 
 #define GX_WRITE_MTX_ELEM(addr, value)          \
@@ -488,10 +509,10 @@ void GXSetViewportJitter(f32 left, f32 top, f32 wd, f32 ht, f32 nearz, f32 farz,
 	ox = 340.0f + (left + (wd / 2.0f));
 	oy = 340.0f + (top + (ht / 2.0f));
 #endif
-	zmin        = 1.6777215e7f * nearz;
-	zmax        = 1.6777215e7f * farz;
+	zmin        = gx->zScale * nearz;
+	zmax        = gx->zScale * farz;
 	sz          = zmax - zmin;
-	oz          = zmax;
+	oz          = zmax + gx->zOffset;
 	gx->vpLeft  = left;
 	gx->vpTop   = top;
 	gx->vpWd    = wd;
@@ -523,6 +544,32 @@ void GXSetViewportJitter(f32 left, f32 top, f32 wd, f32 ht, f32 nearz, f32 farz,
 void GXSetViewport(f32 left, f32 top, f32 wd, f32 ht, f32 nearz, f32 farz)
 {
 	GXSetViewportJitter(left, top, wd, ht, nearz, farz, 1U);
+}
+
+void GXSetZScaleOffset(f32 scale, f32 offset)
+{
+	f32 zmin;
+	f32 zmax;
+	f32 scaleZ;
+	f32 offsetZ;
+
+	CHECK_GXBEGIN(0x38A, "GXSetZScaleOffset");
+
+	gx->zScale  = scale * 16777215.0f + 1.0f;
+	gx->zOffset = offset * 16777215.0f;
+
+	zmin    = gx->vpNearz * gx->zScale;
+	zmax    = gx->vpFarz * gx->zScale;
+	scaleZ  = zmax - zmin;
+	offsetZ = zmax + gx->zOffset;
+
+	GX_WRITE_U8(0x10);
+	GX_WRITE_U32(0x101C);
+	GX_WRITE_F32(scaleZ);
+	GX_WRITE_U8(0x10);
+	GX_WRITE_U32(0x101F);
+	GX_WRITE_F32(offsetZ);
+	gx->bpSent = GX_TRUE;
 }
 
 /**

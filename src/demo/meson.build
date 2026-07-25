@@ -5,6 +5,7 @@ libdemo_srcs = files(
     'DEMOPad.c',
     'DEMOPuts.c',
     'DEMOStats.c',
+    'DEMOTpl.c',
     'DEMOWin.c'
 )
 

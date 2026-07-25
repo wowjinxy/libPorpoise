@@ -52,6 +52,7 @@ class CommandProcessor {
   CommandProcessor();
   ~CommandProcessor() = default;
   void ProcessFifoData(u8 * data, size_t len);
+  void ProcessDisplayList(const u8* data, size_t len);
   template <typename DataType>
   void AddFifoData(DataType data);
 
@@ -59,7 +60,10 @@ class CommandProcessor {
   int GetOpcodeArgSize(Opcode code);
   void HandleBeginPrimitive(GXPrimitive primitive, size_t numVerts);
   void ProcessOpcode();
+  void ProcessBpReg(u32 value);
   void ProcessCpReg(u8 regAddr, u32 value);
+  u16 ReadU16(const u8* data) const;
+  u32 ReadU32(const u8* data) const;
   static inline u32 GetRegValue(u32 reg, u32 size, u32 shift) {
     return (reg >> shift) & ((1u << size) - 1u);
   }
@@ -80,6 +84,7 @@ class CommandProcessor {
   GXCompCnt mColorComponent = GX_COMPCNT_NULL;
   GXCompCnt mTexCoordComponent = GX_COMPCNT_NULL;
   GXVtxFmt mLastVertexFormatIdx = GX_VTXFMT0;
+  bool mInputBigEndian = false;
 };
 
 

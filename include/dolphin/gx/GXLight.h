@@ -5,6 +5,7 @@
 
 #include <dolphin/gx/GXEnum.h>
 #include <dolphin/gx/GXTypes.h>
+#include <dolphin/vec.h>
 
 BEGIN_SCOPE_EXTERN_C
 
@@ -55,6 +56,9 @@ extern void GXLoadLightObjIndx(u32 objIndex, GXLightID light);
 #define GXInitSpecularDirVec(obj, vec) (GXInitSpecularDir((obj), *(f32*)(vec), *((f32*)(vec) + 1), *((f32*)(vec) + 2)))
 
 #define GXInitLightShininess(obj, shine) (GXInitLightAttn((obj), 0.0f, 0.0f, 1.0f, (shine) / 2.0f, 0.0f, 1.0f - (shine) / 2.0f))
+#define GXInitLightPosv(obj, vec) GXInitLightPosVec((obj), (vec))
+#define GXInitLightDirv(obj, vec) GXInitLightDirVec((obj), (vec))
+#define GXInitSpecularDirv(obj, vec) GXInitSpecularDirVec((obj), (vec))
 
 ////////////////////////////////////////////
 

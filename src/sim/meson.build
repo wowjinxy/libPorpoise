@@ -6,7 +6,8 @@ libsim_srcs = files(
     'sim_gx_GlRenderer.cpp',
     'sim_gx_Geometry.cpp',
     'sim_gx_Shader.cpp',
-    'sim_gx_State.cpp'
+    'sim_gx_State.cpp',
+    'sim_gx_VertexDecoder.cpp'
 )
 
 libsim = library('sim',
