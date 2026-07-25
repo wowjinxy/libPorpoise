@@ -20,6 +20,7 @@ libos_srcs = files(
     'OSResetSW.c',
     'OSRtc.c',
 	'OSSync.c',
+    'OSStopwatch.c',
     'OSThread.c',
     'OSTime.c'
 )

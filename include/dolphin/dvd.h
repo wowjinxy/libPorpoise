@@ -145,9 +145,11 @@ void* DVDGetFSTLocation();
 BOOL DVDOpenDir(const char* dirName, DVDDir* dir);
 BOOL DVDReadDir(DVDDir* dir, DVDDirEntry* dirEntry);
 BOOL DVDCloseDir(DVDDir* dir);
+void DVDRewindDir(DVDDir* dir);
 BOOL DVDGetCurrentDir(char* path, u32 maxLength);
 BOOL DVDChangeDir(const char* dirName);
 s32 DVDConvertPathToEntrynum(const char* path);
+BOOL DVDSetRootDirectory(const char* path);
 
 // Other disk functions.
 void __DVDLowSetWAType(u32 type, u32 location);
@@ -208,7 +210,11 @@ void __DVDPrepareResetAsync(DVDCBCallback callback);
 
 ////// USEFUL DVD DEFINES ////////
 // Macro for reading.
+#define DVDRead(fileInfo, addr, length, offset) DVDReadPrio((fileInfo), (addr), (length), (offset), 2)
 #define DVDReadAsync(fileInfo, addr, length, offset, callback) DVDReadAsyncPrio((fileInfo), (addr), (length), (offset), (callback), 2)
+#define DVDGetLength(fileInfo) ((fileInfo)->length)
+#define DVDGetUserData(block) ((block)->userData)
+#define DVDSetUserData(block, data) ((block)->userData = (data))
 
 // Minimum transfer size.
 #define DVD_MIN_TRANSFER_SIZE 32

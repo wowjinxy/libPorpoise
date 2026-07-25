@@ -12,13 +12,13 @@ BEGIN_SCOPE_EXTERN_C
 
 #define MTXDegToRad(a) ((a) * (3.1415927f / 180.0f))
 #define MTXRowCol(m,r,c) ((m)[(r)][(c)])
-#define MTXRotDeg(m, axis, deg) \
-    MTXRotRad((m), (axis), MTXDegToRad(deg))
+#define MTXRotDeg(m, axis, deg) MTXRotRad((m), (axis), MTXDegToRad(deg))
+#define MTXRotAxisDeg(m, axis, deg) MTXRotAxisRad((m), (axis), MTXDegToRad(deg))
+#define MTXRotAxis(m, axis, deg) MTXRotAxisDeg((m), (axis), (deg))
 
 typedef f32 Mtx[3][4];
 typedef f32 Mtx23[2][3];
 typedef f32 Mtx33[3][3];
-typedef f32 Mtx34[3][4];
 typedef f32 Mtx44[4][4];
 
 typedef f32 (*MtxP)[4];
@@ -31,6 +31,9 @@ typedef f32 PSQuaternion[4];
 typedef struct Quaternion {
 	f32 x, y, z, w;
 } Quaternion;
+typedef Quaternion* QuaternionPtr;
+typedef Quaternion Qtrn;
+typedef Qtrn* QtrnPtr;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -53,6 +56,9 @@ typedef struct Quaternion {
 #define MTXScaleApply       C_MTXScaleApply
 #define MTXQuat             C_MTXQuat
 #define MTXReflect          C_MTXReflect
+#define MTXMultVec          C_MTXMultVec
+#define MTXMultVecArray     C_MTXMultVecArray
+#define MTXMultVecSR        C_MTXMultVecSR
 #define MTXLookAt           C_MTXLookAt
 #define MTXLightFrustum     C_MTXLightFrustum
 #define MTXLightPerspective C_MTXLightPerspective
@@ -101,6 +107,9 @@ typedef struct Quaternion {
 #define MTXScaleApply       PSMTXScaleApply
 #define MTXQuat             PSMTXQuat
 #define MTXReflect          PSMTXReflect
+#define MTXMultVec          PSMTXMultVec
+#define MTXMultVecArray     PSMTXMultVecArray
+#define MTXMultVecSR        PSMTXMultVecSR
 #define MTXLookAt           C_MTXLookAt           // No paired-singles implementation
 #define MTXLightFrustum     C_MTXLightFrustum     // No paired-singles implementation
 #define MTXLightPerspective C_MTXLightPerspective // No paired-singles implementation
@@ -175,6 +184,12 @@ void C_MTXQuat(Mtx m, const Quaternion* quat);
 void PSMTXQuat(Mtx m, const Quaternion* quat);
 void C_MTXReflect(Mtx m, const Vec* p, const Vec* n);
 void PSMTXReflect(Mtx m, const Vec* p, const Vec* n);
+void C_MTXMultVec(const Mtx m, const Vec* src, Vec* dst);
+void PSMTXMultVec(const Mtx m, const Vec* src, Vec* dst);
+void C_MTXMultVecArray(const Mtx m, const Vec* src, Vec* dst, u32 count);
+void PSMTXMultVecArray(const Mtx m, const Vec* src, Vec* dst, u32 count);
+void C_MTXMultVecSR(const Mtx m, const Vec* src, Vec* dst);
+void PSMTXMultVecSR(const Mtx m, const Vec* src, Vec* dst);
 void C_MTXLookAt(Mtx m, const Vec* camPos, const Vec* camUp, const Vec* target);
 void C_MTXLightFrustum(Mtx m, f32 t, f32 b, f32 l, f32 r, f32 n, f32 scaleS, f32 scaleT, f32 transS, f32 transT);
 void C_MTXLightPerspective(Mtx m, f32 fovY, f32 aspect, f32 scaleS, f32 scaleT, f32 transS, f32 transT);

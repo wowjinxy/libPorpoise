@@ -6,6 +6,10 @@
 
 static s32 fontShift = 0;
 static GXTexObj fontTexObj;
+#ifdef LIBPORPOISE_PORT
+static u32 hostFontBitmap[(0x80 - 0x20) * 8] ATTRIBUTE_ALIGN(32);
+static GXBool hostFontBitmapReady = GX_FALSE;
+#endif
 
 void DEMOSetFontType(s32 attr) {
 
@@ -33,8 +37,25 @@ void DEMOLoadFont(GXTexMapID texMap, GXTexMtx texMtx, DMTexFlt texFlt) {
   Mtx fontTMtx;
   u16 width = 64;
   u16 height = (u16)((0x80 - 0x20) * 8 * 8 / width);
+  void *fontBitmap = DEMOFontBitmap;
 
-  GXInitTexObj(&fontTexObj, DEMOFontBitmap, width, height, GX_TF_I4, GX_CLAMP,
+#ifdef LIBPORPOISE_PORT
+  if (!hostFontBitmapReady) {
+    u32 i;
+    for (i = 0; i < (0x80 - 0x20) * 8; ++i) {
+      u32 row = DEMOFontBitmap[i];
+      hostFontBitmap[i] =
+          ((row & 0x000000ffu) << 24) |
+          ((row & 0x0000ff00u) << 8) |
+          ((row & 0x00ff0000u) >> 8) |
+          ((row & 0xff000000u) >> 24);
+    }
+    hostFontBitmapReady = GX_TRUE;
+  }
+  fontBitmap = hostFontBitmap;
+#endif
+
+  GXInitTexObj(&fontTexObj, fontBitmap, width, height, GX_TF_I4, GX_CLAMP,
                GX_CLAMP, GX_FALSE);
 
   if (texFlt == DMTF_POINTSAMPLE) {

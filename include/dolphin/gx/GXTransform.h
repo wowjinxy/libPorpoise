@@ -22,6 +22,7 @@ extern void __GXSetMatrixIndex(GXAttr index);
 // Viewport functions.
 extern void __GXSetViewport(); // confirm types
 extern void GXSetViewport(f32 left, f32 top, f32 width, f32 height, f32 nearZ, f32 farZ);
+extern void GXSetZScaleOffset(f32 scale, f32 offset);
 
 // Scissor/clip functions.
 extern void GXSetScissor(u32 left, u32 top, u32 width, u32 height);

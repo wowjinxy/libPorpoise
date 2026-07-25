@@ -32,6 +32,7 @@ typedef struct __GXFifoObj {
 	void* rdPtr;
 	void* wrPtr;
 	s32 count;
+	GXBool wrap;
 	u8 bind_cpu;
 	u8 bind_gp;
 } __GXFifoObj;
@@ -90,6 +91,11 @@ static inline void GXPosition1x8(const u8 x)
 	GX_WRITE_U8(x);
 }
 
+static inline void GXPosition1x16(const u16 x)
+{
+	GX_WRITE_U16(x);
+}
+
 static inline void GXPosition2f32(const f32 x, const f32 y)
 {
 	GX_WRITE_F32(x);
@@ -101,6 +107,20 @@ static inline void GXPosition3s16(const s16 x, const s16 y, const s16 z)
 	GX_WRITE_S16(x);
 	GX_WRITE_S16(y);
 	GX_WRITE_S16(z);
+}
+
+static inline void GXPosition3s8(const s8 x, const s8 y, const s8 z)
+{
+	GX_WRITE_U8((u8)x);
+	GX_WRITE_U8((u8)y);
+	GX_WRITE_U8((u8)z);
+}
+
+static inline void GXPosition3u8(const u8 x, const u8 y, const u8 z)
+{
+	GX_WRITE_U8(x);
+	GX_WRITE_U8(y);
+	GX_WRITE_U8(z);
 }
 
 static inline void GXPosition3u16(const u16 x, const u16 y, const u16 z)
@@ -124,9 +144,43 @@ static inline void GXNormal3f32(const f32 x, const f32 y, const f32 z)
 	GX_WRITE_F32(z);
 }
 
+static inline void GXNormal1x8(const u8 x)
+{
+	GX_WRITE_U8(x);
+}
+
+static inline void GXNormal1x16(const u16 x)
+{
+	GX_WRITE_U16(x);
+}
+
+static inline void GXNormal3s8(const s8 x, const s8 y, const s8 z)
+{
+	GX_WRITE_U8((u8)x);
+	GX_WRITE_U8((u8)y);
+	GX_WRITE_U8((u8)z);
+}
+
+static inline void GXNormal3s16(const s16 x, const s16 y, const s16 z)
+{
+	GX_WRITE_S16(x);
+	GX_WRITE_S16(y);
+	GX_WRITE_S16(z);
+}
+
 static inline void GXColor1x8(const u8 x)
 {
 	GX_WRITE_U8(x);
+}
+
+static inline void GXColor1x16(const u16 x)
+{
+	GX_WRITE_U16(x);
+}
+
+static inline void GXColor1u16(const u16 x)
+{
+	GX_WRITE_U16(x);
 }
 
 static inline void GXColor1u32(u32 c)
@@ -140,6 +194,23 @@ static inline void GXColor4u8(const u8 r, const u8 g, const u8 b, const u8 a)
 	GX_WRITE_U8(g);
 	GX_WRITE_U8(b);
 	GX_WRITE_U8(a);
+}
+
+static inline void GXColor3u8(const u8 r, const u8 g, const u8 b)
+{
+	GX_WRITE_U8(r);
+	GX_WRITE_U8(g);
+	GX_WRITE_U8(b);
+}
+
+static inline void GXTexCoord1x8(const u8 x)
+{
+	GX_WRITE_U8(x);
+}
+
+static inline void GXTexCoord1x16(const u16 x)
+{
+	GX_WRITE_U16(x);
 }
 
 static inline void GXTexCoord2s8(const s8 u, const s8 v)
@@ -184,6 +255,16 @@ static inline void GXTexCoord2f32(const f32 u, const f32 v)
 	GX_WRITE_F32(v);
 }
 
+static inline void GXMatrixIndex1x8(const u8 x)
+{
+	GX_WRITE_U8(x);
+}
+
+static inline void GXMatrixIndex1u8(const u8 x)
+{
+	GX_WRITE_U8(x);
+}
+
 static inline void GXCmd1u8(const u8 x)
 {
 	GX_WRITE_U8(x);
@@ -223,6 +304,7 @@ extern void GXSaveCPUFifo(GXFifoObj* obj);
 extern void GXGetGPStatus(GXBool* isOverHi, GXBool* isUnderLo, GXBool* isReadIdle, GXBool* isCmdIdle, GXBool* isHitBrkPt);
 extern GXFifoObj* GXGetCPUFifo();
 extern GXFifoObj* GXGetGPFifo();
+extern GXBool GXIsCPUGPFifoLinked(void);
 
 u32 GXGetOverflowCount();
 u32 GXResetOverflowCount();
@@ -232,7 +314,7 @@ u32 GXResetOverflowCount();
 //////////// DISPLAY LIST FUNCS ////////////
 extern void GXBeginDisplayList(void* list, u32 size);
 extern u32 GXEndDisplayList();
-extern void GXCallDisplayList(void* list, u32 numBytes);
+extern void GXCallDisplayList(const void* list, u32 numBytes);
 
 ////////////////////////////////////////////
 
@@ -256,9 +338,11 @@ extern void GXSaveGPFifo(GXFifoObj* obj);
 extern void GXGetFifoStatus(GXFifoObj* obj, GXBool* isOverHi, GXBool* isUnderLo, u32* fifoCount, GXBool* isCpuWrite, GXBool* isGPRead,
                             GXBool* isFifoWrap);
 extern void GXGetFifoPtrs(GXFifoObj* obj, void** readPtr, void** writePtr);
-extern void* GXGetFifoBase(GXFifoObj* obj);
-extern u32 GXGetFifoSize(GXFifoObj* obj);
-extern void GXGetFifoLimits(GXFifoObj* obj, u32* hi, u32* lo);
+extern void* GXGetFifoBase(const GXFifoObj* obj);
+extern u32 GXGetFifoSize(const GXFifoObj* obj);
+extern void GXGetFifoLimits(const GXFifoObj* obj, u32* hi, u32* lo);
+extern u32 GXGetFifoCount(const GXFifoObj* obj);
+extern GXBool GXGetFifoWrap(const GXFifoObj* obj);
 
 extern void GXEnableBreakPt(void* breakPtr);
 extern void GXDisableBreakPt();

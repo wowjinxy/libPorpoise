@@ -21,6 +21,7 @@
 #include <dolphin/os/OSMutex.h>
 #include <dolphin/os/OSReset.h>
 #include <dolphin/os/OSRtc.h>
+#include <dolphin/os/OSStopwatch.h>
 #include <dolphin/os/OSThread.h>
 #include <dolphin/os/OSTime.h>
 #include <dolphin/os/OSUtil.h>

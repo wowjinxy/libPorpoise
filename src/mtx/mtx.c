@@ -1160,6 +1160,70 @@ void PSMTXReflect(register Mtx m, const register Vec* p, const register Vec* n)
 }
 
 /**
+ * Multiplies a point by a 3x4 matrix.
+ */
+void C_MTXMultVec(const Mtx m, const Vec* src, Vec* dst)
+{
+	Vec result;
+
+	OSAssertMsgLine(0x8D0, m, "MTXMultVec(): NULL MtxPtr 'm' ");
+	OSAssertMsgLine(0x8D1, src, "MTXMultVec(): NULL VecPtr 'src' ");
+	OSAssertMsgLine(0x8D2, dst, "MTXMultVec(): NULL VecPtr 'dst' ");
+
+	result.x = m[0][0] * src->x + m[0][1] * src->y + m[0][2] * src->z + m[0][3];
+	result.y = m[1][0] * src->x + m[1][1] * src->y + m[1][2] * src->z + m[1][3];
+	result.z = m[2][0] * src->x + m[2][1] * src->y + m[2][2] * src->z + m[2][3];
+	*dst = result;
+}
+
+void PSMTXMultVec(const Mtx m, const Vec* src, Vec* dst)
+{
+	C_MTXMultVec(m, src, dst);
+}
+
+/**
+ * Multiplies an array of points by a 3x4 matrix.
+ */
+void C_MTXMultVecArray(const Mtx m, const Vec* src, Vec* dst, u32 count)
+{
+	u32 i;
+
+	OSAssertMsgLine(0x8E0, m, "MTXMultVecArray(): NULL MtxPtr 'm' ");
+	OSAssertMsgLine(0x8E1, src, "MTXMultVecArray(): NULL VecPtr 'src' ");
+	OSAssertMsgLine(0x8E2, dst, "MTXMultVecArray(): NULL VecPtr 'dst' ");
+
+	for (i = 0; i < count; ++i)
+		C_MTXMultVec(m, &src[i], &dst[i]);
+}
+
+void PSMTXMultVecArray(const Mtx m, const Vec* src, Vec* dst, u32 count)
+{
+	C_MTXMultVecArray(m, src, dst, count);
+}
+
+/**
+ * Multiplies a direction by the 3x3 portion of a 3x4 matrix.
+ */
+void C_MTXMultVecSR(const Mtx m, const Vec* src, Vec* dst)
+{
+	Vec result;
+
+	OSAssertMsgLine(0x8F0, m, "MTXMultVecSR(): NULL MtxPtr 'm' ");
+	OSAssertMsgLine(0x8F1, src, "MTXMultVecSR(): NULL VecPtr 'src' ");
+	OSAssertMsgLine(0x8F2, dst, "MTXMultVecSR(): NULL VecPtr 'dst' ");
+
+	result.x = m[0][0] * src->x + m[0][1] * src->y + m[0][2] * src->z;
+	result.y = m[1][0] * src->x + m[1][1] * src->y + m[1][2] * src->z;
+	result.z = m[2][0] * src->x + m[2][1] * src->y + m[2][2] * src->z;
+	*dst = result;
+}
+
+void PSMTXMultVecSR(const Mtx m, const Vec* src, Vec* dst)
+{
+	C_MTXMultVecSR(m, src, dst);
+}
+
+/**
  * @TODO: Documentation
  * @note UNUSED Size: 00018C (Matching by size)
  */

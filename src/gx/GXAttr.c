@@ -573,7 +573,7 @@ void GXSetVtxAttrFmtv(GXVtxFmt vtxfmt, GXVtxAttrFmtList* list)
 	while (list->attr != GX_VA_NULL) {
 		CHECK_ATTRNAME2(0x286, list->attr);
 		CHECK_FRAC(0x287, list->frac);
-		SETVAT(va, vb, vc, list->attr, list->count, list->type, list->frac);
+		SETVAT(va, vb, vc, list->attr, list->cnt, list->type, list->frac);
 		list++;
 	}
 	gx->dirtyState |= 0x10;
@@ -724,7 +724,7 @@ void GXGetVtxAttrFmtv(GXVtxFmt fmt, GXVtxAttrFmtList* vat)
 	CHECK_VTXFMT(0x332, fmt);
 	for (attr = GX_VA_POS; attr < GX_VA_MAX_ATTR; attr++) {
 		vat->attr = attr;
-		GXGetVtxAttrFmt(fmt, attr, &vat->count, &vat->type, &vat->frac);
+		GXGetVtxAttrFmt(fmt, attr, &vat->cnt, &vat->type, &vat->frac);
 		vat++;
 	}
 	vat->attr = GX_VA_NULL;

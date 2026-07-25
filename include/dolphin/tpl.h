@@ -8,8 +8,6 @@
 extern "C" {
 #endif
 
-typedef void* Ptr;
-
 typedef struct {
     u16 numEntries;
     u8 unpacked;

@@ -96,7 +96,7 @@ struct __GXData_struct {
 	u32 nextTexRgn;                                      // offset 0x2C8, size 0x4
 	u32 nextTexRgnCI;                                    // offset 0x2CC, size 0x4
 	GXTlutRegion TlutRegions[20];                                  // offset 0x2D0, size 0x140
-	GXTexRegion* (*texRegionCallback)(GXTexObj*, GXTexMapID);      // offset 0x410, size 0x4
+	GXTexRegion* (*texRegionCallback)(const GXTexObj*, GXTexMapID); // offset 0x410
 	GXTlutRegion* (*tlutRegionCallback)(u32);            // offset 0x414, size 0x4
 	GXAttrType nrmType;                                            // offset 0x418, size 0x4
 	u8 hasNrms;                                         // offset 0x41C, size 0x1
@@ -109,6 +109,8 @@ struct __GXData_struct {
 	float vpHt;                                                    // offset 0x448, size 0x4
 	float vpNearz;                                                 // offset 0x44C, size 0x4
 	float vpFarz;                                                  // offset 0x450, size 0x4
+	float zOffset;
+	float zScale;
 	u8 fgRange;                                         // offset 0x454, size 0x1
 	float fgSideX;                                                 // offset 0x458, size 0x4
 	u32 tImage0[8];                                      // offset 0x45C, size 0x20
@@ -123,6 +125,7 @@ struct __GXData_struct {
 	u32 perfSel;                                         // offset 0x4E8, size 0x4
 	u8 inDispList;                                      // offset 0x4EC, size 0x1
 	u8 dlSaveContext;                                   // offset 0x4ED, size 0x1
+	u8 abtWaitPECopy;
 	u8 dirtyVAT;                                        // offset 0x4EE, size 0x1
 	u32 dirtyState;                                      // offset 0x4F0, size 0x4
 }; // size = 0x4F4

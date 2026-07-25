@@ -27,6 +27,40 @@ float GlobalState::WordToFloat(u32 word) {
     return value;
 }
 
+static std::array<float, 4> DecodeXfColor(u32 word) {
+    return {
+        static_cast<float>((word >> 24u) & 0xffu) / 255.0f,
+        static_cast<float>((word >> 16u) & 0xffu) / 255.0f,
+        static_cast<float>((word >> 8u) & 0xffu) / 255.0f,
+        static_cast<float>(word & 0xffu) / 255.0f,
+    };
+}
+
+static ChannelControlState DecodeChannelControl(u32 word) {
+    ChannelControlState control;
+    control.materialSource =
+        (word & (1u << 0u)) != 0u ? GX_SRC_VTX : GX_SRC_REG;
+    control.lightingEnabled = (word & (1u << 1u)) != 0u;
+    control.ambientSource =
+        (word & (1u << 6u)) != 0u ? GX_SRC_VTX : GX_SRC_REG;
+    control.lightMask = static_cast<u8>(
+        ((word >> 2u) & 0x0fu) |
+        (((word >> 11u) & 0x0fu) << 4u));
+    control.diffuseFunction =
+        static_cast<GXDiffuseFn>((word >> 7u) & 0x03u);
+
+    const bool attenuationEnabled = (word & (1u << 9u)) != 0u;
+    const bool notSpecular = (word & (1u << 10u)) != 0u;
+    if (!notSpecular) {
+        control.attenuationFunction = GX_AF_SPEC;
+    } else if (attenuationEnabled) {
+        control.attenuationFunction = GX_AF_SPOT;
+    } else {
+        control.attenuationFunction = GX_AF_NONE;
+    }
+    return control;
+}
+
 void GlobalState::Reset() {
     mCurrentVertexFormat = GX_VTXFMT0;
     mCurrentPrimitive = GX_TRIANGLES;
@@ -39,11 +73,43 @@ void GlobalState::Reset() {
     for (auto& matrix : mPositionMatrices) {
         matrix = IdentityMatrix();
     }
+    mTextureMatrixValid.fill(false);
+    for (auto& matrix : mTextureMatrices) {
+        matrix = IdentityMatrix();
+    }
     mProjectionMatrix = IdentityMatrix();
     mProjectionMatrixValid = false;
+    mViewportTransform.fill(0.0f);
+    mViewportTransformValid = false;
+    mViewportState = {};
+    mScissorState = {};
+    mScissorTopLeft = 0;
+    mScissorBottomRight = 0;
+    mCopySourceLeft = 0;
+    mCopySourceTop = 0;
+    mCopySourceWidth = 640;
+    mCopySourceHeight = 480;
+    mCopySourceValid = false;
+    mBlendState = {};
+    mDepthState = {};
+    mRasterState = {};
+    mChannels = {};
+    mLights = {};
+    mTextures = {};
+    mTevStages = {};
+    mNumTevStages = 1;
+    mTextureRevision = 0;
+    mCopyClearColor = {
+        64.0f / 255.0f,
+        64.0f / 255.0f,
+        64.0f / 255.0f,
+        1.0f,
+    };
+    mCopyClearDepth = 1.0f;
+    mCopyClearRequested = false;
 }
 
-size_t GlobalState::GetDescriptorSize(GXAttrType descriptorType, GXCompType dataType, bool isColorType) {
+size_t GlobalState::GetDescriptorSize(GXAttrType descriptorType, GXCompType dataType, bool isColorType) const {
     switch(descriptorType) {
         case GX_DIRECT:
             if(isColorType) {
@@ -88,24 +154,63 @@ size_t GlobalState::GetDescriptorSize(GXAttrType descriptorType, GXCompType data
     }
 }
 
-size_t GlobalState::GetNumBytesPerVertex() {
-    size_t totalBytes = 0;
-    auto& format = mVertexFormats[mCurrentVertexFormat];
-    // Get bytes from position
-    size_t posComponents = 1;
-    if(mVertexDescriptors[GX_VA_POS] == GX_DIRECT) {
-        posComponents = format.mAttributes[GX_VA_POS].mComponents == GX_POS_XYZ ? 3 : 2;
+size_t GlobalState::GetVertexAttributeInputSize(GXAttr attr) const {
+    if (attr < GX_VA_PNMTXIDX || attr > GX_VA_TEX7) {
+        return 0;
     }
 
-    totalBytes += posComponents * GetDescriptorSize(mVertexDescriptors[GX_VA_POS], format.mAttributes[GX_VA_POS].mDataType);
+    const GXAttrType descriptor = mVertexDescriptors[attr];
+    if (descriptor == GX_NONE) {
+        return 0;
+    }
 
-    // Get bytes from color0
-    totalBytes += GetDescriptorSize(mVertexDescriptors[GX_VA_CLR0], format.mAttributes[GX_VA_CLR0].mDataType, true);
+    if (attr <= GX_VA_TEX7MTXIDX) {
+        return sizeof(u8);
+    }
+
+    const auto& attributes = mVertexFormats[mCurrentVertexFormat].mAttributes[attr];
+    if (descriptor == GX_INDEX8 || descriptor == GX_INDEX16) {
+        size_t indexSize =
+            descriptor == GX_INDEX8 ? sizeof(u8) : sizeof(u16);
+        if (attr == GX_VA_NRM && attributes.mComponents == GX_NRM_NBT3) {
+            indexSize *= 3;
+        }
+        return indexSize;
+    }
+
+    if (descriptor != GX_DIRECT) {
+        return 0;
+    }
+
+    if (attr == GX_VA_CLR0 || attr == GX_VA_CLR1) {
+        return GetDescriptorSize(GX_DIRECT, attributes.mDataType, true);
+    }
+
+    size_t componentCount = 0;
+    if (attr == GX_VA_POS) {
+        componentCount = GetNumPositionComponents(attributes.mComponents);
+    } else if (attr == GX_VA_NRM) {
+        componentCount =
+            attributes.mComponents == GX_NRM_XYZ ? 3 : 9;
+    } else if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) {
+        componentCount =
+            attributes.mComponents == GX_TEX_ST ? 2 : 1;
+    }
+
+    return componentCount *
+           GetDescriptorSize(GX_DIRECT, attributes.mDataType);
+}
+
+size_t GlobalState::GetNumBytesPerVertex() const {
+    size_t totalBytes = 0;
+    for (u32 attr = GX_VA_PNMTXIDX; attr <= GX_VA_TEX7; ++attr) {
+        totalBytes += GetVertexAttributeInputSize(static_cast<GXAttr>(attr));
+    }
 
     return totalBytes;
 }
 
-size_t GlobalState::GetNumPositionComponents(GXCompCnt compType) {
+size_t GlobalState::GetNumPositionComponents(GXCompCnt compType) const {
     switch(compType) {
         case GX_POS_XY:
             return 2;
@@ -119,19 +224,26 @@ GXPrimitive GlobalState::GetCurrentPrimitive() const {
     return mCurrentPrimitive;
 }
 
-const VertexArray& GlobalState::GetVertexArray(GXAttr attr) {
+const VertexArray& GlobalState::GetVertexArray(GXAttr attr) const {
+    if (attr == GX_VA_NBT) {
+        attr = GX_VA_NRM;
+    }
+    if (attr < GX_VA_PNMTXIDX || attr >= GX_VA_MAX_ATTR) {
+        static const VertexArray empty = {};
+        return empty;
+    }
     return mVertexArrays[attr];
 }
 
-GXAttrType GlobalState::GetVertexDescriptor(GXAttr attr) {
+GXAttrType GlobalState::GetVertexDescriptor(GXAttr attr) const {
     return mVertexDescriptors[attr];
 }
 
-const VertexFormat& GlobalState::GetCurrentVertexFormat() {
+const VertexFormat& GlobalState::GetCurrentVertexFormat() const {
     return mVertexFormats[mCurrentVertexFormat];
 }
 
-const VertexFormat& GlobalState::GetVertexFormat(GXVtxFmt formatIdx) {
+const VertexFormat& GlobalState::GetVertexFormat(GXVtxFmt formatIdx) const {
     return mVertexFormats[formatIdx];
 }
 
@@ -154,6 +266,331 @@ const std::array<float, 16>& GlobalState::GetProjectionMatrix() const {
     return identity;
 }
 
+const std::array<float, 16>& GlobalState::GetTextureMatrix(size_t index) const {
+    if (index < mTextureMatrices.size() && mTextureMatrixValid[index]) {
+        return mTextureMatrices[index];
+    }
+
+    static const std::array<float, 16> identity = IdentityMatrix();
+    return identity;
+}
+
+const std::array<float, 6>& GlobalState::GetViewportTransform() const {
+    return mViewportTransform;
+}
+
+const ViewportState& GlobalState::GetViewportState() const {
+    return mViewportState;
+}
+
+const ScissorState& GlobalState::GetScissorState() const {
+    return mScissorState;
+}
+
+const BlendState& GlobalState::GetBlendState() const {
+    return mBlendState;
+}
+
+const DepthState& GlobalState::GetDepthState() const {
+    return mDepthState;
+}
+
+const RasterState& GlobalState::GetRasterState() const {
+    return mRasterState;
+}
+
+const ChannelState& GlobalState::GetChannelState(size_t index) const {
+    if (index < mChannels.size()) {
+        return mChannels[index];
+    }
+    static const ChannelState empty = {};
+    return empty;
+}
+
+const LightState& GlobalState::GetLightState(size_t index) const {
+    if (index < mLights.size()) {
+        return mLights[index];
+    }
+    static const LightState empty = {};
+    return empty;
+}
+
+const TextureState& GlobalState::GetTextureState(size_t index) const {
+    if (index < mTextures.size()) {
+        return mTextures[index];
+    }
+    static const TextureState empty = {};
+    return empty;
+}
+
+const TevStageState& GlobalState::GetTevStageState(size_t index) const {
+    if (index < mTevStages.size()) {
+        return mTevStages[index];
+    }
+    static const TevStageState empty = {};
+    return empty;
+}
+
+size_t GlobalState::GetNumTevStages() const {
+    return mNumTevStages;
+}
+
+const std::array<float, 4>& GlobalState::GetCopyClearColor() const {
+    return mCopyClearColor;
+}
+
+float GlobalState::GetCopyClearDepth() const {
+    return mCopyClearDepth;
+}
+
+bool GlobalState::HasViewportTransform() const {
+    return mViewportTransformValid;
+}
+
+bool GlobalState::ConsumeCopyClearRequest() {
+    const bool requested = mCopyClearRequested;
+    mCopyClearRequested = false;
+    return requested;
+}
+
+void GlobalState::SetBpRegister(u32 registerValue) {
+    const u8 address = static_cast<u8>(registerValue >> 24);
+    const u32 value = registerValue & 0x00ffffffu;
+    const auto field = [value](u32 width, u32 shift) {
+        return (value >> shift) & ((1u << width) - 1u);
+    };
+
+    switch (address) {
+        case 0x00: {
+            mNumTevStages = static_cast<size_t>(field(4, 10)) + 1u;
+            const auto hardwareMode =
+                static_cast<GXCullMode>(field(2, 14));
+            switch (hardwareMode) {
+                case GX_CULL_FRONT:
+                    mRasterState.cullMode = GX_CULL_BACK;
+                    break;
+                case GX_CULL_BACK:
+                    mRasterState.cullMode = GX_CULL_FRONT;
+                    break;
+                default:
+                    mRasterState.cullMode = hardwareMode;
+                    break;
+            }
+            break;
+        }
+        case 0x20:
+            mScissorTopLeft = value;
+            if (mScissorBottomRight != 0u) {
+                const u32 encodedTop = mScissorTopLeft & 0x7ffu;
+                const u32 encodedLeft =
+                    (mScissorTopLeft >> 12u) & 0x7ffu;
+                const u32 encodedBottom =
+                    mScissorBottomRight & 0x7ffu;
+                const u32 encodedRight =
+                    (mScissorBottomRight >> 12u) & 0x7ffu;
+                if (encodedRight >= encodedLeft &&
+                    encodedBottom >= encodedTop) {
+                    mScissorState.left =
+                        encodedLeft >= 342u ? encodedLeft - 342u : 0u;
+                    mScissorState.top =
+                        encodedTop >= 342u ? encodedTop - 342u : 0u;
+                    mScissorState.width =
+                        encodedRight - encodedLeft + 1u;
+                    mScissorState.height =
+                        encodedBottom - encodedTop + 1u;
+                    mScissorState.valid = true;
+                }
+            }
+            break;
+        case 0x21:
+            mScissorBottomRight = value;
+            if (mScissorTopLeft != 0u) {
+                const u32 encodedTop = mScissorTopLeft & 0x7ffu;
+                const u32 encodedLeft =
+                    (mScissorTopLeft >> 12u) & 0x7ffu;
+                const u32 encodedBottom =
+                    mScissorBottomRight & 0x7ffu;
+                const u32 encodedRight =
+                    (mScissorBottomRight >> 12u) & 0x7ffu;
+                if (encodedRight >= encodedLeft &&
+                    encodedBottom >= encodedTop) {
+                    mScissorState.left =
+                        encodedLeft >= 342u ? encodedLeft - 342u : 0u;
+                    mScissorState.top =
+                        encodedTop >= 342u ? encodedTop - 342u : 0u;
+                    mScissorState.width =
+                        encodedRight - encodedLeft + 1u;
+                    mScissorState.height =
+                        encodedBottom - encodedTop + 1u;
+                    mScissorState.valid = true;
+                }
+            }
+            break;
+        case 0x28:
+        case 0x29:
+        case 0x2a:
+        case 0x2b:
+        case 0x2c:
+        case 0x2d:
+        case 0x2e:
+        case 0x2f: {
+            const size_t firstStage =
+                static_cast<size_t>(address - 0x28u) * 2u;
+            auto& evenStage = mTevStages[firstStage];
+            evenStage.textureMap = static_cast<u8>(field(3, 0));
+            evenStage.textureCoordinate = static_cast<u8>(field(3, 3));
+            evenStage.textureEnabled = field(1, 6) != 0;
+
+            auto& oddStage = mTevStages[firstStage + 1u];
+            oddStage.textureMap = static_cast<u8>(field(3, 12));
+            oddStage.textureCoordinate = static_cast<u8>(field(3, 15));
+            oddStage.textureEnabled = field(1, 18) != 0;
+            break;
+        }
+        case 0x22:
+            // GX line and point sizes are stored in sixths of a pixel.
+            mRasterState.lineWidth =
+                std::max(1.0f, static_cast<float>(field(8, 0)) / 6.0f);
+            mRasterState.pointSize =
+                std::max(1.0f, static_cast<float>(field(8, 8)) / 6.0f);
+            break;
+        case 0x40:
+            mDepthState.compareEnabled = field(1, 0) != 0;
+            mDepthState.function =
+                static_cast<GXCompare>(field(3, 1));
+            mDepthState.updateEnabled = field(1, 4) != 0;
+            break;
+        case 0x41: {
+            const bool blendEnabled = field(1, 0) != 0;
+            const bool logicEnabled = field(1, 1) != 0;
+            const bool subtractEnabled = field(1, 11) != 0;
+            if (subtractEnabled) {
+                mBlendState.mode = GX_BM_SUBTRACT;
+            } else if (logicEnabled) {
+                mBlendState.mode = GX_BM_LOGIC;
+            } else if (blendEnabled) {
+                mBlendState.mode = GX_BM_BLEND;
+            } else {
+                mBlendState.mode = GX_BM_NONE;
+            }
+            mBlendState.ditherEnabled = field(1, 2) != 0;
+            mBlendState.colorUpdateEnabled = field(1, 3) != 0;
+            mBlendState.alphaUpdateEnabled = field(1, 4) != 0;
+            mBlendState.destinationFactor =
+                static_cast<GXBlendFactor>(field(3, 5));
+            mBlendState.sourceFactor =
+                static_cast<GXBlendFactor>(field(3, 8));
+            mBlendState.logicOperation =
+                static_cast<GXLogicOp>(field(4, 12));
+            break;
+        }
+        case 0x49:
+            mCopySourceLeft = field(10, 0);
+            mCopySourceTop = field(10, 10);
+            break;
+        case 0x4a:
+            mCopySourceWidth = field(10, 0) + 1u;
+            mCopySourceHeight = field(10, 10) + 1u;
+            mCopySourceValid = true;
+            break;
+        case 0x4f:
+            mCopyClearColor[0] =
+                static_cast<float>(field(8, 0)) / 255.0f;
+            mCopyClearColor[3] =
+                static_cast<float>(field(8, 8)) / 255.0f;
+            break;
+        case 0x50:
+            mCopyClearColor[2] =
+                static_cast<float>(field(8, 0)) / 255.0f;
+            mCopyClearColor[1] =
+                static_cast<float>(field(8, 8)) / 255.0f;
+            break;
+        case 0x51:
+            mCopyClearDepth =
+                static_cast<float>(field(24, 0)) / 16777215.0f;
+            break;
+        case 0x52:
+            /*
+             * A display copy defines the EFB area that is scaled into the
+             * XFB. Rebase the host viewport on that area instead of retaining
+             * a larger viewport used earlier during GX initialization. For
+             * example, NTSC demos commonly render 448 EFB lines and scale
+             * them to a 480-line display.
+             */
+            if (field(1, 14) != 0 && mCopySourceValid) {
+                const float viewportRight =
+                    mViewportState.left + mViewportState.width;
+                const float viewportBottom =
+                    mViewportState.top + mViewportState.height;
+                const float scissorRight =
+                    mScissorState.valid
+                        ? static_cast<float>(
+                              mScissorState.left + mScissorState.width)
+                        : 0.0f;
+                const float scissorBottom =
+                    mScissorState.valid
+                        ? static_cast<float>(
+                              mScissorState.top + mScissorState.height)
+                        : 0.0f;
+                mViewportState.referenceWidth = std::max(
+                    {
+                        1.0f,
+                        static_cast<float>(
+                            mCopySourceLeft + mCopySourceWidth),
+                        viewportRight,
+                        scissorRight,
+                    });
+                mViewportState.referenceHeight = std::max(
+                    {
+                        1.0f,
+                        static_cast<float>(
+                            mCopySourceTop + mCopySourceHeight),
+                        viewportBottom,
+                        scissorBottom,
+                    });
+            }
+            // Setting the copy trigger with the clear bit clears the EFB after
+            // it has been copied, preparing it for the next frame.
+            if (field(1, 14) != 0 && field(1, 11) != 0) {
+                mCopyClearRequested = true;
+            }
+            break;
+        default:
+            if (address >= 0xc0u &&
+                address <= 0xdeu &&
+                (address & 1u) == 0u) {
+                const size_t stage =
+                    static_cast<size_t>((address - 0xc0u) / 2u);
+                const u32 inputA = field(4, 12);
+                const u32 inputB = field(4, 8);
+                const u32 inputC = field(4, 4);
+                const u32 inputD = field(4, 0);
+                if (inputA == GX_CC_ZERO &&
+                    inputB == GX_CC_TEXC &&
+                    inputC == GX_CC_RASC &&
+                    inputD == GX_CC_ZERO) {
+                    mTevStages[stage].colorMode =
+                        TevColorMode::Modulate;
+                } else if (
+                    inputA == GX_CC_ZERO &&
+                    inputB == GX_CC_ZERO &&
+                    inputC == GX_CC_ZERO &&
+                    inputD == GX_CC_TEXC) {
+                    mTevStages[stage].colorMode =
+                        TevColorMode::ReplaceTexture;
+                } else if (
+                    inputA == GX_CC_ZERO &&
+                    inputB == GX_CC_ZERO &&
+                    inputC == GX_CC_ZERO &&
+                    inputD == GX_CC_RASC) {
+                    mTevStages[stage].colorMode =
+                        TevColorMode::PassColor;
+                }
+            }
+            break;
+    }
+}
+
 void GlobalState::SetCurrentPrimitive(GXPrimitive primitive) {
     mCurrentPrimitive = primitive;
 }
@@ -170,6 +607,12 @@ void GlobalState::SetCurrentVertexFormat(GXVtxFmt format) {
 }
 
 void GlobalState::SetVertexArray(GXAttr attr, VertexArray array) {
+    if (attr == GX_VA_NBT) {
+        attr = GX_VA_NRM;
+    }
+    if (attr < GX_VA_PNMTXIDX || attr >= GX_VA_MAX_ATTR) {
+        return;
+    }
     mVertexArrays[attr] = array;
 }
 
@@ -189,6 +632,14 @@ void GlobalState::SetVertexFormatFraction(GXVtxFmt formatIndex, GXAttr attrIndex
     mVertexFormats[formatIndex].mAttributes[attrIndex].mFraction = fraction;
 }
 
+void GlobalState::LoadTexture(size_t index, const TextureState& texture) {
+    if (index >= mTextures.size()) {
+        return;
+    }
+    mTextures[index] = texture;
+    mTextures[index].revision = ++mTextureRevision;
+}
+
 void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
     if (data == nullptr || wordCount == 0 || address >= mXfMemory.size()) {
         return;
@@ -202,7 +653,11 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
 
     const u32 endAddress = address + static_cast<u32>(writableWords);
     RefreshPositionMatrices(address, endAddress);
+    RefreshTextureMatrices(address, endAddress);
     RefreshProjectionMatrix(address, endAddress);
+    RefreshViewportTransform(address, endAddress);
+    RefreshChannelState(address, endAddress);
+    RefreshLightState(address, endAddress);
 }
 
 void GlobalState::RefreshPositionMatrices(u32 firstAddress, u32 endAddress) {
@@ -223,6 +678,29 @@ void GlobalState::RefreshPositionMatrices(u32 firstAddress, u32 endAddress) {
             }
         }
         mPositionMatrixValid[slot] = true;
+    }
+}
+
+void GlobalState::RefreshTextureMatrices(u32 firstAddress, u32 endAddress) {
+    constexpr u32 textureMatrixStart = 30u * 4u;
+    constexpr u32 wordsPerMatrix = 12;
+    for (size_t slot = 0; slot < mTextureMatrices.size(); ++slot) {
+        const u32 matrixStart =
+            textureMatrixStart + static_cast<u32>(slot) * wordsPerMatrix;
+        const u32 matrixEnd = matrixStart + wordsPerMatrix;
+        if (endAddress <= matrixStart || firstAddress >= matrixEnd) {
+            continue;
+        }
+
+        auto& matrix = mTextureMatrices[slot];
+        matrix = IdentityMatrix();
+        for (size_t row = 0; row < 3; ++row) {
+            for (size_t column = 0; column < 4; ++column) {
+                const size_t source = matrixStart + row * 4 + column;
+                matrix[row * 4 + column] = WordToFloat(mXfMemory[source]);
+            }
+        }
+        mTextureMatrixValid[slot] = true;
     }
 }
 
@@ -256,6 +734,85 @@ void GlobalState::RefreshProjectionMatrix(u32 firstAddress, u32 endAddress) {
         mProjectionMatrix[14] = -1.0f;
     }
     mProjectionMatrixValid = true;
+}
+
+void GlobalState::RefreshViewportTransform(u32 firstAddress, u32 endAddress) {
+    constexpr u32 viewportStart = 0x101A;
+    constexpr u32 viewportEnd = viewportStart + 6;
+    if (endAddress <= viewportStart || firstAddress >= viewportEnd) {
+        return;
+    }
+
+    for (size_t index = 0; index < mViewportTransform.size(); ++index) {
+        mViewportTransform[index] =
+            WordToFloat(mXfMemory[viewportStart + index]);
+    }
+    mViewportTransformValid = true;
+
+    const float halfWidth = mViewportTransform[0];
+    const float negativeHalfHeight = mViewportTransform[1];
+    mViewportState.left =
+        mViewportTransform[3] - 342.0f - halfWidth;
+    mViewportState.top =
+        mViewportTransform[4] - 342.0f + negativeHalfHeight;
+    mViewportState.width = halfWidth * 2.0f;
+    mViewportState.height = negativeHalfHeight * -2.0f;
+    if (mViewportState.width > 0.0f && mViewportState.height > 0.0f) {
+        mViewportState.referenceWidth = std::max(
+            mViewportState.referenceWidth,
+            mViewportState.left + mViewportState.width);
+        mViewportState.referenceHeight = std::max(
+            mViewportState.referenceHeight,
+            mViewportState.top + mViewportState.height);
+        mViewportState.valid = true;
+    }
+}
+
+void GlobalState::RefreshChannelState(u32 firstAddress, u32 endAddress) {
+    constexpr u32 channelStateStart = 0x100a;
+    constexpr u32 channelStateEnd = 0x1012;
+    if (endAddress <= channelStateStart || firstAddress >= channelStateEnd) {
+        return;
+    }
+
+    for (size_t channel = 0; channel < mChannels.size(); ++channel) {
+        auto& state = mChannels[channel];
+        state.ambientColor =
+            DecodeXfColor(mXfMemory[0x100a + channel]);
+        state.materialColor =
+            DecodeXfColor(mXfMemory[0x100c + channel]);
+        state.colorControl =
+            DecodeChannelControl(mXfMemory[0x100e + channel]);
+        state.alphaControl =
+            DecodeChannelControl(mXfMemory[0x1010 + channel]);
+    }
+}
+
+void GlobalState::RefreshLightState(u32 firstAddress, u32 endAddress) {
+    constexpr u32 firstLightAddress = 0x600;
+    constexpr u32 wordsPerLight = 0x10;
+    for (size_t index = 0; index < mLights.size(); ++index) {
+        const u32 lightStart =
+            firstLightAddress + static_cast<u32>(index) * wordsPerLight;
+        const u32 lightEnd = lightStart + wordsPerLight;
+        if (endAddress <= lightStart || firstAddress >= lightEnd) {
+            continue;
+        }
+
+        auto& light = mLights[index];
+        light.color = DecodeXfColor(mXfMemory[lightStart + 3u]);
+        for (size_t component = 0; component < 3; ++component) {
+            light.cosineAttenuation[component] =
+                WordToFloat(mXfMemory[lightStart + 4u + component]);
+            light.distanceAttenuation[component] =
+                WordToFloat(mXfMemory[lightStart + 7u + component]);
+            light.position[component] =
+                WordToFloat(mXfMemory[lightStart + 10u + component]);
+            light.direction[component] =
+                WordToFloat(mXfMemory[lightStart + 13u + component]);
+        }
+        light.valid = true;
+    }
 }
 
 void InitGlobalState() {
