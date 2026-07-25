@@ -14,6 +14,10 @@
 
 #include <dolphin/types.h>
 
+#ifdef __MWERKS__
+#error This is for the PC port only!
+#endif
+
 BEGIN_SCOPE_EXTERN_C
 
 /* Sometimes it's necessary to define __LITTLE_ENDIAN explicitly

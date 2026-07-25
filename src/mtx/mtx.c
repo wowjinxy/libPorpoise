@@ -1,7 +1,11 @@
 #include <dolphin/mtx.h>
 
 #include <dolphin/os.h>
+#ifdef LIBPORPOISE_PORT
 #include <stl/fdlibm.h>
+#else
+#include <fdlibm.h>
+#endif
 #include <math.h>
 #include <stddef.h>
 
