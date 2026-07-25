@@ -17,7 +17,9 @@ extern "C" u32 VIGetTvFormat(void) {
 
 namespace {
 
-static_assert(sizeof(GXTexObj) >= sizeof(GXTexObjPriv));
+static_assert(sizeof(GXTexObj) == 0x20);
+static_assert(sizeof(GXTexObjPriv) == 0x20);
+static_assert(sizeof(GXTlutObj) == 0x0c);
 
 bool NearlyEqual(float left, float right, float tolerance = 0.0001f) {
     return std::fabs(left - right) <= tolerance;
@@ -87,6 +89,59 @@ bool TestHostTexturePointerPreserved() {
         mipmap == GX_FALSE;
 }
 
+bool TestTextureObjectAbiBounds() {
+    struct GuardedTexture {
+        GXTexObj texture;
+        std::array<u8, 16> guard;
+    } guardedTexture = {};
+    struct GuardedTlut {
+        GXTlutObj tlut;
+        std::array<u8, 16> guard;
+    } guardedTlut = {};
+    alignas(32) std::array<u8, 32> image = {};
+    std::array<u16, 16> palette = {};
+
+    guardedTexture.guard.fill(0xa5);
+    guardedTlut.guard.fill(0x5a);
+
+    GXInitTexObj(
+        &guardedTexture.texture,
+        image.data(),
+        8,
+        8,
+        GX_TF_I4,
+        GX_CLAMP,
+        GX_CLAMP,
+        GX_FALSE);
+    GXInitTexObjLOD(
+        &guardedTexture.texture,
+        GX_NEAR,
+        GX_LINEAR,
+        0.0f,
+        0.0f,
+        0.0f,
+        GX_FALSE,
+        GX_FALSE,
+        GX_ANISO_1);
+    GXInitTlutObj(
+        &guardedTlut.tlut,
+        palette.data(),
+        GX_TL_IA8,
+        static_cast<u16>(palette.size()));
+
+    for (u8 value : guardedTexture.guard) {
+        if (value != 0xa5) {
+            return false;
+        }
+    }
+    for (u8 value : guardedTlut.guard) {
+        if (value != 0x5a) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool TestFifoQueries() {
     GXFifoObj fifo = {};
     auto* state = reinterpret_cast<__GXFifoObj*>(&fifo);
@@ -137,6 +192,36 @@ bool TestZScaleOffsetCommands() {
         NearlyEqual(logicalViewport.top, 20.0f) &&
         NearlyEqual(logicalViewport.width, 640.0f) &&
         NearlyEqual(logicalViewport.height, 480.0f);
+}
+
+bool TestPositionTextureCoordinateGeneration() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    Mtx textureMatrix = {
+        {1.0f, 2.0f, 3.0f, 4.0f},
+        {5.0f, 6.0f, 7.0f, 8.0f},
+        {9.0f, 10.0f, 11.0f, 12.0f},
+    };
+    GXLoadTexMtxImm(textureMatrix, GX_TEXMTX3, GX_MTX3x4);
+    GXSetTexCoordGen(
+        GX_TEXCOORD0,
+        GX_TG_MTX3x4,
+        GX_TG_POS,
+        GX_TEXMTX3);
+
+    const auto& state = SIM::GX::GetGlobalState();
+    const auto& texGen = state.GetTexCoordGenState(0);
+    const auto& decodedMatrix = state.GetTexCoordGenMatrix(0);
+    return
+        texGen.source == GX_TG_POS &&
+        texGen.matrixId == GX_TEXMTX3 &&
+        NearlyEqual(decodedMatrix[0], 1.0f) &&
+        NearlyEqual(decodedMatrix[3], 4.0f) &&
+        NearlyEqual(decodedMatrix[4], 5.0f) &&
+        NearlyEqual(decodedMatrix[7], 8.0f) &&
+        NearlyEqual(decodedMatrix[8], 9.0f) &&
+        NearlyEqual(decodedMatrix[11], 12.0f);
 }
 
 bool TestResetWritePipeCompatibility() {
@@ -393,6 +478,12 @@ int main() {
     }
     if (!TestBpTextureAndScissorCommands()) {
         return 11;
+    }
+    if (!TestTextureObjectAbiBounds()) {
+        return 12;
+    }
+    if (!TestPositionTextureCoordinateGeneration()) {
+        return 13;
     }
     return 0;
 }

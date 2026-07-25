@@ -373,34 +373,160 @@ void pc_gx_texture_shutdown(void) {
 
 /* --- texture object API --- */
 
-/* GXTexObj layout for PC: 22 u32s (88 bytes) */
+/*
+ * Keep the public GXTexObj ABI at the SDK-defined 0x20 bytes.  The host
+ * representation packs scalar state into that space and splits native
+ * pointers across two words.  GXTexObj is opaque to callers, and keeping all
+ * state in the object preserves normal struct-copy behavior.
+ */
 #define TEXOBJ_IMAGE_PTR_LO 0
-#define TEXOBJ_WIDTH       1
-#define TEXOBJ_HEIGHT      2
-#define TEXOBJ_FORMAT      3
-#define TEXOBJ_WRAP_S      4
-#define TEXOBJ_WRAP_T      5
-#define TEXOBJ_MIPMAP      6
-#define TEXOBJ_MIN_FILTER  7
-#define TEXOBJ_MAG_FILTER  8
-#define TEXOBJ_MIN_LOD     9
-#define TEXOBJ_MAX_LOD     10
-#define TEXOBJ_LOD_BIAS    11
-#define TEXOBJ_BIAS_CLAMP  12
-#define TEXOBJ_EDGE_LOD    13
-#define TEXOBJ_MAX_ANISO   14
-#define TEXOBJ_GL_TEX      15
-#define TEXOBJ_CI_FORMAT   16
-#define TEXOBJ_TLUT_NAME   17
-#define TEXOBJ_IMAGE_PTR_HI 18
-#define TEXOBJ_SIZE        22  /* total u32 count */
+#define TEXOBJ_IMAGE_PTR_HI 1
+#define TEXOBJ_DIMENSIONS   2
+#define TEXOBJ_STATE        3
+#define TEXOBJ_MIN_LOD      4
+#define TEXOBJ_MAX_LOD      5
+#define TEXOBJ_LOD_BIAS     6
+#define TEXOBJ_TLUT_NAME    7
+#define TEXOBJ_SIZE         8
 
-/* GXTlutObj layout (4 u32s) */
+#define TEXOBJ_FORMAT_SHIFT      0
+#define TEXOBJ_FORMAT_MASK       0x3fu
+#define TEXOBJ_WRAP_S_SHIFT      6
+#define TEXOBJ_WRAP_S_MASK       0x3u
+#define TEXOBJ_WRAP_T_SHIFT      8
+#define TEXOBJ_WRAP_T_MASK       0x3u
+#define TEXOBJ_MIPMAP_SHIFT      10
+#define TEXOBJ_MIPMAP_MASK       0x1u
+#define TEXOBJ_MIN_FILTER_SHIFT  11
+#define TEXOBJ_MIN_FILTER_MASK   0x7u
+#define TEXOBJ_MAG_FILTER_SHIFT  14
+#define TEXOBJ_MAG_FILTER_MASK   0x1u
+#define TEXOBJ_BIAS_CLAMP_SHIFT  15
+#define TEXOBJ_BIAS_CLAMP_MASK   0x1u
+#define TEXOBJ_EDGE_LOD_SHIFT    16
+#define TEXOBJ_EDGE_LOD_MASK     0x1u
+#define TEXOBJ_MAX_ANISO_SHIFT   17
+#define TEXOBJ_MAX_ANISO_MASK    0x3u
+
+/* GXTlutObj also retains its SDK-defined 0x0c-byte ABI. */
 #define TLUTOBJ_DATA_LO    0
-#define TLUTOBJ_FORMAT     1
-#define TLUTOBJ_N_ENTRIES  2
-#define TLUTOBJ_DATA_HI    3
-#define TLUTOBJ_SIZE       4
+#define TLUTOBJ_DATA_HI    1
+#define TLUTOBJ_META       2
+#define TLUTOBJ_SIZE       3
+
+static u32 texobj_get_state_field(const u32* o, u32 shift, u32 mask) {
+    return (o[TEXOBJ_STATE] >> shift) & mask;
+}
+
+static void texobj_set_state_field(u32* o, u32 shift, u32 mask, u32 value) {
+    const u32 field_mask = mask << shift;
+    o[TEXOBJ_STATE] =
+        (o[TEXOBJ_STATE] & ~field_mask) | ((value & mask) << shift);
+}
+
+static u16 texobj_get_width(const u32* o) {
+    return (u16)(o[TEXOBJ_DIMENSIONS] & 0xffffu);
+}
+
+static u16 texobj_get_height(const u32* o) {
+    return (u16)(o[TEXOBJ_DIMENSIONS] >> 16);
+}
+
+static void texobj_set_dimensions(u32* o, u16 width, u16 height) {
+    o[TEXOBJ_DIMENSIONS] = (u32)width | ((u32)height << 16);
+}
+
+static u32 texobj_get_format(const u32* o) {
+    return texobj_get_state_field(
+        o, TEXOBJ_FORMAT_SHIFT, TEXOBJ_FORMAT_MASK);
+}
+
+static void texobj_set_format(u32* o, u32 value) {
+    texobj_set_state_field(
+        o, TEXOBJ_FORMAT_SHIFT, TEXOBJ_FORMAT_MASK, value);
+}
+
+static u32 texobj_get_wrap_s(const u32* o) {
+    return texobj_get_state_field(
+        o, TEXOBJ_WRAP_S_SHIFT, TEXOBJ_WRAP_S_MASK);
+}
+
+static void texobj_set_wrap_s(u32* o, u32 value) {
+    texobj_set_state_field(
+        o, TEXOBJ_WRAP_S_SHIFT, TEXOBJ_WRAP_S_MASK, value);
+}
+
+static u32 texobj_get_wrap_t(const u32* o) {
+    return texobj_get_state_field(
+        o, TEXOBJ_WRAP_T_SHIFT, TEXOBJ_WRAP_T_MASK);
+}
+
+static void texobj_set_wrap_t(u32* o, u32 value) {
+    texobj_set_state_field(
+        o, TEXOBJ_WRAP_T_SHIFT, TEXOBJ_WRAP_T_MASK, value);
+}
+
+static u32 texobj_get_mipmap(const u32* o) {
+    return texobj_get_state_field(
+        o, TEXOBJ_MIPMAP_SHIFT, TEXOBJ_MIPMAP_MASK);
+}
+
+static void texobj_set_mipmap(u32* o, u32 value) {
+    texobj_set_state_field(
+        o, TEXOBJ_MIPMAP_SHIFT, TEXOBJ_MIPMAP_MASK, value);
+}
+
+static u32 texobj_get_min_filter(const u32* o) {
+    return texobj_get_state_field(
+        o, TEXOBJ_MIN_FILTER_SHIFT, TEXOBJ_MIN_FILTER_MASK);
+}
+
+static void texobj_set_min_filter(u32* o, u32 value) {
+    texobj_set_state_field(
+        o, TEXOBJ_MIN_FILTER_SHIFT, TEXOBJ_MIN_FILTER_MASK, value);
+}
+
+static u32 texobj_get_mag_filter(const u32* o) {
+    return texobj_get_state_field(
+        o, TEXOBJ_MAG_FILTER_SHIFT, TEXOBJ_MAG_FILTER_MASK);
+}
+
+static void texobj_set_mag_filter(u32* o, u32 value) {
+    texobj_set_state_field(
+        o, TEXOBJ_MAG_FILTER_SHIFT, TEXOBJ_MAG_FILTER_MASK, value);
+}
+
+static u32 texobj_get_max_aniso(const u32* o) {
+    return texobj_get_state_field(
+        o, TEXOBJ_MAX_ANISO_SHIFT, TEXOBJ_MAX_ANISO_MASK);
+}
+
+static void texobj_set_bias_clamp(u32* o, u32 value) {
+    texobj_set_state_field(
+        o, TEXOBJ_BIAS_CLAMP_SHIFT, TEXOBJ_BIAS_CLAMP_MASK, value);
+}
+
+static void texobj_set_edge_lod(u32* o, u32 value) {
+    texobj_set_state_field(
+        o, TEXOBJ_EDGE_LOD_SHIFT, TEXOBJ_EDGE_LOD_MASK, value);
+}
+
+static void texobj_set_max_aniso(u32* o, u32 value) {
+    texobj_set_state_field(
+        o, TEXOBJ_MAX_ANISO_SHIFT, TEXOBJ_MAX_ANISO_MASK, value);
+}
+
+static u32 tlutobj_get_format(const u32* o) {
+    return o[TLUTOBJ_META] & 0xffu;
+}
+
+static u16 tlutobj_get_n_entries(const u32* o) {
+    return (u16)((o[TLUTOBJ_META] >> 8) & 0xffffu);
+}
+
+static void tlutobj_set_meta(u32* o, u32 format, u16 n_entries) {
+    o[TLUTOBJ_META] = (format & 0xffu) | ((u32)n_entries << 8);
+}
 
 static uintptr_t texobj_get_image_ptr(const u32* o) {
     uintptr_t ptr = (uintptr_t)o[TEXOBJ_IMAGE_PTR_LO];
@@ -461,12 +587,11 @@ void GXInitTexObj(GXTexObj* obj, const void* image_ptr, u16 width, u16 height, u
     memset(o, 0, TEXOBJ_SIZE * sizeof(u32));
     texobj_user_data_set(obj, NULL);
     texobj_set_image_ptr(o, image_ptr);
-    o[TEXOBJ_WIDTH] = safe_w;
-    o[TEXOBJ_HEIGHT] = safe_h;
-    o[TEXOBJ_FORMAT] = format;
-    o[TEXOBJ_WRAP_S] = wrap_s;
-    o[TEXOBJ_WRAP_T] = wrap_t;
-    o[TEXOBJ_MIPMAP] = mipmap ? 1u : 0u;
+    texobj_set_dimensions(o, safe_w, safe_h);
+    texobj_set_format(o, format);
+    texobj_set_wrap_s(o, wrap_s);
+    texobj_set_wrap_t(o, wrap_t);
+    texobj_set_mipmap(o, mipmap ? 1u : 0u);
 
     if (mipmap) {
         u16 m = (safe_w > safe_h) ? safe_w : safe_h;
@@ -474,11 +599,12 @@ void GXInitTexObj(GXTexObj* obj, const void* image_ptr, u16 width, u16 height, u
             m >>= 1u;
             max_lod += 1.0f;
         }
-        o[TEXOBJ_MIN_FILTER] = is_ci_fmt ? GX_LIN_MIP_NEAR : GX_LIN_MIP_LIN;
+        texobj_set_min_filter(
+            o, is_ci_fmt ? GX_LIN_MIP_NEAR : GX_LIN_MIP_LIN);
     } else {
-        o[TEXOBJ_MIN_FILTER] = GX_LINEAR;
+        texobj_set_min_filter(o, GX_LINEAR);
     }
-    o[TEXOBJ_MAG_FILTER] = GX_LINEAR;
+    texobj_set_mag_filter(o, GX_LINEAR);
     memcpy(&o[TEXOBJ_MAX_LOD], &max_lod, sizeof(max_lod));
 }
 
@@ -486,7 +612,6 @@ void GXInitTexObjCI(GXTexObj* obj, const void* image_ptr, u16 width, u16 height,
                     GXTexWrapMode wrap_s, GXTexWrapMode wrap_t, GXBool mipmap, u32 tlut_name) {
     GXInitTexObj(obj, image_ptr, width, height, format, wrap_s, wrap_t, mipmap);
     u32* o = (u32*)obj;
-    o[TEXOBJ_CI_FORMAT] = format;
     o[TEXOBJ_TLUT_NAME] = tlut_name;
 }
 
@@ -517,21 +642,21 @@ void GXInitTexObjLOD(GXTexObj* obj, GXTexFilter min_filt, GXTexFilter mag_filt, 
     edge_lod = edge_lod ? GX_TRUE : GX_FALSE;
 
     u32* o = (u32*)obj;
-    o[TEXOBJ_MIN_FILTER] = min_filt;
-    o[TEXOBJ_MAG_FILTER] = mag_filt;
+    texobj_set_min_filter(o, min_filt);
+    texobj_set_mag_filter(o, mag_filt);
     /* store floats as bits */
     memcpy(&o[TEXOBJ_MIN_LOD], &min_lod, sizeof(f32));
     memcpy(&o[TEXOBJ_MAX_LOD], &max_lod, sizeof(f32));
     memcpy(&o[TEXOBJ_LOD_BIAS], &lod_bias, sizeof(f32));
-    o[TEXOBJ_BIAS_CLAMP] = bias_clamp;
-    o[TEXOBJ_EDGE_LOD] = edge_lod;
-    o[TEXOBJ_MAX_ANISO] = max_aniso;
+    texobj_set_bias_clamp(o, bias_clamp);
+    texobj_set_edge_lod(o, edge_lod);
+    texobj_set_max_aniso(o, max_aniso);
 }
 
 void GXInitTexObjWrapMode(GXTexObj* obj, GXTexWrapMode s, GXTexWrapMode t) {
     u32* o = (u32*)obj;
-    o[TEXOBJ_WRAP_S] = s;
-    o[TEXOBJ_WRAP_T] = t;
+    texobj_set_wrap_s(o, s);
+    texobj_set_wrap_t(o, t);
 }
 
 /* --- GC texture format decoders (tile layout -> linear RGBA8) --- */
@@ -1020,17 +1145,25 @@ static void pc_gx_apply_sampler_state(const u32* o, int has_mips) {
     f32 lod_bias = 0.0f;
     f32 requested_aniso = 1.0f;
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, pc_gx_wrap_to_gl(o[TEXOBJ_WRAP_S]));
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, pc_gx_wrap_to_gl(o[TEXOBJ_WRAP_T]));
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, pc_gx_min_filter_to_gl(o[TEXOBJ_MIN_FILTER], has_mips));
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, pc_gx_mag_filter_to_gl(o[TEXOBJ_MAG_FILTER]));
+    glTexParameteri(
+        GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+        pc_gx_wrap_to_gl(texobj_get_wrap_s(o)));
+    glTexParameteri(
+        GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+        pc_gx_wrap_to_gl(texobj_get_wrap_t(o)));
+    glTexParameteri(
+        GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+        pc_gx_min_filter_to_gl(texobj_get_min_filter(o), has_mips));
+    glTexParameteri(
+        GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+        pc_gx_mag_filter_to_gl(texobj_get_mag_filter(o)));
 
     pc_gx_texobj_get_lod(o, &min_lod, &max_lod, &lod_bias);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, min_lod);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, max_lod);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, lod_bias);
 
-    switch (o[TEXOBJ_MAX_ANISO]) {
+    switch (texobj_get_max_aniso(o)) {
         case GX_ANISO_2: requested_aniso = 2.0f; break;
         case GX_ANISO_4: requested_aniso = 4.0f; break;
         case GX_ANISO_1:
@@ -1059,10 +1192,11 @@ void GXLoadTexObj(GXTexObj* obj, GXTexMapID id) {
     u32* o = (u32*)obj;
     uintptr_t image_ptr_key = texobj_get_image_ptr(o);
     void* image_ptr = (void*)image_ptr_key;
-    int width = (int)o[TEXOBJ_WIDTH];
-    int height = (int)o[TEXOBJ_HEIGHT];
-    u32 format = o[TEXOBJ_FORMAT];
-    u32 wrap_s = o[TEXOBJ_WRAP_S], wrap_t = o[TEXOBJ_WRAP_T];
+    int width = (int)texobj_get_width(o);
+    int height = (int)texobj_get_height(o);
+    u32 format = texobj_get_format(o);
+    u32 wrap_s = texobj_get_wrap_s(o);
+    u32 wrap_t = texobj_get_wrap_t(o);
     u32 tlut_key = (format == GX_TF_C4 || format == GX_TF_C8 || format == GX_TF_C14X2) ? o[TEXOBJ_TLUT_NAME] : 0xFFFFFFFF;
     uintptr_t tlut_ptr_key = 0;
     u32 tlut_hash_key = 0;
@@ -1108,7 +1242,6 @@ void GXLoadTexObj(GXTexObj* obj, GXTexMapID id) {
         if (efb_tex && !is_depth_copy_fmt) {
             glBindTexture(GL_TEXTURE_2D, efb_tex);
             pc_gx_apply_sampler_state(o, 0);
-            o[TEXOBJ_GL_TEX] = efb_tex;
             g_gx.gl_textures[id] = efb_tex;
             g_gx.tex_obj_w[id] = width;
             g_gx.tex_obj_h[id] = height;
@@ -1130,18 +1263,18 @@ void GXLoadTexObj(GXTexObj* obj, GXTexMapID id) {
         GLuint tex = cached->gl_tex;
         glBindTexture(GL_TEXTURE_2D, tex);
 
-        if (pc_gx_tex_filter_uses_mips(o[TEXOBJ_MIN_FILTER]) && !cached->mipmap_generated && !cached->external) {
+        if (pc_gx_tex_filter_uses_mips(texobj_get_min_filter(o)) &&
+            !cached->mipmap_generated && !cached->external) {
             glGenerateMipmap(GL_TEXTURE_2D);
             cached->mipmap_generated = 1;
         }
         pc_gx_apply_sampler_state(o, cached->mipmap_generated);
         cached->wrap_s = wrap_s;
         cached->wrap_t = wrap_t;
-        cached->min_filter = o[TEXOBJ_MIN_FILTER];
-        cached->mag_filter = o[TEXOBJ_MAG_FILTER];
+        cached->min_filter = texobj_get_min_filter(o);
+        cached->mag_filter = texobj_get_mag_filter(o);
         tex_cache_set_region_meta(cached, tex_region);
 
-        o[TEXOBJ_GL_TEX] = tex;
         g_gx.gl_textures[id] = tex;
         g_gx.tex_obj_w[id] = width;
         g_gx.tex_obj_h[id] = height;
@@ -1180,12 +1313,11 @@ void GXLoadTexObj(GXTexObj* obj, GXTexMapID id) {
                                                     tlut_key, tlut_ptr_key, tlut_hash_key, hash, hd_tex);
             entry->wrap_s = wrap_s;
             entry->wrap_t = wrap_t;
-            entry->min_filter = o[TEXOBJ_MIN_FILTER];
-            entry->mag_filter = o[TEXOBJ_MAG_FILTER];
+            entry->min_filter = texobj_get_min_filter(o);
+            entry->mag_filter = texobj_get_mag_filter(o);
             entry->external = 1;
             tex_cache_set_region_meta(entry, tex_region);
 
-            o[TEXOBJ_GL_TEX] = hd_tex;
             g_gx.gl_textures[id] = hd_tex;
             g_gx.tex_obj_w[id] = width;
             g_gx.tex_obj_h[id] = height;
@@ -1243,7 +1375,7 @@ void GXLoadTexObj(GXTexObj* obj, GXTexMapID id) {
 
     {
         int generated_mips = 0;
-        if (pc_gx_tex_filter_uses_mips(o[TEXOBJ_MIN_FILTER])) {
+        if (pc_gx_tex_filter_uses_mips(texobj_get_min_filter(o))) {
             glGenerateMipmap(GL_TEXTURE_2D);
             generated_mips = 1;
         }
@@ -1254,13 +1386,12 @@ void GXLoadTexObj(GXTexObj* obj, GXTexMapID id) {
                                                 tlut_ptr_key, tlut_hash_key, hash, tex);
         entry->wrap_s = wrap_s;
         entry->wrap_t = wrap_t;
-        entry->min_filter = o[TEXOBJ_MIN_FILTER];
-        entry->mag_filter = o[TEXOBJ_MAG_FILTER];
+        entry->min_filter = texobj_get_min_filter(o);
+        entry->mag_filter = texobj_get_mag_filter(o);
         entry->mipmap_generated = (u8)generated_mips;
         tex_cache_set_region_meta(entry, tex_region);
     }
 
-    o[TEXOBJ_GL_TEX] = tex;
     g_gx.gl_textures[id] = tex;
     g_gx.tex_obj_w[id] = width;
     g_gx.tex_obj_h[id] = height;
@@ -1380,8 +1511,7 @@ void GXInitTlutObj(GXTlutObj* obj, void* lut, GXTlutFmt fmt, u16 n_entries) {
     if (n_entries > 0x4000u) n_entries = 0x4000u;
     memset(o, 0, TLUTOBJ_SIZE * sizeof(u32));
     tlutobj_set_data_ptr(o, lut);
-    o[TLUTOBJ_FORMAT] = fmt;
-    o[TLUTOBJ_N_ENTRIES] = n_entries;
+    tlutobj_set_meta(o, fmt, n_entries);
 }
 
 void GXLoadTlut(GXTlutObj* obj, GXTlut idx) {
@@ -1396,8 +1526,8 @@ void GXLoadTlut(GXTlutObj* obj, GXTlut idx) {
     }
 
     const u32* o = (const u32*)obj;
-    int fmt = (int)o[TLUTOBJ_FORMAT];
-    int n_entries = (int)o[TLUTOBJ_N_ENTRIES];
+    int fmt = (int)tlutobj_get_format(o);
+    int n_entries = (int)tlutobj_get_n_entries(o);
 
     if ((u32)fmt >= (u32)GX_MAX_TLUTFMT) fmt = (int)GX_TL_IA8;
 
@@ -1644,12 +1774,24 @@ void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion* region, GXTexMapID id) {
 }
 
 /* --- accessors --- */
-GXBool GXGetTexObjMipMap(GXTexObj* obj) { return ((const u32*)obj)[TEXOBJ_MIPMAP] != 0; }
-GXTexFmt GXGetTexObjFmt(GXTexObj* obj) { return (GXTexFmt)((const u32*)obj)[TEXOBJ_FORMAT]; }
-u16 GXGetTexObjHeight(GXTexObj* obj) { return (u16)((const u32*)obj)[TEXOBJ_HEIGHT]; }
-u16 GXGetTexObjWidth(GXTexObj* obj) { return (u16)((const u32*)obj)[TEXOBJ_WIDTH]; }
-GXTexWrapMode GXGetTexObjWrapS(GXTexObj* obj) { return (GXTexWrapMode)((const u32*)obj)[TEXOBJ_WRAP_S]; }
-GXTexWrapMode GXGetTexObjWrapT(GXTexObj* obj) { return (GXTexWrapMode)((const u32*)obj)[TEXOBJ_WRAP_T]; }
+GXBool GXGetTexObjMipMap(GXTexObj* obj) {
+    return texobj_get_mipmap((const u32*)obj) ? GX_TRUE : GX_FALSE;
+}
+GXTexFmt GXGetTexObjFmt(GXTexObj* obj) {
+    return (GXTexFmt)texobj_get_format((const u32*)obj);
+}
+u16 GXGetTexObjHeight(GXTexObj* obj) {
+    return texobj_get_height((const u32*)obj);
+}
+u16 GXGetTexObjWidth(GXTexObj* obj) {
+    return texobj_get_width((const u32*)obj);
+}
+GXTexWrapMode GXGetTexObjWrapS(GXTexObj* obj) {
+    return (GXTexWrapMode)texobj_get_wrap_s((const u32*)obj);
+}
+GXTexWrapMode GXGetTexObjWrapT(GXTexObj* obj) {
+    return (GXTexWrapMode)texobj_get_wrap_t((const u32*)obj);
+}
 void* GXGetTexObjData(GXTexObj* obj) { return (void*)texobj_get_image_ptr((const u32*)obj); }
 void* GXGetTexObjUserData(GXTexObj* obj) {
     if (!obj) return NULL;
@@ -1660,12 +1802,14 @@ void GXGetTexObjAll(GXTexObj* obj, void** image_ptr, u16* width, u16* height, GX
                     GXTexWrapMode* wrap_s, GXTexWrapMode* wrap_t, GXBool* mipmap) {
     const u32* o = (const u32*)obj;
     if (image_ptr) *image_ptr = (void*)texobj_get_image_ptr(o);
-    if (width) *width = (u16)o[TEXOBJ_WIDTH];
-    if (height) *height = (u16)o[TEXOBJ_HEIGHT];
-    if (format) *format = (GXTexFmt)o[TEXOBJ_FORMAT];
-    if (wrap_s) *wrap_s = (GXTexWrapMode)o[TEXOBJ_WRAP_S];
-    if (wrap_t) *wrap_t = (GXTexWrapMode)o[TEXOBJ_WRAP_T];
-    if (mipmap) *mipmap = (o[TEXOBJ_MIPMAP] != 0) ? GX_TRUE : GX_FALSE;
+    if (width) *width = texobj_get_width(o);
+    if (height) *height = texobj_get_height(o);
+    if (format) *format = (GXTexFmt)texobj_get_format(o);
+    if (wrap_s) *wrap_s = (GXTexWrapMode)texobj_get_wrap_s(o);
+    if (wrap_t) *wrap_t = (GXTexWrapMode)texobj_get_wrap_t(o);
+    if (mipmap) {
+        *mipmap = texobj_get_mipmap(o) ? GX_TRUE : GX_FALSE;
+    }
 }
 
 void* GXGetTlutObjData(GXTlutObj* obj) {
@@ -1673,24 +1817,25 @@ void* GXGetTlutObjData(GXTlutObj* obj) {
 }
 
 GXTlutFmt GXGetTlutObjFmt(GXTlutObj* obj) {
-    return (GXTlutFmt)((const u32*)obj)[TLUTOBJ_FORMAT];
+    return (GXTlutFmt)tlutobj_get_format((const u32*)obj);
 }
 
 u16 GXGetTlutObjNumEntries(GXTlutObj* obj) {
-    return (u16)((const u32*)obj)[TLUTOBJ_N_ENTRIES];
+    return tlutobj_get_n_entries((const u32*)obj);
 }
 
 void GXGetTlutObjAll(GXTlutObj* obj, void** lut, GXTlutFmt* fmt, u16* n_entries) {
     const u32* o = (const u32*)obj;
     if (lut) *lut = (void*)tlutobj_get_data_ptr(o);
-    if (fmt) *fmt = (GXTlutFmt)o[TLUTOBJ_FORMAT];
-    if (n_entries) *n_entries = (u16)o[TLUTOBJ_N_ENTRIES];
+    if (fmt) *fmt = (GXTlutFmt)tlutobj_get_format(o);
+    if (n_entries) *n_entries = tlutobj_get_n_entries(o);
 }
 
 void GXDestroyTexObj(void* obj) {
-    u32* o = (u32*)obj;
-    /* don't delete GL texture here; cache eviction handles that */
-    o[TEXOBJ_GL_TEX] = 0;
+    if (!obj) return;
+    /* GL texture lifetime belongs to the cache, not the SDK object. */
+    texobj_user_data_set(obj, NULL);
+    memset(obj, 0, sizeof(GXTexObj));
 }
 
 void GXDestroyTlutObj(void* obj) { (void)obj; }

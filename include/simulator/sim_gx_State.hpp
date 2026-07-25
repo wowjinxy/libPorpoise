@@ -102,6 +102,11 @@ struct TextureState {
     u64 revision = 0;
 };
 
+struct TexCoordGenState {
+    GXTexGenSrc source = GX_TG_TEX0;
+    u8 matrixId = GX_IDENTITY;
+};
+
 enum class TevColorMode {
     PassColor,
     ReplaceTexture,
@@ -144,6 +149,8 @@ class GlobalState {
   const ChannelState& GetChannelState(size_t index) const;
   const LightState& GetLightState(size_t index) const;
   const TextureState& GetTextureState(size_t index) const;
+  const TexCoordGenState& GetTexCoordGenState(size_t index) const;
+  const std::array<float, 16>& GetTexCoordGenMatrix(size_t index) const;
   const TevStageState& GetTevStageState(size_t index) const;
   size_t GetNumTevStages() const;
   const std::array<float, 4>& GetCopyClearColor() const;
@@ -169,6 +176,7 @@ class GlobalState {
   static float WordToFloat(u32 word);
   void RefreshPositionMatrices(u32 firstAddress, u32 endAddress);
   void RefreshTextureMatrices(u32 firstAddress, u32 endAddress);
+  void RefreshTexCoordGenState(u32 firstAddress, u32 endAddress);
   void RefreshProjectionMatrix(u32 firstAddress, u32 endAddress);
   void RefreshViewportTransform(u32 firstAddress, u32 endAddress);
   void RefreshChannelState(u32 firstAddress, u32 endAddress);
@@ -185,6 +193,7 @@ class GlobalState {
   std::array<bool, 10> mPositionMatrixValid = {};
   std::array<std::array<float, 16>, 10> mTextureMatrices = {};
   std::array<bool, 10> mTextureMatrixValid = {};
+  std::array<TexCoordGenState, 8> mTexCoordGens = {};
   std::array<float, 16> mProjectionMatrix = {};
   bool mProjectionMatrixValid = false;
   std::array<float, 6> mViewportTransform = {};
