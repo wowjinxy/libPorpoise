@@ -1,150 +1,60 @@
 # libPorpoise
 
-A drop-in replacement for the GameCube/Wii SDK designed for PC ports.
+A drop-in replacement for the GameCube/Wii SDK and a compatibility layer for the GameCube/Wii APIs on other platforms.
 
 ## Overview
 
-libPorpoise provides a compatibility layer that allows GameCube and Wii games to be ported to PC with minimal code changes. By replicating the original SDK's API surface, developers can port their games while maintaining the same programming model.
+libPorpoise provides a compatibility layer that allows GameCube and Wii games to be ported to other platforms with minimal code changes. By using a community-decompiled version of the SDK functions, the API stays the same and libPorpoise supports building for real GC/Wii hardware.
 
 ## Features
 
 - **API Compatible**: Drop-in replacement for GC/Wii SDK functions
-- **Cross-Platform**: Builds on Windows, Linux, and macOS
-- **Modern Backend**: Uses modern graphics APIs and input systems while maintaining the classic interface
-- **Modular Design**: Include only the modules you need
-- **Dual Mode**: Simple mode for basic ports, or full memory emulation for advanced features
+- **Cross-Platform**: Builds on GameCube, Windows, Linux. Build and debug a PC port and GameCube ELF file from the same source tree
 
 ## Project Structure
 
 ```
 libPorpoise/
 ├── include/          # Public header files (GC/Wii SDK API)
-│   ├── dolphin/      # Dolphin SDK headers
-│   └── revolution/   # Revolution SDK headers
+│   └── dolphin/      # Dolphin SDK headers
 ├── src/              # Implementation files
-│   ├── os/           # Operating system functions
+│   ├── os/           # Original DolphinOS with conditional compilation to support other platforms
 │   ├── gx/           # Graphics subsystem
 │   ├── pad/          # Controller input
 │   ├── card/         # Memory card
-│   └── dvd/          # Disc reading
-├── lib/              # Built libraries
-└── examples/         # Example programs
+│   ├── dvd/          # Disc reading (wraps file system APIs on other platforms)
+│   └── sim/          # Simulator library. Calls application main function, handles input, 
+│                     # GX compatibility layer. Most code to make libPorpoise work on platforms 
+│                     # other than GC.
+└── standalone/       # Example program, used to test linking in CI
 ```
-
-## Quick Start
-
-See [QUICKSTART.md](docs/root-notes/QUICKSTART.md) for detailed build instructions and getting started guide.
-
-**TL;DR:**
-```bash
-# Linux/macOS - Simple mode
-./build.sh
-
-# Windows - Simple mode
-build.bat
-
-# Enable full memory emulation (for locked cache support)
-cmake .. -DPORPOISE_USE_GECKO_MEMORY=ON
-cmake --build .
-```
-
-See [MEMORY_EMULATION.md](docs/MEMORY_EMULATION.md) for details on memory emulation modes.
-
-## Architecture Notes
-
-libPorpoise adapts the original cooperative threading model to modern preemptive OS threads. See [THREADING_ARCHITECTURE.md](docs/THREADING_ARCHITECTURE.md) for detailed explanation of differences and migration patterns.
 
 ## Usage
 
-Link against the libPorpoise library and include the appropriate headers:
+Add to your meson project as a subproject:
 
-```c
-#include <dolphin/os.h>
-#include <dolphin/pad.h>
-#include <dolphin/dvd.h>
+subprojects/libPorpoise.wrap:
+```
+[wrap-git]
+url = https://github.com/wowjinxy/libPorpoise.git
+revision = master
+depth = 1
+directory = libPorpoise
 
-int main() {
-    OSInit();
-    PADInit();  // Initialize controller system
-    DVDInit();  // Initialize file system
-    
-    // Load game data from files/ directory
-    DVDFileInfo file;
-    char buffer[1024];
-    if (DVDOpen("data/level1.dat", &file)) {
-        DVDRead(&file, buffer, sizeof(buffer), 0);
-        DVDClose(&file);
-    }
-    
-    // Game loop
-    PADStatus pads[PAD_MAX_CONTROLLERS];
-    while (running) {
-        PADRead(pads);  // Read all controllers
-        // Your game code here
-    }
-    return 0;
-}
+[provide]
+dependency_names = libPorpoise
 ```
 
-### Video Configuration
-
-Edit `vi_config.ini` to customize display settings:
-
-```ini
-[Display]
-width = 1280
-height = 720
-fullscreen = 0        # 0 = windowed, 1 = fullscreen
-title = My Game
-
-[Graphics]
-vsync = 1             # 0 = off, 1 = on, -1 = adaptive
-fps_cap = 60          # FPS limit (0 = uncapped)
-msaa_samples = 4      # Anti-aliasing (0, 2, 4, 8, 16)
-
-[Emulation]
-tv_mode = NTSC        # NTSC (60Hz) or PAL (50Hz)
+Add the library in your meson.build:
+```
+libporpoise_dep = dependency('libPorpoise')
 ```
 
-## Controller Configuration
-
-Customize controls via `pad_config.ini`:
-
-```ini
-[Keyboard]
-; Rebind keys (Player 1 fallback)
-up=W
-down=S
-left=A
-right=D
-a=Space
-
-[Settings]
-; Adjust dead zones and sensitivity
-stick_deadzone=15
-stick_sensitivity=1.0
-rumble_intensity=0.5
+Add the following to your project's meson.options:
+```
+option('build_target', type: 'combo', choices: ['gc', 'win64', 'linux'], value: 'gc', description: 'Target build platform')
 ```
 
-See [SDL2_SETUP.md](docs/SDL2_SETUP.md) for full configuration options.
-
-## Module Status
-
-| Module | Status | Description |
-|--------|--------|-------------|
-| **OS** | ✅ **Complete** | Operating system and threading (17 modules, 14,000+ lines) |
-| **PAD** | ✅ **Complete** | Controller input (SDL2 + keyboard fallback + config system) |
-| **DVD** | ✅ **Complete** | File I/O (5 modules: DVD, Queue, Low, Error, Fatal) |
-| **SI** | ✅ **Complete** | Serial Interface stubs (for PAD compatibility) |
-| **AR** | ✅ **Complete** | ARAM (16MB audio RAM simulation with DMA) |
-| **VI** | ✅ **Complete** | Video Interface (SDL2 window + OpenGL + config system) |
-| **EXI** | ✅ **Complete** | External Interface stubs (for CARD/network compatibility) |
-| **CARD** | ✅ **Complete** | Memory cards (maps to memcard_a/, memcard_b/ directories) |
-| GX     | 📋 Planned | Graphics subsystem |
-| AX/DSP | 📋 Planned | Audio subsystem |
-
-**Current Version:** Working toward v0.2.0 with OS, PAD, DVD, and SI complete!  
-See [IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for detailed breakdown.
 
 ## Contributing
 
@@ -160,5 +70,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-This project reimplements the API of Nintendo's GameCube and Wii SDKs for preservation and porting purposes.
+This project reimplements the API of Nintendo's GameCube and Wii SDKs for preservation and porting purposes. SDK source came from the [pikmin decomp](https://github.com/projectPiki/pikmin).
 
