@@ -7,7 +7,7 @@ libar = library('ar',
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libar_srcs],
-    native: true
+    native: build_target != 'gc'
 )
 
 libporpoise_libs += libar

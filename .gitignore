@@ -5,12 +5,19 @@ reference/
 ACGC-PC-Port/
 rvlsdk/
 
+# Cross compilation toolchain
+compilers/
+
+# Wine prefix
+wineprefix/
+
 # Demo/game content (contains non-redistributable assets/code)
 demos/
 files/
 
 # Build directories
 build/
+build_gc/
 /build_*/
 /build_legacy_check/
 /build_pikmin/

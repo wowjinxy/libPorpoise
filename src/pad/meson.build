@@ -7,7 +7,7 @@ libpad = library('pad',
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libpad_srcs],
-    native: true
+    native: build_target != 'gc'
 )
 
 libporpoise_libs += libpad

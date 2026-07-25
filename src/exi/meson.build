@@ -7,7 +7,7 @@ libexi = library('exi',
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libexi_srcs],
-    native: true
+    native: build_target != 'gc'
 )
 
 libporpoise_libs += libexi

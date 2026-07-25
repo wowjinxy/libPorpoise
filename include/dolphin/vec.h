@@ -1,7 +1,7 @@
 #ifndef _DOLPHIN_VEC_H
 #define _DOLPHIN_VEC_H
 
-#include "types.h"
+#include <dolphin/types.h>
 
 #include <dolphin/os/OSVersion.h>
 

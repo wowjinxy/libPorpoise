@@ -12,7 +12,7 @@ libdemo = library('demo',
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libdemo_srcs],
-    native: true
+    native: build_target != 'gc'
 )
 
 libporpoise_libs += libdemo
