@@ -338,6 +338,7 @@ s32 __CARDSeek(CARDFileInfo* fileInfo, s32 length, s32 offset, CARDControl** out
 // Icon animation modes.
 #define CARD_MODE_NORMAL 0
 #define CARD_MODE_FAST   1
+#define CARD_NUM_CHANS   2
 
 // Result codes.
 #define CARD_RESULT_UNLOCKED    1
