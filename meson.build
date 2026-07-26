@@ -145,7 +145,7 @@ libporpoise_dep = declare_dependency(
     dependencies: libporpoise_dependencies
 )
 
-meson.override_dependency('libporpoise', libporpoise_dep)
+meson.override_dependency('libPorpoise', libporpoise_dep)
 
 standalone = get_option('standalone')
 
