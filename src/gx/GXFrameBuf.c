@@ -3,6 +3,24 @@
 
 #ifdef LIBPORPOISE_PORT
 extern void __VIHostOnCopyDisp(void);
+extern void __GXHostCopyTex(
+    void* destination,
+    u16 sourceLeft,
+    u16 sourceTop,
+    u16 sourceWidth,
+    u16 sourceHeight,
+    u16 destinationWidth,
+    u16 destinationHeight,
+    u32 destinationFormat,
+    GXBool clear);
+
+static u16 HostTexCopySourceLeft;
+static u16 HostTexCopySourceTop;
+static u16 HostTexCopySourceWidth;
+static u16 HostTexCopySourceHeight;
+static u16 HostTexCopyDestinationWidth;
+static u16 HostTexCopyDestinationHeight;
+static u32 HostTexCopyDestinationFormat;
 #endif
 
 GXRenderModeObj GXNtsc240Ds = {
@@ -572,6 +590,13 @@ void GXSetTexCopySrc(u16 left, u16 top, u16 wd, u16 ht)
 {
 	CHECK_GXBEGIN(0x3D5, "GXSetTexCopySrc");
 
+#ifdef LIBPORPOISE_PORT
+	HostTexCopySourceLeft = left;
+	HostTexCopySourceTop = top;
+	HostTexCopySourceWidth = wd;
+	HostTexCopySourceHeight = ht;
+#endif
+
 	gx->cpTexSrc = 0;
 	SET_REG_FIELD(0x3D8, gx->cpTexSrc, 10, 0, left);
 	SET_REG_FIELD(0x3D9, gx->cpTexSrc, 10, 10, top);
@@ -611,6 +636,12 @@ void GXSetTexCopyDst(u16 wd, u16 ht, GXTexFmt fmt, GXBool mipmap)
 	u32 peTexFmtH;
 
 	CHECK_GXBEGIN(0x415, "GXSetTexCopyDst");
+
+#ifdef LIBPORPOISE_PORT
+	HostTexCopyDestinationWidth = wd;
+	HostTexCopyDestinationHeight = ht;
+	HostTexCopyDestinationFormat = (u32)fmt;
+#endif
 
 	gx->cpTexZ = 0;
 	peTexFmt   = fmt & 0xF;
@@ -1048,6 +1079,18 @@ void GXCopyTex(void* dest, GXBool clear)
 	if (changePeCtrl) {
 		GX_WRITE_RAS_REG(gx->peCtrl);
 	}
+#ifdef LIBPORPOISE_PORT
+	__GXHostCopyTex(
+	    dest,
+	    HostTexCopySourceLeft,
+	    HostTexCopySourceTop,
+	    HostTexCopySourceWidth,
+	    HostTexCopySourceHeight,
+	    HostTexCopyDestinationWidth,
+	    HostTexCopyDestinationHeight,
+	    HostTexCopyDestinationFormat,
+	    clear);
+#endif
 #if OS_BUILD_VERSION >= 20011002L
 	gx->bpSent = GX_FALSE;
 #else
