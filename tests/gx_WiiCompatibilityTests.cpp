@@ -41,6 +41,18 @@ bool TestTextureCopyIntensityConversion() {
         SIM::GX::ConvertRgbToCopyIntensity(0, 0, 255) == 41;
 }
 
+bool TestTextureCopyChannelSelection() {
+    return
+        SIM::GX::ConvertColorToTextureCopyByte(
+            GX_CTF_A8, 10, 20, 30, 40) == 40 &&
+        SIM::GX::ConvertColorToTextureCopyByte(
+            GX_CTF_R8, 10, 20, 30, 40) == 10 &&
+        SIM::GX::ConvertColorToTextureCopyByte(
+            GX_CTF_G8, 10, 20, 30, 40) == 20 &&
+        SIM::GX::ConvertColorToTextureCopyByte(
+            GX_CTF_B8, 10, 20, 30, 40) == 30;
+}
+
 bool TestRgb565TextureCopyEncoding() {
     std::array<u8, 4 * 4 * 4> rgba = {};
     rgba[0] = 255;
@@ -826,6 +838,9 @@ bool TestBpTextureAndScissorCommands() {
 int main() {
     if (!TestTextureCopyIntensityConversion()) {
         return 20;
+    }
+    if (!TestTextureCopyChannelSelection()) {
+        return 22;
     }
     if (!TestRgb565TextureCopyEncoding()) {
         return 21;
