@@ -14,6 +14,9 @@ static GXBool CPGPLinked;
 static BOOL GXOverflowSuspendInProgress;
 static GXBreakPtCallback BreakPointCB;
 static u32 __GXOverflowCount;
+#ifdef LIBPORPOISE_PORT
+static GXBool HostBreakpointPending;
+#endif
 #if DEBUG
 static int IsWGPipeRedirected;
 #endif
@@ -480,6 +483,9 @@ void GXEnableBreakPt(void* break_pt)
 	gx->cpEnable           = (gx->cpEnable & 0xFFFFFFDF) | 0x20;
 	__cpReg[CP_CONTROL]    = gx->cpEnable;
 	__GXCurrentBP          = break_pt;
+#ifdef LIBPORPOISE_PORT
+	HostBreakpointPending = GX_TRUE;
+#endif
 	__GXFifoReadEnable();
 	OSRestoreInterrupts(enabled);
 }
@@ -496,8 +502,25 @@ void GXDisableBreakPt(void)
 	gx->cpEnable        = gx->cpEnable & 0xFFFFFFDF;
 	__cpReg[CP_CONTROL] = gx->cpEnable;
 	__GXCurrentBP       = NULL;
+#ifdef LIBPORPOISE_PORT
+	HostBreakpointPending = GX_FALSE;
+#endif
 	OSRestoreInterrupts(enabled);
 }
+
+#ifdef LIBPORPOISE_PORT
+void __GXHostServiceFifoBreakpoint(void)
+{
+	if (!HostBreakpointPending || BreakPointCB == NULL) {
+		return;
+	}
+
+	HostBreakpointPending = GX_FALSE;
+	gx->cpEnable &= 0xFFFFFFDF;
+	__cpReg[CP_CONTROL] = gx->cpEnable;
+	BreakPointCB();
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -508,6 +531,9 @@ void __GXFifoInit(void)
 	__OSUnmaskInterrupts(OS_INTERRUPTMASK_PI_CP);
 	__GXCurrentThread           = OSGetCurrentThread();
 	GXOverflowSuspendInProgress = FALSE;
+#ifdef LIBPORPOISE_PORT
+	HostBreakpointPending = GX_FALSE;
+#endif
 #if OS_BUILD_VERSION >= 20011002L
 	CPUFifo = NULL;
 	GPFifo  = NULL;

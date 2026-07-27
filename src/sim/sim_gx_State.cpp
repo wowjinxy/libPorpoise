@@ -74,6 +74,7 @@ void GlobalState::Reset() {
         matrix = IdentityMatrix();
     }
     mTextureMatrixValid.fill(false);
+    mTextureMatrix2x4.fill(false);
     for (auto& matrix : mTextureMatrices) {
         matrix = IdentityMatrix();
     }
@@ -675,6 +676,18 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
         std::memcpy(&mXfMemory[address + i], data + i * sizeof(u32), sizeof(u32));
     }
 
+    constexpr u32 textureMatrixStart = 30u * 4u;
+    constexpr u32 wordsPerTextureMatrix = 12u;
+    if ((writableWords == 8u || writableWords == 12u) &&
+        address >= textureMatrixStart &&
+        (address - textureMatrixStart) % wordsPerTextureMatrix == 0u) {
+        const size_t slot = static_cast<size_t>(
+            (address - textureMatrixStart) / wordsPerTextureMatrix);
+        if (slot < mTextureMatrix2x4.size()) {
+            mTextureMatrix2x4[slot] = writableWords == 8u;
+        }
+    }
+
     const u32 endAddress = address + static_cast<u32>(writableWords);
     RefreshPositionMatrices(address, endAddress);
     RefreshTextureMatrices(address, endAddress);
@@ -719,11 +732,20 @@ void GlobalState::RefreshTextureMatrices(u32 firstAddress, u32 endAddress) {
 
         auto& matrix = mTextureMatrices[slot];
         matrix = IdentityMatrix();
-        for (size_t row = 0; row < 3; ++row) {
+        const size_t sourceRows = mTextureMatrix2x4[slot] ? 2u : 3u;
+        for (size_t row = 0; row < sourceRows; ++row) {
             for (size_t column = 0; column < 4; ++column) {
                 const size_t source = matrixStart + row * 4 + column;
                 matrix[row * 4 + column] = WordToFloat(mXfMemory[source]);
             }
+        }
+        if (mTextureMatrix2x4[slot]) {
+            // GX_MTX2x4 produces S and T; its projective Q coordinate is
+            // implicitly one rather than a third row read from XF memory.
+            matrix[8] = 0.0f;
+            matrix[9] = 0.0f;
+            matrix[10] = 0.0f;
+            matrix[11] = 1.0f;
         }
         mTextureMatrixValid[slot] = true;
     }

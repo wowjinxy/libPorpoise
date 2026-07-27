@@ -8,6 +8,17 @@ static GXDrawDoneCallback DrawDoneCB;
 static u8 DrawDone;
 static OSThreadQueue FinishQueue;
 static GXBool ResetWritePipe;
+#ifdef LIBPORPOISE_PORT
+static u16 HostDrawSyncToken;
+
+void __GXHostCompleteDrawSync(u16 token, GXBool signalCallback)
+{
+	HostDrawSyncToken = token;
+	if (signalCallback && TokenCB != NULL) {
+		TokenCB(token);
+	}
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -147,8 +158,12 @@ void GXSetDrawSync(u16 token)
  */
 u16 GXReadDrawSync(void)
 {
+#ifdef LIBPORPOISE_PORT
+	return HostDrawSyncToken;
+#else
 	u16 token = __peReg[PE_TOKEN];
 	return token;
+#endif
 }
 
 /**
