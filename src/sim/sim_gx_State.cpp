@@ -101,6 +101,14 @@ void GlobalState::Reset() {
     mLights = {};
     mTextures = {};
     mTevStages = {};
+    for (auto& table : mTevSwapTables) {
+        table = {
+            GX_CH_RED,
+            GX_CH_GREEN,
+            GX_CH_BLUE,
+            GX_CH_ALPHA,
+        };
+    }
     mTevColors = {};
     mNumTevStages = 1;
     mTextureRevision = 0;
@@ -370,6 +378,20 @@ const TevStageState& GlobalState::GetTevStageState(size_t index) const {
     }
     static const TevStageState empty = {};
     return empty;
+}
+
+const std::array<u8, 4>& GlobalState::GetTevSwapTable(
+    size_t index) const {
+    if (index < mTevSwapTables.size()) {
+        return mTevSwapTables[index];
+    }
+    static const std::array<u8, 4> identity = {
+        GX_CH_RED,
+        GX_CH_GREEN,
+        GX_CH_BLUE,
+        GX_CH_ALPHA,
+    };
+    return identity;
 }
 
 const std::array<float, 4>& GlobalState::GetTevColor(size_t index) const {
@@ -667,6 +689,26 @@ void GlobalState::SetBpRegister(u32 registerValue) {
             mAlphaCompareState.operation =
                 static_cast<GXAlphaOp>(field(2, 22));
             break;
+        case 0xf6:
+        case 0xf7:
+        case 0xf8:
+        case 0xf9:
+        case 0xfa:
+        case 0xfb:
+        case 0xfc:
+        case 0xfd: {
+            const size_t registerIndex =
+                static_cast<size_t>(address - 0xf6u);
+            const size_t tableIndex = registerIndex / 2u;
+            const size_t componentOffset =
+                (registerIndex & 1u) * 2u;
+            auto& table = mTevSwapTables[tableIndex];
+            table[componentOffset] =
+                static_cast<u8>(field(2, 0));
+            table[componentOffset + 1u] =
+                static_cast<u8>(field(2, 2));
+            break;
+        }
         default:
             if (address >= 0xe0u && address <= 0xe7u) {
                 const size_t colorIndex =
@@ -756,6 +798,10 @@ void GlobalState::SetBpRegister(u32 registerValue) {
                         ? 8u | (field(2, 20) << 1u) | field(1, 18)
                         : field(1, 18);
                 auto& tevStage = mTevStages[stage];
+                tevStage.rasterSwapTable =
+                    static_cast<u8>(field(2, 0));
+                tevStage.textureSwapTable =
+                    static_cast<u8>(field(2, 2));
                 tevStage.alphaInputs = {
                     static_cast<u8>(field(3, 13)),
                     static_cast<u8>(field(3, 10)),

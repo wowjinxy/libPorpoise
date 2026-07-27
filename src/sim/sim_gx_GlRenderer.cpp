@@ -1054,6 +1054,14 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         glGetUniformLocation(
             static_cast<GLuint>(shaderProgram),
             "u_tev_output_registers[0]");
+    const GLint tevSwapSelectorsLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_tev_swap_selectors[0]");
+    const GLint tevSwapTablesLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_tev_swap_tables[0]");
     const GLint tevRegistersLocation =
         glGetUniformLocation(
             static_cast<GLuint>(shaderProgram),
@@ -1148,6 +1156,8 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
     std::array<GLint, maxTevStages * 4u> colorOperations = {};
     std::array<GLint, maxTevStages * 4u> alphaOperations = {};
     std::array<GLint, maxTevStages * 2u> outputRegisters = {};
+    std::array<GLint, maxTevStages * 2u> swapSelectors = {};
+    std::array<GLint, 4u * 4u> swapTables = {};
 
     const size_t numTevStages =
         std::min(gxState.GetNumTevStages(), maxTevStages);
@@ -1188,6 +1198,10 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             static_cast<GLint>(stage.colorOutput);
         outputRegisters[stageIndex * 2u + 1u] =
             static_cast<GLint>(stage.alphaOutput);
+        swapSelectors[stageIndex * 2u] =
+            static_cast<GLint>(stage.rasterSwapTable);
+        swapSelectors[stageIndex * 2u + 1u] =
+            static_cast<GLint>(stage.textureSwapTable);
 
         if (stageIndex >= numTevStages ||
             !stage.textureEnabled ||
@@ -1346,6 +1360,30 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             tevOutputRegistersLocation,
             static_cast<GLsizei>(maxTevStages),
             outputRegisters.data());
+    }
+    if (tevSwapSelectorsLocation >= 0) {
+        glUniform2iv(
+            tevSwapSelectorsLocation,
+            static_cast<GLsizei>(maxTevStages),
+            swapSelectors.data());
+    }
+    if (tevSwapTablesLocation >= 0) {
+        for (size_t tableIndex = 0;
+             tableIndex < 4u;
+             ++tableIndex) {
+            const auto& table =
+                gxState.GetTevSwapTable(tableIndex);
+            for (size_t component = 0;
+                 component < 4u;
+                 ++component) {
+                swapTables[tableIndex * 4u + component] =
+                    static_cast<GLint>(table[component]);
+            }
+        }
+        glUniform4iv(
+            tevSwapTablesLocation,
+            4,
+            swapTables.data());
     }
     if (tevRegistersLocation >= 0) {
         std::array<float, 16> registers = {};
