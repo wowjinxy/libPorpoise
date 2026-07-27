@@ -100,7 +100,8 @@ void DecodeColor(
     GXCompCnt componentCount,
     GXCompType type,
     float* output,
-    bool bigEndian) {
+    bool bigEndian,
+    bool hostPackedU32) {
     u8 rgba[4] = {255, 255, 255, 255};
 
     switch (type) {
@@ -112,10 +113,21 @@ void DecodeColor(
             break;
         }
         case GX_RGB8:
-        case GX_RGBX8:
             rgba[0] = source[0];
             rgba[1] = source[1];
             rgba[2] = source[2];
+            break;
+        case GX_RGBX8:
+            if (hostPackedU32) {
+                const u32 packed = ReadUnaligned<u32>(source);
+                rgba[0] = static_cast<u8>(packed >> 24);
+                rgba[1] = static_cast<u8>(packed >> 16);
+                rgba[2] = static_cast<u8>(packed >> 8);
+            } else {
+                rgba[0] = source[0];
+                rgba[1] = source[1];
+                rgba[2] = source[2];
+            }
             break;
         case GX_RGBA4: {
             const u16 packed = ReadU16(source, bigEndian);
@@ -137,10 +149,20 @@ void DecodeColor(
             break;
         }
         case GX_RGBA8:
-            rgba[0] = source[0];
-            rgba[1] = source[1];
-            rgba[2] = source[2];
-            rgba[3] = componentCount == GX_CLR_RGBA ? source[3] : 255;
+            if (hostPackedU32) {
+                const u32 packed = ReadUnaligned<u32>(source);
+                rgba[0] = static_cast<u8>(packed >> 24);
+                rgba[1] = static_cast<u8>(packed >> 16);
+                rgba[2] = static_cast<u8>(packed >> 8);
+                rgba[3] = componentCount == GX_CLR_RGBA
+                    ? static_cast<u8>(packed)
+                    : 255;
+            } else {
+                rgba[0] = source[0];
+                rgba[1] = source[1];
+                rgba[2] = source[2];
+                rgba[3] = componentCount == GX_CLR_RGBA ? source[3] : 255;
+            }
             break;
         default:
             return;
@@ -475,7 +497,9 @@ bool DecodeVertexStream(
                     attributes.mComponents,
                     attributes.mDataType,
                     color.Data(),
-                    sourceBigEndian);
+                    sourceBigEndian,
+                    descriptor != GX_DIRECT &&
+                        state.GetVertexArray(attribute).mHostPackedU32);
             }
         }
 

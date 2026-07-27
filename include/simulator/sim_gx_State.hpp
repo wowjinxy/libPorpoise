@@ -23,6 +23,7 @@ struct VertexFormat {
 struct VertexArray {
     void * mArrayPtr = nullptr;
     int mStride = 0;
+    bool mHostPackedU32 = false;
 };
 
 struct BlendState {
@@ -141,6 +142,8 @@ struct TexCoordGenState {
     GXTexGenSrc source = GX_TG_TEX0;
     GXTexGenType function = GX_TG_MTX2x4;
     u8 matrixId = GX_IDENTITY;
+    u8 postMatrixId = GX_PTIDENTITY;
+    bool normalize = false;
     u8 embossSource = 0;
     u8 embossLight = 0;
 };
@@ -207,6 +210,7 @@ class GlobalState {
   const std::array<float, 16>& GetPositionMatrix(size_t index) const;
   const std::array<float, 16>& GetProjectionMatrix() const;
   const std::array<float, 16>& GetTextureMatrix(size_t index) const;
+  const std::array<float, 16>& GetPostTextureMatrix(size_t index) const;
   const std::array<float, 6>& GetViewportTransform() const;
   const ViewportState& GetViewportState() const;
   const ScissorState& GetScissorState() const;
@@ -222,6 +226,7 @@ class GlobalState {
   const TlutState& GetTlutState(size_t index) const;
   const TexCoordGenState& GetTexCoordGenState(size_t index) const;
   const std::array<float, 16>& GetTexCoordGenMatrix(size_t index) const;
+  const std::array<float, 16>& GetTexCoordGenPostMatrix(size_t index) const;
   const TevStageState& GetTevStageState(size_t index) const;
   const std::array<u8, 4>& GetTevSwapTable(size_t index) const;
   const std::array<float, 4>& GetTevColor(size_t index) const;
@@ -252,6 +257,7 @@ class GlobalState {
   static float WordToFloat(u32 word);
   void RefreshPositionMatrices(u32 firstAddress, u32 endAddress);
   void RefreshTextureMatrices(u32 firstAddress, u32 endAddress);
+  void RefreshPostTextureMatrices(u32 firstAddress, u32 endAddress);
   void RefreshTexCoordGenState(u32 firstAddress, u32 endAddress);
   void RefreshProjectionMatrix(u32 firstAddress, u32 endAddress);
   void RefreshViewportTransform(u32 firstAddress, u32 endAddress);
@@ -270,6 +276,8 @@ class GlobalState {
   std::array<std::array<float, 16>, 10> mTextureMatrices = {};
   std::array<bool, 10> mTextureMatrixValid = {};
   std::array<bool, 10> mTextureMatrix2x4 = {};
+  std::array<std::array<float, 16>, 20> mPostTextureMatrices = {};
+  std::array<bool, 20> mPostTextureMatrixValid = {};
   std::array<TexCoordGenState, 8> mTexCoordGens = {};
   std::array<float, 16> mProjectionMatrix = {};
   bool mProjectionMatrixValid = false;

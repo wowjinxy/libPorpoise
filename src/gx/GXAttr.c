@@ -8,6 +8,10 @@
 #include <simulator/sim_gx_CommandProcessor.h>
 #endif
 
+#ifdef GXSetArray
+#undef GXSetArray
+#endif
+
 #define CHECK_ATTRPTR(line, attrPtr) OSAssertMsgLine(line, (attrPtr) != NULL, "GXSetVtxDescv: attrPtr is NULL")
 #define CHECK_ATTRNAME(line, attr) \
 	OSAssertMsgLine(line, (attr) >= GX_VA_PNMTXIDX && (attr) < GX_VA_MAX_ATTR, "GXSetVtxDesc: Invalid vertex attribute name")
@@ -754,6 +758,13 @@ void GXSetArray(GXAttr attr, void* base_ptr, u8 stride)
 	GX_WRITE_SOME_REG3(8, cpAttr | 0xB0, stride, cpAttr - 12);
 	#endif
 }
+
+#ifdef LIBPORPOISE_PORT
+void GXSetArrayU32(GXAttr attr, void* base_ptr, u8 stride)
+{
+	SIM_GX_CommandProcessor_SetVertexArrayU32(attr, base_ptr, stride);
+}
+#endif
 
 /**
  * @TODO: Documentation
