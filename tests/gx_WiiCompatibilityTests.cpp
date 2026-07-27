@@ -460,10 +460,18 @@ bool TestBpRenderStateCommands() {
         (static_cast<u32>(GX_CC_TEXC) << 8) |
         (static_cast<u32>(GX_CC_RASC) << 4) |
         static_cast<u32>(GX_CC_ZERO));
+    SendBpRegister(
+        0xf3000000u |
+        60u |
+        (40u << 8) |
+        (static_cast<u32>(GX_LESS) << 16) |
+        (static_cast<u32>(GX_GREATER) << 19) |
+        (static_cast<u32>(GX_AOP_XOR) << 22));
 
     const auto& state = SIM::GX::GetGlobalState();
     const auto& blend = state.GetBlendState();
     const auto& depth = state.GetDepthState();
+    const auto& alphaCompare = state.GetAlphaCompareState();
     const auto& raster = state.GetRasterState();
     const auto& firstStage = state.GetTevStageState(0);
     return
@@ -477,6 +485,11 @@ bool TestBpRenderStateCommands() {
         depth.compareEnabled &&
         depth.function == GX_GREATER &&
         depth.updateEnabled &&
+        alphaCompare.comparison0 == GX_LESS &&
+        alphaCompare.reference0 == 60 &&
+        alphaCompare.operation == GX_AOP_XOR &&
+        alphaCompare.comparison1 == GX_GREATER &&
+        alphaCompare.reference1 == 40 &&
         raster.cullMode == GX_CULL_BACK &&
         NearlyEqual(raster.lineWidth, 2.0f) &&
         NearlyEqual(raster.pointSize, 3.0f) &&
