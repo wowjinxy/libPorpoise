@@ -49,6 +49,19 @@ struct AlphaCompareState {
     u8 reference1 = 0;
 };
 
+struct FogState {
+    GXFogType type = GX_FOG_NONE;
+    bool orthographic = false;
+    float parameterA = 0.0f;
+    u32 parameterBMagnitude = 0;
+    u8 parameterBShift = 0;
+    float parameterC = 0.0f;
+    std::array<float, 3> color = {};
+    bool rangeAdjustmentEnabled = false;
+    u16 rangeAdjustmentCenter = 0;
+    std::array<u16, 10> rangeAdjustmentTable = {};
+};
+
 struct RasterState {
     GXCullMode cullMode = GX_CULL_NONE;
     float lineWidth = 1.0f;
@@ -154,6 +167,7 @@ class GlobalState {
   const BlendState& GetBlendState() const;
   const DepthState& GetDepthState() const;
   const AlphaCompareState& GetAlphaCompareState() const;
+  const FogState& GetFogState() const;
   const RasterState& GetRasterState() const;
   const ChannelState& GetChannelState(size_t index) const;
   const LightState& GetLightState(size_t index) const;
@@ -220,6 +234,7 @@ class GlobalState {
   BlendState mBlendState = {};
   DepthState mDepthState = {};
   AlphaCompareState mAlphaCompareState = {};
+  FogState mFogState = {};
   RasterState mRasterState = {};
   std::array<ChannelState, 2> mChannels = {};
   std::array<LightState, 8> mLights = {};
