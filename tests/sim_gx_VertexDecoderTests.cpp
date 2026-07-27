@@ -284,6 +284,37 @@ bool TestTexGenTypeDecode() {
     return state.GetTexCoordGenState(0).function == GX_TG_MTX3x4;
 }
 
+bool TestTevSwapState() {
+    SIM::GX::GlobalState state;
+
+    const u32 alphaEnvironment =
+        (0xc1u << 24u) |
+        GX_TEV_SWAP2 |
+        (GX_TEV_SWAP3 << 2u);
+    state.SetBpRegister(alphaEnvironment);
+
+    const u32 tableRedGreen =
+        (0xf8u << 24u) |
+        GX_CH_ALPHA |
+        (GX_CH_BLUE << 2u);
+    const u32 tableBlueAlpha =
+        (0xf9u << 24u) |
+        GX_CH_GREEN |
+        (GX_CH_RED << 2u);
+    state.SetBpRegister(tableRedGreen);
+    state.SetBpRegister(tableBlueAlpha);
+
+    const auto& stage = state.GetTevStageState(0);
+    const auto& table = state.GetTevSwapTable(1);
+    return
+        stage.rasterSwapTable == GX_TEV_SWAP2 &&
+        stage.textureSwapTable == GX_TEV_SWAP3 &&
+        table[0] == GX_CH_ALPHA &&
+        table[1] == GX_CH_BLUE &&
+        table[2] == GX_CH_GREEN &&
+        table[3] == GX_CH_RED;
+}
+
 }
 
 int main() {
@@ -310,6 +341,9 @@ int main() {
     }
     if (!TestTexGenTypeDecode()) {
         return 8;
+    }
+    if (!TestTevSwapState()) {
+        return 9;
     }
     return 0;
 }
