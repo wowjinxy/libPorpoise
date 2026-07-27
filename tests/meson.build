@@ -66,3 +66,59 @@ dvd_host_filesystem_test = executable(
 )
 
 test('dvd-host-filesystem', dvd_host_filesystem_test)
+
+vi_host_retrace_test = executable(
+    'vi-host-retrace-test',
+    sources: files('vi_HostRetraceTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [
+        libar,
+        libbase,
+        libcard,
+        libdb,
+        libdemo,
+        libdvd,
+        libexi,
+        libgd,
+        libgx,
+        libmem,
+        libmtx,
+        libos,
+        libpad,
+        libsi,
+        libsim,
+        libvi,
+    ],
+    dependencies: sdl2_dep,
+    native: true,
+)
+
+test('vi-host-retrace', vi_host_retrace_test)
+
+os_host_thread_queue_test = executable(
+    'os-host-thread-queue-test',
+    sources: files('os_HostThreadQueueTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [
+        libar,
+        libbase,
+        libcard,
+        libdb,
+        libdemo,
+        libdvd,
+        libexi,
+        libgd,
+        libgx,
+        libmem,
+        libmtx,
+        libos,
+        libpad,
+        libsi,
+        libsim,
+        libvi,
+    ],
+    dependencies: sdl2_dep,
+    native: true,
+)
+
+test('os-host-thread-queue', os_host_thread_queue_test)

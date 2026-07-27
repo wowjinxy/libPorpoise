@@ -1,6 +1,10 @@
 #include <dolphin/gx.h>
 #include <dolphin/hw_regs.h>
 
+#ifdef LIBPORPOISE_PORT
+extern void __VIHostOnCopyDisp(void);
+#endif
+
 GXRenderModeObj GXNtsc240Ds = {
 	1,
 	640,
@@ -977,6 +981,9 @@ void GXCopyDisp(void* dest, GXBool clear)
 	gx->bpSent = GX_FALSE;
 #else
 	gx->bpSent = GX_TRUE;
+#endif
+#ifdef LIBPORPOISE_PORT
+	__VIHostOnCopyDisp();
 #endif
 }
 

@@ -6,6 +6,7 @@
 #include <dolphin/types.h>
 #include <stddef.h>
 #ifdef LIBPORPOISE_PORT
+#include <SDL2/SDL_mutex.h>
 #include <SDL2/SDL_thread.h>
 #endif
 
@@ -36,6 +37,10 @@ typedef void (*OSSwitchThreadCallback)(OSThread* from, OSThread* to);
 struct OSThreadQueue {
 	OSThread* head; // _00
 	OSThread* tail; // _04
+#ifdef LIBPORPOISE_PORT
+	SDL_mutex* hostMutex;
+	SDL_cond* hostCondition;
+#endif
 };
 
 struct OSThreadLink {
