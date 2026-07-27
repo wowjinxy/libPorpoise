@@ -1418,6 +1418,14 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         glGetUniformLocation(
             static_cast<GLuint>(shaderProgram),
             "u_tev_registers[0]");
+    const GLint tevKonstColorsLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_tev_konst_color[0]");
+    const GLint tevKonstAlphasLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_tev_konst_alpha[0]");
     const GLint alphaComparison0Location =
         glGetUniformLocation(
             static_cast<GLuint>(shaderProgram),
@@ -1522,6 +1530,8 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
     std::array<GLint, maxTevStages * 2u> outputRegisters = {};
     std::array<GLint, maxTevStages * 2u> swapSelectors = {};
     std::array<GLint, 4u * 4u> swapTables = {};
+    std::array<float, maxTevStages * 4u> konstColors = {};
+    std::array<float, maxTevStages> konstAlphas = {};
 
     const size_t numTevStages =
         std::min(gxState.GetNumTevStages(), maxTevStages);
@@ -1566,6 +1576,15 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             static_cast<GLint>(stage.rasterSwapTable);
         swapSelectors[stageIndex * 2u + 1u] =
             static_cast<GLint>(stage.textureSwapTable);
+        const auto konstColor =
+            gxState.GetTevKonstColor(stageIndex);
+        std::copy(
+            konstColor.begin(),
+            konstColor.end(),
+            konstColors.begin() +
+                static_cast<std::ptrdiff_t>(stageIndex * 4u));
+        konstAlphas[stageIndex] =
+            gxState.GetTevKonstAlpha(stageIndex);
 
         if (stageIndex >= numTevStages ||
             !stage.textureEnabled ||
@@ -1835,6 +1854,18 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             tevRegistersLocation,
             4,
             registers.data());
+    }
+    if (tevKonstColorsLocation >= 0) {
+        glUniform4fv(
+            tevKonstColorsLocation,
+            static_cast<GLsizei>(maxTevStages),
+            konstColors.data());
+    }
+    if (tevKonstAlphasLocation >= 0) {
+        glUniform1fv(
+            tevKonstAlphasLocation,
+            static_cast<GLsizei>(maxTevStages),
+            konstAlphas.data());
     }
     const auto& alphaCompare = gxState.GetAlphaCompareState();
     if (alphaComparison0Location >= 0) {

@@ -588,6 +588,47 @@ bool TestBpTevCompareCommands() {
         NearlyEqual(color0[3], 1.0f);
 }
 
+bool TestTevKonstSelections() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    const auto& initialState = SIM::GX::GetGlobalState();
+    const auto defaultColor = initialState.GetTevKonstColor(GX_TEVSTAGE0);
+    if (!NearlyEqual(defaultColor[0], 0.25f) ||
+        !NearlyEqual(defaultColor[1], 0.25f) ||
+        !NearlyEqual(defaultColor[2], 0.25f) ||
+        !NearlyEqual(initialState.GetTevKonstAlpha(GX_TEVSTAGE0), 1.0f)) {
+        return false;
+    }
+
+    SendBpRegister(
+        0xe2000000u |
+        64u |
+        (32u << 12) |
+        (8u << 20));
+    SendBpRegister(
+        0xe3000000u |
+        192u |
+        (128u << 12) |
+        (8u << 20));
+    SendBpRegister(
+        0xf7000000u |
+        (static_cast<u32>(GX_TEV_KCSEL_K1_G) << 14) |
+        (static_cast<u32>(GX_TEV_KASEL_K1_A) << 19));
+
+    const auto& state = SIM::GX::GetGlobalState();
+    const auto selectedColor = state.GetTevKonstColor(GX_TEVSTAGE3);
+    const float selectedGreen = 128.0f / 255.0f;
+    return
+        NearlyEqual(selectedColor[0], selectedGreen) &&
+        NearlyEqual(selectedColor[1], selectedGreen) &&
+        NearlyEqual(selectedColor[2], selectedGreen) &&
+        NearlyEqual(selectedColor[3], selectedGreen) &&
+        NearlyEqual(
+            state.GetTevKonstAlpha(GX_TEVSTAGE3),
+            32.0f / 255.0f);
+}
+
 bool TestBpCopyClearCommands() {
     SIM::GX::InitGlobalState();
     SIM_GX_CommandProcessor_Init();
@@ -758,6 +799,9 @@ int main() {
     }
     if (!TestBpTevCompareCommands()) {
         return 18;
+    }
+    if (!TestTevKonstSelections()) {
+        return 19;
     }
     return 0;
 }
