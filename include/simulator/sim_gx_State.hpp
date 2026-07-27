@@ -41,6 +41,14 @@ struct DepthState {
     bool updateEnabled = true;
 };
 
+struct AlphaCompareState {
+    GXCompare comparison0 = GX_ALWAYS;
+    u8 reference0 = 0;
+    GXAlphaOp operation = GX_AOP_AND;
+    GXCompare comparison1 = GX_ALWAYS;
+    u8 reference1 = 0;
+};
+
 struct RasterState {
     GXCullMode cullMode = GX_CULL_NONE;
     float lineWidth = 1.0f;
@@ -145,6 +153,7 @@ class GlobalState {
   const ScissorState& GetScissorState() const;
   const BlendState& GetBlendState() const;
   const DepthState& GetDepthState() const;
+  const AlphaCompareState& GetAlphaCompareState() const;
   const RasterState& GetRasterState() const;
   const ChannelState& GetChannelState(size_t index) const;
   const LightState& GetLightState(size_t index) const;
@@ -210,6 +219,7 @@ class GlobalState {
   bool mCopySourceValid = false;
   BlendState mBlendState = {};
   DepthState mDepthState = {};
+  AlphaCompareState mAlphaCompareState = {};
   RasterState mRasterState = {};
   std::array<ChannelState, 2> mChannels = {};
   std::array<LightState, 8> mLights = {};
