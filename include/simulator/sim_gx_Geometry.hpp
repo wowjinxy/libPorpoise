@@ -33,6 +33,7 @@ struct RenderColor {
 struct RenderTexCoord {
     float s = 0.0f;
     float t = 0.0f;
+    float q = 1.0f;
 
     float* Data() { return &s; }
     const float* Data() const { return &s; }

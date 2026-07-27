@@ -371,6 +371,160 @@ void ApplyColorChannels(
     }
 }
 
+void ApplyTexCoordGenerators(
+    const SIM::GX::GlobalState& state,
+    std::vector<SIM::GX::RenderVertex>& vertices) {
+    const auto& modelView = state.GetPositionMatrix();
+    for (auto& vertex : vertices) {
+        const auto sourceTexCoords = vertex.texCoords;
+        std::array<SIM::GX::RenderTexCoord, 8> generated = {};
+        for (auto& coordinate : generated) {
+            coordinate.q = 1.0f;
+        }
+
+        const auto viewPosition =
+            TransformPoint(modelView, vertex.position);
+        const auto viewBinormal =
+            Normalize(TransformDirection(modelView, vertex.binormal));
+        const auto viewTangent =
+            Normalize(TransformDirection(modelView, vertex.tangent));
+
+        for (size_t index = 0; index < generated.size(); ++index) {
+            const auto& texGen = state.GetTexCoordGenState(index);
+            if (texGen.function >= GX_TG_BUMP0 &&
+                texGen.function <= GX_TG_BUMP7) {
+                const size_t sourceIndex =
+                    std::min<size_t>(
+                        texGen.embossSource,
+                        generated.size() - 1u);
+                const size_t lightIndex =
+                    std::min<size_t>(
+                        texGen.embossLight,
+                        7u);
+                const auto& light = state.GetLightState(lightIndex);
+                const auto lightDirection = Normalize({
+                    light.position[0] - viewPosition.x,
+                    light.position[1] - viewPosition.y,
+                    light.position[2] - viewPosition.z,
+                });
+                generated[index] = generated[sourceIndex];
+                generated[index].s += Dot(lightDirection, viewBinormal);
+                generated[index].t += Dot(lightDirection, viewTangent);
+                continue;
+            }
+
+            if (texGen.function == GX_TG_SRTG) {
+                const auto& sourceColor =
+                    texGen.source == GX_TG_COLOR1
+                        ? vertex.color1
+                        : vertex.color0;
+                generated[index] = {
+                    sourceColor.r,
+                    sourceColor.g,
+                    1.0f,
+                };
+                continue;
+            }
+
+            std::array<float, 4> source = {
+                0.0f,
+                0.0f,
+                0.0f,
+                1.0f,
+            };
+            if (texGen.source == GX_TG_POS) {
+                source = {
+                    vertex.position.x,
+                    vertex.position.y,
+                    vertex.position.z,
+                    1.0f,
+                };
+            } else if (texGen.source == GX_TG_NRM) {
+                source = {
+                    vertex.normal.x,
+                    vertex.normal.y,
+                    vertex.normal.z,
+                    1.0f,
+                };
+            } else if (texGen.source == GX_TG_BINRM) {
+                source = {
+                    vertex.binormal.x,
+                    vertex.binormal.y,
+                    vertex.binormal.z,
+                    1.0f,
+                };
+            } else if (texGen.source == GX_TG_TANGENT) {
+                source = {
+                    vertex.tangent.x,
+                    vertex.tangent.y,
+                    vertex.tangent.z,
+                    1.0f,
+                };
+            } else if (
+                texGen.source >= GX_TG_TEX0 &&
+                texGen.source <= GX_TG_TEX7) {
+                const auto& coordinate =
+                    sourceTexCoords[
+                        static_cast<size_t>(
+                            texGen.source - GX_TG_TEX0)];
+                source = {
+                    coordinate.s,
+                    coordinate.t,
+                    0.0f,
+                    1.0f,
+                };
+            } else if (
+                texGen.source >= GX_TG_TEXCOORD0 &&
+                texGen.source <= GX_TG_TEXCOORD6) {
+                const auto& coordinate =
+                    generated[
+                        static_cast<size_t>(
+                            texGen.source - GX_TG_TEXCOORD0)];
+                source = {
+                    coordinate.s,
+                    coordinate.t,
+                    coordinate.q,
+                    1.0f,
+                };
+            } else if (
+                texGen.source == GX_TG_COLOR0 ||
+                texGen.source == GX_TG_COLOR1) {
+                const auto& sourceColor =
+                    texGen.source == GX_TG_COLOR1
+                        ? vertex.color1
+                        : vertex.color0;
+                source = {
+                    sourceColor.r,
+                    sourceColor.g,
+                    0.0f,
+                    1.0f,
+                };
+            }
+
+            const auto& matrix =
+                state.GetTexCoordGenMatrix(index);
+            generated[index].s =
+                matrix[0] * source[0] +
+                matrix[1] * source[1] +
+                matrix[2] * source[2] +
+                matrix[3] * source[3];
+            generated[index].t =
+                matrix[4] * source[0] +
+                matrix[5] * source[1] +
+                matrix[6] * source[2] +
+                matrix[7] * source[3];
+            generated[index].q =
+                texGen.function == GX_TG_MTX3x4
+                    ? matrix[8] * source[0] +
+                        matrix[9] * source[1] +
+                        matrix[10] * source[2] +
+                        matrix[11] * source[3]
+                    : 1.0f;
+        }
+        vertex.texCoords = generated;
+    }
+}
+
 void ApplyRenderState(
     const SIM::GX::GlobalState& state,
     int drawableWidth,
@@ -612,6 +766,47 @@ void DecodeRGBA8(
     }
 }
 
+void DecodeRGB565(
+    const u8* source,
+    std::vector<u8>& rgba,
+    u16 width,
+    u16 height) {
+    const size_t blockColumns = (static_cast<size_t>(width) + 3u) / 4u;
+    const size_t blockRows = (static_cast<size_t>(height) + 3u) / 4u;
+    rgba.assign(
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u,
+        0);
+
+    for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+        for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+            for (size_t y = 0; y < 4u; ++y) {
+                for (size_t x = 0; x < 4u; ++x) {
+                    const u16 packed =
+                        static_cast<u16>(
+                            (static_cast<u16>(source[0]) << 8u) |
+                            static_cast<u16>(source[1]));
+                    source += 2u;
+
+                    const size_t destinationX = blockX * 4u + x;
+                    const size_t destinationY = blockY * 4u + y;
+                    if (destinationX >= width || destinationY >= height) {
+                        continue;
+                    }
+                    const size_t destination =
+                        (destinationY * width + destinationX) * 4u;
+                    rgba[destination] = static_cast<u8>(
+                        ((packed >> 11u) & 0x1fu) * 255u / 31u);
+                    rgba[destination + 1u] = static_cast<u8>(
+                        ((packed >> 5u) & 0x3fu) * 255u / 63u);
+                    rgba[destination + 2u] = static_cast<u8>(
+                        (packed & 0x1fu) * 255u / 31u);
+                    rgba[destination + 3u] = 255u;
+                }
+            }
+        }
+    }
+}
+
 void DecodeRGB5A3(
     const u8* source,
     std::vector<u8>& rgba,
@@ -747,7 +942,7 @@ void GlRenderer::Initialize() {
         glEnableVertexAttribArray(static_cast<GLuint>(6 + index));
         glVertexAttribPointer(
             static_cast<GLuint>(6 + index),
-            2,
+            3,
             GL_FLOAT,
             GL_FALSE,
             sizeof(RenderVertex),
@@ -767,6 +962,7 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
     const auto& gxState = GetGlobalState();
     std::vector<RenderVertex> shadedVertices(vertices);
     ApplyColorChannels(gxState, shadedVertices);
+    ApplyTexCoordGenerators(gxState, shadedVertices);
 
     std::vector<RenderVertex> expandedVertices;
     const std::vector<RenderVertex>* drawVertices = &shadedVertices;
@@ -793,18 +989,50 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_projection");
     const GLint modelViewLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_modelview");
-    const GLint textureMatrixLocation =
-        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texmatrix0");
-    const GLint textureSourceLocation =
-        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texgen0_source");
-    const GLint useTextureLocation =
-        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_use_texture0");
-    const GLint tevColorModeLocation =
-        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_tev_color_mode");
-    const GLint tevColor0Location =
-        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_tev_color0");
-    const GLint textureLocation =
-        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texture0");
+    const GLint numTevStagesLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_num_tev_stages");
+    const GLint useTexturesLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_use_texture[0]");
+    const GLint stageTexturesLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_stage_texture[0]");
+    const GLint stageTexCoordsLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_stage_texcoord[0]");
+    const GLint stageRasterChannelsLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_stage_raster_channel[0]");
+    const GLint tevColorInputsLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_tev_color_inputs[0]");
+    const GLint tevAlphaInputsLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_tev_alpha_inputs[0]");
+    const GLint tevColorOperationsLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_tev_color_operation[0]");
+    const GLint tevAlphaOperationsLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_tev_alpha_operation[0]");
+    const GLint tevOutputRegistersLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_tev_output_registers[0]");
+    const GLint tevRegistersLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_tev_registers[0]");
     const GLint alphaComparison0Location =
         glGetUniformLocation(
             static_cast<GLuint>(shaderProgram),
@@ -879,117 +1107,233 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             GL_TRUE,
             gxState.GetPositionMatrix().data());
     }
-    if (textureMatrixLocation >= 0) {
-        const auto& firstStage = gxState.GetTevStageState(0);
-        glUniformMatrix4fv(
-            textureMatrixLocation,
-            1,
-            GL_TRUE,
-            gxState.GetTexCoordGenMatrix(
-                firstStage.textureCoordinate).data());
-    }
-    if (textureSourceLocation >= 0) {
-        const auto& firstStage = gxState.GetTevStageState(0);
-        glUniform1i(
-            textureSourceLocation,
-            static_cast<GLint>(
-                gxState.GetTexCoordGenState(
-                    firstStage.textureCoordinate).source));
+    constexpr size_t maxTevStages = 16;
+    std::array<GLint, maxTevStages> useTextures = {};
+    std::array<GLint, maxTevStages> textureUnits = {};
+    std::array<GLint, maxTevStages> textureCoordinates = {};
+    std::array<GLint, maxTevStages> rasterChannels = {};
+    std::array<GLint, maxTevStages * 4u> colorInputs = {};
+    std::array<GLint, maxTevStages * 4u> alphaInputs = {};
+    std::array<GLint, maxTevStages * 4u> colorOperations = {};
+    std::array<GLint, maxTevStages * 4u> alphaOperations = {};
+    std::array<GLint, maxTevStages * 2u> outputRegisters = {};
+
+    const size_t numTevStages =
+        std::min(gxState.GetNumTevStages(), maxTevStages);
+    for (size_t stageIndex = 0;
+         stageIndex < maxTevStages;
+         ++stageIndex) {
+        const auto& stage =
+            gxState.GetTevStageState(stageIndex);
+        textureUnits[stageIndex] =
+            static_cast<GLint>(stageIndex);
+        textureCoordinates[stageIndex] =
+            static_cast<GLint>(stage.textureCoordinate);
+        rasterChannels[stageIndex] =
+            static_cast<GLint>(stage.rasterChannel);
+        for (size_t input = 0; input < 4u; ++input) {
+            colorInputs[stageIndex * 4u + input] =
+                static_cast<GLint>(stage.colorInputs[input]);
+            alphaInputs[stageIndex * 4u + input] =
+                static_cast<GLint>(stage.alphaInputs[input]);
+        }
+        colorOperations[stageIndex * 4u] =
+            static_cast<GLint>(stage.colorOperation);
+        colorOperations[stageIndex * 4u + 1u] =
+            static_cast<GLint>(stage.colorBias);
+        colorOperations[stageIndex * 4u + 2u] =
+            static_cast<GLint>(stage.colorScale);
+        colorOperations[stageIndex * 4u + 3u] =
+            stage.colorClamp ? 1 : 0;
+        alphaOperations[stageIndex * 4u] =
+            static_cast<GLint>(stage.alphaOperation);
+        alphaOperations[stageIndex * 4u + 1u] =
+            static_cast<GLint>(stage.alphaBias);
+        alphaOperations[stageIndex * 4u + 2u] =
+            static_cast<GLint>(stage.alphaScale);
+        alphaOperations[stageIndex * 4u + 3u] =
+            stage.alphaClamp ? 1 : 0;
+        outputRegisters[stageIndex * 2u] =
+            static_cast<GLint>(stage.colorOutput);
+        outputRegisters[stageIndex * 2u + 1u] =
+            static_cast<GLint>(stage.alphaOutput);
+
+        if (stageIndex >= numTevStages ||
+            !stage.textureEnabled ||
+            stage.textureMap >= mTextures.size()) {
+            continue;
+        }
+
+        const size_t textureIndex = stage.textureMap;
+        const auto& texture =
+            gxState.GetTextureState(textureIndex);
+        const bool supported =
+            texture.format == GX_TF_I4 ||
+            texture.format == GX_TF_I8 ||
+            texture.format == GX_TF_RGB565 ||
+            texture.format == GX_TF_RGB5A3 ||
+            texture.format == GX_TF_RGBA8;
+        if (texture.data == nullptr ||
+            texture.width == 0 ||
+            texture.height == 0 ||
+            !supported) {
+            continue;
+        }
+
+        if (mTextures[textureIndex] == 0u) {
+            glGenTextures(1, &mTextures[textureIndex]);
+        }
+        glActiveTexture(
+            static_cast<GLenum>(GL_TEXTURE0 + stageIndex));
+        glBindTexture(
+            GL_TEXTURE_2D,
+            mTextures[textureIndex]);
+        if (mTextureRevisions[textureIndex] != texture.revision) {
+            std::vector<u8> rgba;
+            if (texture.format == GX_TF_RGBA8) {
+                DecodeRGBA8(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height);
+            } else if (texture.format == GX_TF_RGB565) {
+                DecodeRGB565(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height);
+            } else if (texture.format == GX_TF_RGB5A3) {
+                DecodeRGB5A3(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height);
+            } else if (texture.format == GX_TF_I8) {
+                DecodeI8(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height);
+            } else {
+                DecodeI4(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height);
+            }
+            glTexImage2D(
+                GL_TEXTURE_2D,
+                0,
+                GL_RGBA8,
+                texture.width,
+                texture.height,
+                0,
+                GL_RGBA,
+                GL_UNSIGNED_BYTE,
+                rgba.data());
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_WRAP_S,
+                ToGlWrap(texture.wrapS));
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_WRAP_T,
+                ToGlWrap(texture.wrapT));
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_MIN_FILTER,
+                texture.minFilter == GX_LINEAR
+                    ? GL_LINEAR
+                    : GL_NEAREST);
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_MAG_FILTER,
+                texture.magFilter == GX_LINEAR
+                    ? GL_LINEAR
+                    : GL_NEAREST);
+            mTextureRevisions[textureIndex] =
+                texture.revision;
+        }
+        useTextures[stageIndex] = 1;
     }
 
-    bool useTexture = false;
-    const auto& firstStage = gxState.GetTevStageState(0);
-    if (gxState.GetNumTevStages() > 0u &&
-        firstStage.textureEnabled &&
-        firstStage.textureMap < mTextures.size()) {
-        const size_t textureIndex = firstStage.textureMap;
-        const auto& texture = gxState.GetTextureState(textureIndex);
-        if (texture.data != nullptr &&
-            texture.width > 0 &&
-            texture.height > 0 &&
-            (texture.format == GX_TF_I4 ||
-             texture.format == GX_TF_I8 ||
-             texture.format == GX_TF_RGB5A3 ||
-             texture.format == GX_TF_RGBA8)) {
-            if (mTextures[textureIndex] == 0u) {
-                glGenTextures(1, &mTextures[textureIndex]);
-            }
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, mTextures[textureIndex]);
-            if (mTextureRevisions[textureIndex] != texture.revision) {
-                std::vector<u8> rgba;
-                if (texture.format == GX_TF_RGBA8) {
-                    DecodeRGBA8(
-                        static_cast<const u8*>(texture.data),
-                        rgba,
-                        texture.width,
-                        texture.height);
-                } else if (texture.format == GX_TF_I8) {
-                    DecodeI8(
-                        static_cast<const u8*>(texture.data),
-                        rgba,
-                        texture.width,
-                        texture.height);
-                } else if (texture.format == GX_TF_RGB5A3) {
-                    DecodeRGB5A3(
-                        static_cast<const u8*>(texture.data),
-                        rgba,
-                        texture.width,
-                        texture.height);
-                } else {
-                    DecodeI4(
-                        static_cast<const u8*>(texture.data),
-                        rgba,
-                        texture.width,
-                        texture.height);
-                }
-                glTexImage2D(
-                    GL_TEXTURE_2D,
-                    0,
-                    GL_RGBA8,
-                    texture.width,
-                    texture.height,
-                    0,
-                    GL_RGBA,
-                    GL_UNSIGNED_BYTE,
-                    rgba.data());
-                glTexParameteri(
-                    GL_TEXTURE_2D,
-                    GL_TEXTURE_WRAP_S,
-                    ToGlWrap(texture.wrapS));
-                glTexParameteri(
-                    GL_TEXTURE_2D,
-                    GL_TEXTURE_WRAP_T,
-                    ToGlWrap(texture.wrapT));
-                glTexParameteri(
-                    GL_TEXTURE_2D,
-                    GL_TEXTURE_MIN_FILTER,
-                    texture.minFilter == GX_LINEAR ? GL_LINEAR : GL_NEAREST);
-                glTexParameteri(
-                    GL_TEXTURE_2D,
-                    GL_TEXTURE_MAG_FILTER,
-                    texture.magFilter == GX_LINEAR ? GL_LINEAR : GL_NEAREST);
-                mTextureRevisions[textureIndex] = texture.revision;
-            }
-            useTexture = true;
-        }
-    }
-    if (useTextureLocation >= 0) {
-        glUniform1i(useTextureLocation, useTexture ? 1 : 0);
-    }
-    if (tevColorModeLocation >= 0) {
+    if (numTevStagesLocation >= 0) {
         glUniform1i(
-            tevColorModeLocation,
-            static_cast<GLint>(firstStage.colorMode));
+            numTevStagesLocation,
+            static_cast<GLint>(numTevStages));
     }
-    if (tevColor0Location >= 0) {
+    if (useTexturesLocation >= 0) {
+        glUniform1iv(
+            useTexturesLocation,
+            static_cast<GLsizei>(useTextures.size()),
+            useTextures.data());
+    }
+    if (stageTexturesLocation >= 0) {
+        glUniform1iv(
+            stageTexturesLocation,
+            static_cast<GLsizei>(textureUnits.size()),
+            textureUnits.data());
+    }
+    if (stageTexCoordsLocation >= 0) {
+        glUniform1iv(
+            stageTexCoordsLocation,
+            static_cast<GLsizei>(textureCoordinates.size()),
+            textureCoordinates.data());
+    }
+    if (stageRasterChannelsLocation >= 0) {
+        glUniform1iv(
+            stageRasterChannelsLocation,
+            static_cast<GLsizei>(rasterChannels.size()),
+            rasterChannels.data());
+    }
+    if (tevColorInputsLocation >= 0) {
+        glUniform4iv(
+            tevColorInputsLocation,
+            static_cast<GLsizei>(maxTevStages),
+            colorInputs.data());
+    }
+    if (tevAlphaInputsLocation >= 0) {
+        glUniform4iv(
+            tevAlphaInputsLocation,
+            static_cast<GLsizei>(maxTevStages),
+            alphaInputs.data());
+    }
+    if (tevColorOperationsLocation >= 0) {
+        glUniform4iv(
+            tevColorOperationsLocation,
+            static_cast<GLsizei>(maxTevStages),
+            colorOperations.data());
+    }
+    if (tevAlphaOperationsLocation >= 0) {
+        glUniform4iv(
+            tevAlphaOperationsLocation,
+            static_cast<GLsizei>(maxTevStages),
+            alphaOperations.data());
+    }
+    if (tevOutputRegistersLocation >= 0) {
+        glUniform2iv(
+            tevOutputRegistersLocation,
+            static_cast<GLsizei>(maxTevStages),
+            outputRegisters.data());
+    }
+    if (tevRegistersLocation >= 0) {
+        std::array<float, 16> registers = {};
+        for (size_t registerIndex = 0;
+             registerIndex < 4u;
+             ++registerIndex) {
+            const auto& source =
+                gxState.GetTevColor(registerIndex);
+            std::copy(
+                source.begin(),
+                source.end(),
+                registers.begin() +
+                    static_cast<std::ptrdiff_t>(
+                        registerIndex * 4u));
+        }
         glUniform4fv(
-            tevColor0Location,
-            1,
-            gxState.GetTevColor(GX_TEVREG0).data());
-    }
-    if (textureLocation >= 0) {
-        glUniform1i(textureLocation, 0);
+            tevRegistersLocation,
+            4,
+            registers.data());
     }
     const auto& alphaCompare = gxState.GetAlphaCompareState();
     if (alphaComparison0Location >= 0) {
