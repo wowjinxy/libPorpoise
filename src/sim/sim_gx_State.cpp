@@ -253,9 +253,14 @@ const VertexFormat& GlobalState::GetVertexFormat(GXVtxFmt formatIdx) const {
 }
 
 const std::array<float, 16>& GlobalState::GetPositionMatrix() const {
-    if (mCurrentPositionMatrix < mPositionMatrices.size() &&
-        mPositionMatrixValid[mCurrentPositionMatrix]) {
-        return mPositionMatrices[mCurrentPositionMatrix];
+    return GetPositionMatrix(mCurrentPositionMatrix);
+}
+
+const std::array<float, 16>& GlobalState::GetPositionMatrix(
+    size_t index) const {
+    if (index < mPositionMatrices.size() &&
+        mPositionMatrixValid[index]) {
+        return mPositionMatrices[index];
     }
 
     static const std::array<float, 16> identity = IdentityMatrix();

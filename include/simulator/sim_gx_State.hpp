@@ -186,6 +186,7 @@ class GlobalState {
   const VertexArray& GetVertexArray(GXAttr attr) const;
   const VertexFormat& GetVertexFormat(GXVtxFmt formatIdx) const;
   const std::array<float, 16>& GetPositionMatrix() const;
+  const std::array<float, 16>& GetPositionMatrix(size_t index) const;
   const std::array<float, 16>& GetProjectionMatrix() const;
   const std::array<float, 16>& GetTextureMatrix(size_t index) const;
   const std::array<float, 6>& GetViewportTransform() const;
