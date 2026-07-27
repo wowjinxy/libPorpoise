@@ -193,6 +193,7 @@ class GlobalState {
   std::array<bool, 10> mPositionMatrixValid = {};
   std::array<std::array<float, 16>, 10> mTextureMatrices = {};
   std::array<bool, 10> mTextureMatrixValid = {};
+  std::array<bool, 10> mTextureMatrix2x4 = {};
   std::array<TexCoordGenState, 8> mTexCoordGens = {};
   std::array<float, 16> mProjectionMatrix = {};
   bool mProjectionMatrixValid = false;

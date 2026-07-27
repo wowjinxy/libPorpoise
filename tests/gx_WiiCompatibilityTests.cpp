@@ -1,4 +1,5 @@
 #include <dolphin/gx/GXData.h>
+#include <dolphin/hw_regs.h>
 #include <dolphin/pad.h>
 #include <revolution/gx.h>
 #include <simulator/sim_gx_CommandProcessor.h>
@@ -14,6 +15,9 @@ extern "C" u32 VIGetCurrentLine(void) {
 extern "C" u32 VIGetTvFormat(void) {
     return VI_NTSC;
 }
+
+extern "C" void __GXHostRecordPrimitive(
+    u32 primitive, u32 vertexCount, u32 textureStages);
 
 namespace {
 
@@ -152,6 +156,39 @@ bool TestFifoQueries() {
            GXGetFifoWrap(&fifo) == GX_TRUE;
 }
 
+u16 DrawSyncCallbackToken = 0;
+u32 DrawSyncCallbackCount = 0;
+
+void RecordDrawSyncToken(u16 token) {
+    DrawSyncCallbackToken = token;
+    DrawSyncCallbackCount++;
+}
+
+bool TestHostDrawSyncCompletion() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    DrawSyncCallbackToken = 0;
+    DrawSyncCallbackCount = 0;
+    const GXDrawSyncCallback previousCallback =
+        GXSetDrawSyncCallback(RecordDrawSyncToken);
+
+    GXSetDrawSync(0xb00b);
+    const bool firstTokenCompleted =
+        GXReadDrawSync() == 0xb00b &&
+        DrawSyncCallbackToken == 0xb00b &&
+        DrawSyncCallbackCount == 1;
+
+    GXSetDrawSync(0xbeef);
+    const bool secondTokenCompleted =
+        GXReadDrawSync() == 0xbeef &&
+        DrawSyncCallbackToken == 0xbeef &&
+        DrawSyncCallbackCount == 2;
+
+    GXSetDrawSyncCallback(previousCallback);
+    return firstTokenCompleted && secondTokenCompleted;
+}
+
 bool TestHostPadKeyboardFallback() {
     std::array<PADStatus, PAD_MAX_CONTROLLERS> pads = {};
     if (!PADInit()) {
@@ -222,6 +259,111 @@ bool TestPositionTextureCoordinateGeneration() {
         NearlyEqual(decodedMatrix[7], 8.0f) &&
         NearlyEqual(decodedMatrix[8], 9.0f) &&
         NearlyEqual(decodedMatrix[11], 12.0f);
+}
+
+bool TestTextureMatrix2x4ImplicitQ() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    Mtx textureMatrix = {
+        {0.5f, 0.0f, 0.0f, 0.25f},
+        {0.0f, 0.5f, 0.0f, 0.50f},
+        {9.0f, 10.0f, 11.0f, 12.0f},
+    };
+    GXLoadTexMtxImm(textureMatrix, GX_TEXMTX0, GX_MTX2x4);
+    GXSetTexCoordGen(
+        GX_TEXCOORD0,
+        GX_TG_MTX2x4,
+        GX_TG_TEX0,
+        GX_TEXMTX0);
+
+    const auto& matrix =
+        SIM::GX::GetGlobalState().GetTexCoordGenMatrix(0);
+    return
+        NearlyEqual(matrix[0], 0.5f) &&
+        NearlyEqual(matrix[3], 0.25f) &&
+        NearlyEqual(matrix[5], 0.5f) &&
+        NearlyEqual(matrix[7], 0.50f) &&
+        NearlyEqual(matrix[8], 0.0f) &&
+        NearlyEqual(matrix[9], 0.0f) &&
+        NearlyEqual(matrix[10], 0.0f) &&
+        NearlyEqual(matrix[11], 1.0f);
+}
+
+bool TestHostPerformanceMetrics() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+    __cpReg = __CPRegs;
+    __peReg = __PERegs;
+    __memReg = __MEMRegs;
+
+    GXClearMemMetric();
+    GXSetGPMetric(GX_PERF0_CLOCKS, GX_PERF1_VERTICES);
+    GXClearGPMetric();
+    __GXHostRecordPrimitive(GX_TRIANGLES, 6, 1);
+
+    u32 clocks = 0;
+    u32 vertices = 0;
+    GXReadGPMetric(&clocks, &vertices);
+
+    u32 topIn = 0;
+    u32 topOut = 0;
+    u32 bottomIn = 0;
+    u32 bottomOut = 0;
+    u32 colorIn = 0;
+    u32 copyClocks = 0;
+    GXReadPixMetric(
+        &topIn,
+        &topOut,
+        &bottomIn,
+        &bottomOut,
+        &colorIn,
+        &copyClocks);
+
+    u32 cpRequests = 0;
+    u32 textureRequests = 0;
+    u32 unused[8] = {};
+    GXReadMemMetric(
+        &cpRequests,
+        &textureRequests,
+        &unused[0],
+        &unused[1],
+        &unused[2],
+        &unused[3],
+        &unused[4],
+        &unused[5],
+        &unused[6],
+        &unused[7]);
+
+    GXClearPixMetric();
+    u32 beforeQueuedReset = 0;
+    GXReadPixMetric(
+        &beforeQueuedReset,
+        &topOut,
+        &bottomIn,
+        &bottomOut,
+        &colorIn,
+        &copyClocks);
+    __GXHostRecordPrimitive(GX_TRIANGLES, 3, 1);
+    u32 afterQueuedReset = 0;
+    GXReadPixMetric(
+        &afterQueuedReset,
+        &topOut,
+        &bottomIn,
+        &bottomOut,
+        &colorIn,
+        &copyClocks);
+
+    return
+        clocks > 0 &&
+        vertices == 6 &&
+        topIn > 0 &&
+        topOut == afterQueuedReset &&
+        textureRequests > 0 &&
+        cpRequests > 0 &&
+        beforeQueuedReset == topIn &&
+        afterQueuedReset > 0 &&
+        afterQueuedReset < beforeQueuedReset;
 }
 
 bool TestResetWritePipeCompatibility() {
@@ -455,35 +597,44 @@ int main() {
     if (!TestFifoQueries()) {
         return 3;
     }
-    if (!TestHostPadKeyboardFallback()) {
+    if (!TestHostDrawSyncCompletion()) {
         return 4;
     }
-    if (!TestZScaleOffsetCommands()) {
+    if (!TestHostPadKeyboardFallback()) {
         return 5;
     }
-    if (!TestResetWritePipeCompatibility()) {
+    if (!TestZScaleOffsetCommands()) {
         return 6;
     }
-    if (!TestXfChannelAndLightState()) {
+    if (!TestResetWritePipeCompatibility()) {
         return 7;
     }
-    if (!TestBpRenderStateCommands()) {
+    if (!TestXfChannelAndLightState()) {
         return 8;
     }
-    if (!TestBpCopyClearCommands()) {
+    if (!TestBpRenderStateCommands()) {
         return 9;
     }
-    if (!TestDisplayCopyRebasesViewportReference()) {
+    if (!TestBpCopyClearCommands()) {
         return 10;
     }
-    if (!TestBpTextureAndScissorCommands()) {
+    if (!TestDisplayCopyRebasesViewportReference()) {
         return 11;
     }
-    if (!TestTextureObjectAbiBounds()) {
+    if (!TestBpTextureAndScissorCommands()) {
         return 12;
     }
-    if (!TestPositionTextureCoordinateGeneration()) {
+    if (!TestTextureObjectAbiBounds()) {
         return 13;
+    }
+    if (!TestPositionTextureCoordinateGeneration()) {
+        return 14;
+    }
+    if (!TestTextureMatrix2x4ImplicitQ()) {
+        return 15;
+    }
+    if (!TestHostPerformanceMetrics()) {
+        return 16;
     }
     return 0;
 }

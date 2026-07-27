@@ -8,6 +8,12 @@
 #include <simulator/sim_gx_State.hpp>
 #include <simulator/sim.h>
 
+extern "C" void __GXHostCompleteDrawSync(
+    u16 token, GXBool signalCallback);
+extern "C" void __GXHostRecordPrimitive(
+    u32 primitive, u32 vertexCount, u32 textureStages);
+extern "C" void __GXHostQueuePixelMetricReset(void);
+
 namespace SIM::GX {
 CommandProcessor::CommandProcessor() : mGeometryProcessor(GeometryProcessor()),
              mCurrentState(CommandProcessor::State::ReadOpcode),
@@ -189,6 +195,17 @@ void CommandProcessor::HandleBeginPrimitive(GXPrimitive primitive, size_t numVer
     gxState.SetCurrentPrimitive(primitive);
     gxState.SetCurrentVertexFormat(mLastVertexFormatIdx);
 
+    u32 textureStages = 0;
+    for (size_t stage = 0; stage < gxState.GetNumTevStages(); ++stage) {
+        if (gxState.GetTevStageState(stage).textureEnabled) {
+            ++textureStages;
+        }
+    }
+    __GXHostRecordPrimitive(
+        static_cast<u32>(primitive),
+        static_cast<u32>(numVerts),
+        textureStages);
+
     const size_t bytesPerVertex = gxState.GetNumBytesPerVertex();
     mRemainingGeometryBytes = static_cast<int>(numVerts * bytesPerVertex);
     mTotalGeometryBytes = mRemainingGeometryBytes;
@@ -321,6 +338,15 @@ void CommandProcessor::ProcessOpcode() {
 }
 
 void CommandProcessor::ProcessBpReg(u32 value) {
+    const u8 address = static_cast<u8>(value >> 24);
+    if (address == 0x47u || address == 0x48u) {
+        __GXHostCompleteDrawSync(
+            static_cast<u16>(value),
+            address == 0x48u ? GX_TRUE : GX_FALSE);
+    } else if (address == 0x57u &&
+               (value & 0x00ffffffu) == 0x00000aaau) {
+        __GXHostQueuePixelMetricReset();
+    }
     GetGlobalState().SetBpRegister(value);
 }
 

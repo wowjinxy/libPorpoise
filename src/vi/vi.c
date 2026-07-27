@@ -6,6 +6,11 @@
 #include <stddef.h>
 #ifdef LIBPORPOISE_PORT
 #include <simulator/sim.h>
+
+extern void __GXHostServiceFifoBreakpoint(void);
+
+static BOOL hostRetraceInProgress;
+static BOOL hostCopyRetracePendingWait;
 #endif
 
 // Useful macros.
@@ -109,21 +114,22 @@ static int cntlzd(u64 bit)
 	u32 hi, lo;
 	int value;
 
+#ifdef LIBPORPOISE_PORT
+	if (bit == 0) {
+		return 64;
+	}
+	return __builtin_clzll(bit);
+#else
 	hi    = (u32)(bit >> 32);
 	lo    = (u32)(bit & 0xFFFFFFFF);
-	#ifndef LIBPORPOISE_PORT
 	value = __mwerks_cntlzw(hi);
-	#endif
 
 	if (value < 32) {
 		return value;
 	}
 
-	#ifdef LIBPORPOISE_PORT
-	return 0;
-	#else
 	return (32 + __mwerks_cntlzw(lo));
-	#endif
+#endif
 }
 
 /**
@@ -465,6 +471,8 @@ void VIInit(void)
 
 #ifdef LIBPORPOISE_PORT
 	SIM_VIInit();
+	hostRetraceInProgress = FALSE;
+	hostCopyRetracePendingWait = FALSE;
 #endif
 
 	retraceCount = 0;
@@ -538,20 +546,65 @@ void VIInit(void)
 /**
  * @TODO: Documentation
  */
+#ifdef LIBPORPOISE_PORT
+static void __VIHostAdvanceRetrace(void)
+{
+	hostRetraceInProgress = TRUE;
+	__GXHostServiceFifoBreakpoint();
+	retraceCount++;
+
+	if (PreCB != NULL) {
+		PreCB(retraceCount);
+	}
+
+	if (flushFlag && VISetRegs()) {
+		flushFlag = 0;
+#if OS_BUILD_VERSION >= 20011217L
+		SIRefreshSamplingRate();
+#elif OS_BUILD_VERSION >= 20011002L
+		__PADRefreshSamplingRate();
+#endif
+	}
+
+	if (PostCB != NULL) {
+		PostCB(retraceCount);
+	}
+
+	SIM_Render();
+	hostRetraceInProgress = FALSE;
+}
+
+void __VIHostOnCopyDisp(void)
+{
+	if (hostRetraceInProgress) {
+		return;
+	}
+
+	__VIHostAdvanceRetrace();
+	hostCopyRetracePendingWait = TRUE;
+}
+#endif
+
 void VIWaitForRetrace(void)
 {
 	int interrupt;
+#ifndef LIBPORPOISE_PORT
 	u32 startCount;
+#endif
 
-	interrupt  = OSDisableInterrupts();
+	interrupt = OSDisableInterrupts();
+#ifdef LIBPORPOISE_PORT
+	if (hostCopyRetracePendingWait) {
+		hostCopyRetracePendingWait = FALSE;
+	} else {
+		__VIHostAdvanceRetrace();
+	}
+#else
 	startCount = retraceCount;
-	#ifdef LIBPORPOISE_PORT
-	SIM_Render();
-	#else
 	do {
 		OSSleepThread(&retraceQueue);
 	} while (startCount == retraceCount);
-	#endif
+#endif
 	OSRestoreInterrupts(interrupt);
 }
 
@@ -948,13 +1001,11 @@ void VIFlush(void)
 #endif
 	shdwChanged |= changed;
 
-	#ifndef LIBPORPOISE_PORT
 	while (changed) {
 		regIndex           = cntlzd(changed);
 		shdwRegs[regIndex] = regs[regIndex];
 		changed &= ~VI_BITMASK(regIndex);
 	}
-	#endif
 
 	flushFlag = 1;
 	OSRestoreInterrupts(enabled);

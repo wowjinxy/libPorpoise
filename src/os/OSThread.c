@@ -15,6 +15,9 @@ static OSThread IdleThread;
 static OSThread DefaultThread;
 static OSContext IdleContext;
 static void DefaultSwitchThreadCallback(OSThread* from, OSThread* to);
+#ifdef LIBPORPOISE_PORT
+static __thread OSThread* HostCurrentThread;
+#endif
 
 // Fabricated helper inlines.
 // Initialise mutex queue (mutex equiv. to OSInitThreadQueue below).
@@ -41,6 +44,9 @@ void __OSThreadInit(void)
 	InitMutexQueue(&thread->queueMutex);
 
 	__OSFPUContext = &thread->context;
+#ifdef LIBPORPOISE_PORT
+	HostCurrentThread = thread;
+#endif
 
 	OSClearContext(&thread->context);
 	OSSetCurrentContext(&thread->context);
@@ -70,6 +76,10 @@ void __OSThreadInit(void)
 void OSInitThreadQueue(OSThreadQueue* threadQueue)
 {
 	threadQueue->head = threadQueue->tail = NULL;
+#ifdef LIBPORPOISE_PORT
+	threadQueue->hostMutex = SDL_CreateMutex();
+	threadQueue->hostCondition = SDL_CreateCond();
+#endif
 }
 
 /**
@@ -77,6 +87,11 @@ void OSInitThreadQueue(OSThreadQueue* threadQueue)
  */
 OSThread* OSGetCurrentThread(void)
 {
+#ifdef LIBPORPOISE_PORT
+	if (HostCurrentThread != NULL) {
+		return HostCurrentThread;
+	}
+#endif
 	return __OSCurrentThread;
 }
 
@@ -379,9 +394,13 @@ BOOL OSCreateThreadDebug(OSThread* thread, OSThreadStartFunction func, void* par
 // Wrapper function to run OSThreads in SDL Threads
 static int OSRunThread(void * threadPtr) {
 	OSThread * thread = (OSThread*)threadPtr;
+	HostCurrentThread = thread;
 	thread->state = OS_THREAD_STATE_RUNNING;
-	thread->func(thread->param);
+	thread->val = thread->func(thread->param);
 	thread->state = OS_THREAD_STATE_MORIBUND;
+	OSWakeupThread(&thread->queueJoin);
+	HostCurrentThread = NULL;
+	return 0;
 }
 #endif
 
@@ -434,6 +453,7 @@ BOOL OSCreateThread(OSThread* thread, OSThreadStartFunction func, void* param, v
 #ifdef LIBPORPOISE_PORT
 	thread->func = func;
 	thread->param = param;
+	thread->sdlThread = NULL;
 #endif
 	return TRUE;
 }
@@ -530,6 +550,20 @@ void OSCancelThread(OSThread* thread)
  */
 BOOL OSJoinThread(OSThread* thread, void** val)
 {
+#ifdef LIBPORPOISE_PORT
+	if ((thread->attr & OS_THREAD_ATTR_DETACH) != 0 ||
+	    thread->sdlThread == NULL) {
+		return FALSE;
+	}
+
+	SDL_WaitThread(thread->sdlThread, NULL);
+	thread->sdlThread = NULL;
+	if (val != NULL) {
+		*val = thread->val;
+	}
+	thread->state = OS_THREAD_STATE_NULL;
+	return TRUE;
+#else
 	BOOL enabled = OSDisableInterrupts();
 
 	if (!(thread->attr & 1) && (thread->state != 8) && (thread->queueJoin.head == NULL)) {
@@ -551,6 +585,7 @@ BOOL OSJoinThread(OSThread* thread, void** val)
 	}
 	OSRestoreInterrupts(enabled);
 	return 0;
+#endif
 }
 
 /**
@@ -568,11 +603,18 @@ void OSDetachThread(OSThread* thread)
 s32 OSResumeThread(OSThread* thread)
 {
 #ifdef LIBPORPOISE_PORT
-	if(thread->func) {
+	const s32 suspendCount = thread->suspend;
+	if (thread->suspend > 0) {
+		thread->suspend--;
+	}
+	if (thread->func != NULL && thread->sdlThread == NULL) {
 		thread->sdlThread = SDL_CreateThread(OSRunThread, thread->name, (void*)thread);
 	} else {
-		thread->state = OS_THREAD_STATE_MORIBUND;
+		if (thread->func == NULL) {
+			thread->state = OS_THREAD_STATE_MORIBUND;
+		}
 	}
+	return suspendCount;
 #else
 	BOOL enabled;
 	s32 suspendCount;
@@ -653,6 +695,28 @@ s32 OSSuspendThread(OSThread* thread)
  */
 void OSSleepThread(OSThreadQueue* threadQueue)
 {
+#ifdef LIBPORPOISE_PORT
+	if (threadQueue == NULL) {
+		return;
+	}
+	if (threadQueue->hostMutex == NULL ||
+	    threadQueue->hostCondition == NULL) {
+		OSInitThreadQueue(threadQueue);
+	}
+
+	OSThread* currentThread = OSGetCurrentThread();
+	if (currentThread != NULL) {
+		currentThread->state = OS_THREAD_STATE_WAITING;
+		currentThread->queue = threadQueue;
+	}
+	SDL_LockMutex(threadQueue->hostMutex);
+	SDL_CondWait(threadQueue->hostCondition, threadQueue->hostMutex);
+	SDL_UnlockMutex(threadQueue->hostMutex);
+	if (currentThread != NULL) {
+		currentThread->queue = NULL;
+		currentThread->state = OS_THREAD_STATE_RUNNING;
+	}
+#else
 	BOOL enabled;
 	OSThread* currentThread;
 
@@ -665,6 +729,7 @@ void OSSleepThread(OSThreadQueue* threadQueue)
 	RunQueueHint = TRUE;
 	__OSReschedule();
 	OSRestoreInterrupts(enabled);
+#endif
 }
 
 /**
@@ -672,6 +737,16 @@ void OSSleepThread(OSThreadQueue* threadQueue)
  */
 void OSWakeupThread(OSThreadQueue* threadQueue)
 {
+#ifdef LIBPORPOISE_PORT
+	if (threadQueue == NULL ||
+	    threadQueue->hostMutex == NULL ||
+	    threadQueue->hostCondition == NULL) {
+		return;
+	}
+	SDL_LockMutex(threadQueue->hostMutex);
+	SDL_CondBroadcast(threadQueue->hostCondition);
+	SDL_UnlockMutex(threadQueue->hostMutex);
+#else
 	BOOL enabled;
 	OSThread* thread;
 
@@ -685,6 +760,7 @@ void OSWakeupThread(OSThreadQueue* threadQueue)
 	}
 	__OSReschedule();
 	OSRestoreInterrupts(enabled);
+#endif
 }
 
 /**

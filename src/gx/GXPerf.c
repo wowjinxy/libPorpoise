@@ -4,6 +4,152 @@
 #include <dolphin/gx/GXMisc.h>
 #include <dolphin/hw_regs.h>
 
+#ifdef LIBPORPOISE_PORT
+static u64 HostVertexCount;
+static u64 HostPrimitiveCount;
+static u64 HostPixelCount;
+static u64 HostTextureRequestCount;
+static OSTime HostGpMetricStart;
+static GXBool HostPixelMetricResetPending;
+
+static u32 __GXHostClampCounter(u64 value)
+{
+	return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : (u32)value;
+}
+
+static u32 __GXHostPrimitiveCount(GXPrimitive primitive, u32 vertexCount)
+{
+	switch (primitive) {
+	case GX_POINTS:
+		return vertexCount;
+	case GX_LINES:
+		return vertexCount / 2;
+	case GX_LINESTRIP:
+		return vertexCount > 1 ? vertexCount - 1 : 0;
+	case GX_TRIANGLES:
+		return vertexCount / 3;
+	case GX_TRIANGLESTRIP:
+	case GX_TRIANGLEFAN:
+		return vertexCount > 2 ? vertexCount - 2 : 0;
+	case GX_QUADS:
+		return (vertexCount / 4) * 2;
+	case GX_QUADSTRIP:
+		return vertexCount > 2 ? ((vertexCount - 2) / 2) * 2 : 0;
+	default:
+		return 0;
+	}
+}
+
+static u32 __GXHostElapsedFlipperClocks(void)
+{
+	const OSTime now = OSGetTime();
+	const u64 timerClock = (u64)OS_TIMER_CLOCK;
+	u64 elapsed;
+	u64 clocks;
+
+	if (HostGpMetricStart == 0) {
+		HostGpMetricStart = now;
+	}
+	elapsed = now > HostGpMetricStart ? (u64)(now - HostGpMetricStart) : 0;
+	if (timerClock == 0) {
+		return 1;
+	}
+
+	clocks = elapsed * 162000000ull / timerClock;
+	return clocks == 0 ? 1 : __GXHostClampCounter(clocks);
+}
+
+void __GXHostRecordPrimitive(u32 primitive, u32 vertexCount, u32 textureStages)
+{
+	const u32 primitives =
+	    __GXHostPrimitiveCount((GXPrimitive)primitive, vertexCount);
+	const u64 pixelEstimate =
+	    (u64)(primitives != 0 ? primitives : vertexCount) * 256ull;
+
+	if (HostPixelMetricResetPending) {
+		HostPixelCount = 0;
+		HostPixelMetricResetPending = GX_FALSE;
+	}
+
+	HostVertexCount += vertexCount;
+	HostPrimitiveCount += primitives;
+	HostPixelCount += pixelEstimate;
+	if (textureStages != 0) {
+		HostTextureRequestCount +=
+		    (pixelEstimate * textureStages + 31ull) / 32ull;
+	}
+}
+
+void __GXHostQueuePixelMetricReset(void)
+{
+	HostPixelMetricResetPending = GX_TRUE;
+}
+
+static void __GXHostReadGPMetric(u32* cnt0, u32* cnt1)
+{
+	const u32 clocks = __GXHostElapsedFlipperClocks();
+
+	switch (gx->perf0) {
+	case GX_PERF0_VERTICES:
+	case GX_PERF0_CLIP_VTX:
+		*cnt0 = __GXHostClampCounter(HostVertexCount);
+		break;
+	case GX_PERF0_TRIANGLES:
+	case GX_PERF0_TRIANGLES_CULLED:
+	case GX_PERF0_TRIANGLES_PASSED:
+	case GX_PERF0_TRIANGLES_SCISSORED:
+	case GX_PERF0_TRIANGLES_0TEX:
+	case GX_PERF0_TRIANGLES_1TEX:
+	case GX_PERF0_TRIANGLES_2TEX:
+	case GX_PERF0_TRIANGLES_3TEX:
+	case GX_PERF0_TRIANGLES_4TEX:
+	case GX_PERF0_TRIANGLES_5TEX:
+	case GX_PERF0_TRIANGLES_6TEX:
+	case GX_PERF0_TRIANGLES_7TEX:
+	case GX_PERF0_TRIANGLES_8TEX:
+	case GX_PERF0_TRIANGLES_0CLR:
+	case GX_PERF0_TRIANGLES_1CLR:
+	case GX_PERF0_TRIANGLES_2CLR:
+		*cnt0 = __GXHostClampCounter(HostPrimitiveCount);
+		break;
+	case GX_PERF0_CLIP_RATIO:
+		*cnt0 = HostPrimitiveCount != 0 ? 1000 : 0;
+		break;
+	case GX_PERF0_NONE:
+		*cnt0 = 0;
+		break;
+	default:
+		*cnt0 = clocks;
+		break;
+	}
+
+	switch (gx->perf1) {
+	case GX_PERF1_VERTICES:
+		*cnt1 = __GXHostClampCounter(HostVertexCount);
+		break;
+	case GX_PERF1_TEXELS:
+		*cnt1 = __GXHostClampCounter(HostPixelCount);
+		break;
+	case GX_PERF1_TC_CHECK1_2:
+	case GX_PERF1_TC_CHECK3_4:
+	case GX_PERF1_TC_CHECK5_6:
+	case GX_PERF1_TC_CHECK7_8:
+	case GX_PERF1_TC_MISS:
+		*cnt1 = __GXHostClampCounter(HostTextureRequestCount);
+		break;
+	case GX_PERF1_NONE:
+		*cnt1 = 0;
+		break;
+	case GX_PERF1_CLOCKS:
+		*cnt1 = clocks;
+		break;
+	default:
+		*cnt1 = __GXHostClampCounter(HostPrimitiveCount);
+		break;
+	}
+}
+#endif
+
 /**
  * @TODO: Documentation
  */
@@ -506,6 +652,11 @@ void GXReadGPMetric(u32* cnt0, u32* cnt1)
 
 	OSAssertMsgLine(0x286, !gx->inDispList, "GXReadGPMetric: don't use in a display list");
 
+#ifdef LIBPORPOISE_PORT
+	__GXHostReadGPMetric(cnt0, cnt1);
+	return;
+#endif
+
 	ctrl   = __cpReg[CP_XF_RASBUSY_LO];
 	ctrh   = __cpReg[CP_XF_RASBUSY_HI];
 	cpCtr0 = (ctrh << 16) | ctrl;
@@ -652,6 +803,11 @@ void GXClearGPMetric(void)
 	u32 reg;
 
 	OSAssertMsgLine(0x322, !gx->inDispList, "GXClearGPMetric: don't use in a display list");
+#ifdef LIBPORPOISE_PORT
+	HostVertexCount = 0;
+	HostPrimitiveCount = 0;
+	HostGpMetricStart = OSGetTime();
+#endif
 	reg               = 4;
 	__cpReg[CP_CLEAR] = reg;
 }
@@ -690,6 +846,20 @@ void GXReadMemMetric(u32* cp_req, u32* tc_req, u32* cpu_rd_req, u32* cpu_wr_req,
 	u32 ctrl, ctrh;
 
 	OSAssertMsgLine(0x380, !gx->inDispList, "GXReadMemMetric: don't use in a display list");
+
+#ifdef LIBPORPOISE_PORT
+	*cp_req = __GXHostClampCounter(HostPrimitiveCount);
+	*tc_req = __GXHostClampCounter(HostTextureRequestCount);
+	*cpu_rd_req = 0;
+	*cpu_wr_req = 0;
+	*dsp_req = 0;
+	*io_req = 0;
+	*vi_req = 0;
+	*pe_req = 0;
+	*rf_req = 0;
+	*fi_req = 0;
+	return;
+#endif
 
 	ctrl    = __memReg[MEM_TIMER0_LO];
 	ctrh    = __memReg[MEM_TIMER0_HI];
@@ -740,6 +910,10 @@ void GXClearMemMetric(void)
 {
 	OSAssertMsgLine(0x3B9, !gx->inDispList, "GXClearMemMetric: don't use in a display list");
 
+#ifdef LIBPORPOISE_PORT
+	HostTextureRequestCount = 0;
+#endif
+
 	__memReg[MEM_TIMER0_HI] = 0;
 	__memReg[MEM_TIMER0_LO] = 0;
 	__memReg[MEM_TIMER1_HI] = 0;
@@ -771,6 +945,16 @@ void GXReadPixMetric(u32* top_pixels_in, u32* top_pixels_out, u32* bot_pixels_in
 	u32 ctrl, ctrh;
 
 	OSAssertMsgLine(0x3F1, !gx->inDispList, "GXReadPixMetric: don't use in a display list");
+
+#ifdef LIBPORPOISE_PORT
+	*top_pixels_in = __GXHostClampCounter(HostPixelCount);
+	*top_pixels_out = *top_pixels_in;
+	*bot_pixels_in = 0;
+	*bot_pixels_out = 0;
+	*clr_pixels_in = *top_pixels_in;
+	*copy_clks = 0;
+	return;
+#endif
 
 	ctrl           = __peReg[PE_PERF_ZCOMP_INPUT_ZCOMPLOC_LO];
 	ctrh           = __peReg[PE_PERF_ZCOMP_INPUT_ZCOMPLOC_HI];
