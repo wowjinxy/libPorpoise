@@ -749,6 +749,43 @@ void DecodeI8(
     }
 }
 
+void DecodeIA4(
+    const u8* source,
+    std::vector<u8>& rgba,
+    u16 width,
+    u16 height) {
+    const size_t blockColumns = (static_cast<size_t>(width) + 7u) / 8u;
+    const size_t blockRows = (static_cast<size_t>(height) + 3u) / 4u;
+    rgba.assign(
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u,
+        0);
+
+    for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+        for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+            for (size_t y = 0; y < 4u; ++y) {
+                for (size_t x = 0; x < 8u; ++x) {
+                    const u8 packed = *source++;
+                    const u8 intensity =
+                        static_cast<u8>((packed & 0x0fu) * 17u);
+                    const u8 alpha =
+                        static_cast<u8>((packed >> 4u) * 17u);
+                    const size_t destinationX = blockX * 8u + x;
+                    const size_t destinationY = blockY * 4u + y;
+                    if (destinationX >= width || destinationY >= height) {
+                        continue;
+                    }
+                    const size_t destination =
+                        (destinationY * width + destinationX) * 4u;
+                    rgba[destination] = intensity;
+                    rgba[destination + 1u] = intensity;
+                    rgba[destination + 2u] = intensity;
+                    rgba[destination + 3u] = alpha;
+                }
+            }
+        }
+    }
+}
+
 void DecodeIA8(
     const u8* source,
     std::vector<u8>& rgba,
@@ -1009,6 +1046,193 @@ void DecodeRGB5A3(
                     rgba[destination + 1u] = green;
                     rgba[destination + 2u] = blue;
                     rgba[destination + 3u] = alpha;
+                }
+            }
+        }
+    }
+}
+
+std::vector<u8> DecodeTlut(const SIM::GX::TlutState& tlut) {
+    std::vector<u8> palette(
+        static_cast<size_t>(tlut.entries) * 4u,
+        0);
+    if (tlut.data == nullptr) {
+        return palette;
+    }
+
+    const u8* source = static_cast<const u8*>(tlut.data);
+    for (size_t index = 0; index < tlut.entries; ++index) {
+        const u16 packed =
+            static_cast<u16>(
+                (static_cast<u16>(source[0]) << 8u) |
+                static_cast<u16>(source[1]));
+        source += 2u;
+        const size_t destination = index * 4u;
+
+        if (tlut.format == GX_TL_RGB565) {
+            palette[destination] = static_cast<u8>(
+                ((packed >> 11u) & 0x1fu) * 255u / 31u);
+            palette[destination + 1u] = static_cast<u8>(
+                ((packed >> 5u) & 0x3fu) * 255u / 63u);
+            palette[destination + 2u] = static_cast<u8>(
+                (packed & 0x1fu) * 255u / 31u);
+            palette[destination + 3u] = 255u;
+        } else if (tlut.format == GX_TL_RGB5A3) {
+            if ((packed & 0x8000u) != 0u) {
+                palette[destination] = static_cast<u8>(
+                    ((packed >> 10u) & 0x1fu) * 255u / 31u);
+                palette[destination + 1u] = static_cast<u8>(
+                    ((packed >> 5u) & 0x1fu) * 255u / 31u);
+                palette[destination + 2u] = static_cast<u8>(
+                    (packed & 0x1fu) * 255u / 31u);
+                palette[destination + 3u] = 255u;
+            } else {
+                palette[destination] = static_cast<u8>(
+                    ((packed >> 8u) & 0x0fu) * 17u);
+                palette[destination + 1u] = static_cast<u8>(
+                    ((packed >> 4u) & 0x0fu) * 17u);
+                palette[destination + 2u] = static_cast<u8>(
+                    (packed & 0x0fu) * 17u);
+                palette[destination + 3u] = static_cast<u8>(
+                    ((packed >> 12u) & 0x07u) * 255u / 7u);
+            }
+        } else {
+            const u8 intensity = static_cast<u8>(packed >> 8u);
+            palette[destination] = intensity;
+            palette[destination + 1u] = intensity;
+            palette[destination + 2u] = intensity;
+            palette[destination + 3u] =
+                static_cast<u8>(packed & 0xffu);
+        }
+    }
+    return palette;
+}
+
+void WritePalettePixel(
+    std::vector<u8>& rgba,
+    size_t destination,
+    const std::vector<u8>& palette,
+    size_t paletteIndex) {
+    const size_t source = paletteIndex * 4u;
+    if (source + 3u >= palette.size()) {
+        rgba[destination + 3u] = 255u;
+        return;
+    }
+    std::copy(
+        palette.begin() + static_cast<std::ptrdiff_t>(source),
+        palette.begin() + static_cast<std::ptrdiff_t>(source + 4u),
+        rgba.begin() + static_cast<std::ptrdiff_t>(destination));
+}
+
+void DecodeC4(
+    const u8* source,
+    std::vector<u8>& rgba,
+    u16 width,
+    u16 height,
+    const std::vector<u8>& palette) {
+    const size_t blockColumns = (static_cast<size_t>(width) + 7u) / 8u;
+    const size_t blockRows = (static_cast<size_t>(height) + 7u) / 8u;
+    rgba.assign(
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u,
+        0);
+
+    for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+        for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+            for (size_t y = 0; y < 8u; ++y) {
+                for (size_t x = 0; x < 8u; x += 2u) {
+                    const u8 packed = *source++;
+                    for (size_t pixel = 0; pixel < 2u; ++pixel) {
+                        const size_t destinationX =
+                            blockX * 8u + x + pixel;
+                        const size_t destinationY =
+                            blockY * 8u + y;
+                        if (destinationX >= width ||
+                            destinationY >= height) {
+                            continue;
+                        }
+                        const size_t paletteIndex =
+                            pixel == 0u
+                                ? packed >> 4u
+                                : packed & 0x0fu;
+                        WritePalettePixel(
+                            rgba,
+                            (destinationY * width + destinationX) * 4u,
+                            palette,
+                            paletteIndex);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void DecodeC8(
+    const u8* source,
+    std::vector<u8>& rgba,
+    u16 width,
+    u16 height,
+    const std::vector<u8>& palette) {
+    const size_t blockColumns = (static_cast<size_t>(width) + 7u) / 8u;
+    const size_t blockRows = (static_cast<size_t>(height) + 3u) / 4u;
+    rgba.assign(
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u,
+        0);
+
+    for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+        for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+            for (size_t y = 0; y < 4u; ++y) {
+                for (size_t x = 0; x < 8u; ++x) {
+                    const size_t paletteIndex = *source++;
+                    const size_t destinationX = blockX * 8u + x;
+                    const size_t destinationY = blockY * 4u + y;
+                    if (destinationX >= width ||
+                        destinationY >= height) {
+                        continue;
+                    }
+                    WritePalettePixel(
+                        rgba,
+                        (destinationY * width + destinationX) * 4u,
+                        palette,
+                        paletteIndex);
+                }
+            }
+        }
+    }
+}
+
+void DecodeC14X2(
+    const u8* source,
+    std::vector<u8>& rgba,
+    u16 width,
+    u16 height,
+    const std::vector<u8>& palette) {
+    const size_t blockColumns = (static_cast<size_t>(width) + 3u) / 4u;
+    const size_t blockRows = (static_cast<size_t>(height) + 3u) / 4u;
+    rgba.assign(
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u,
+        0);
+
+    for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+        for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+            for (size_t y = 0; y < 4u; ++y) {
+                for (size_t x = 0; x < 4u; ++x) {
+                    const size_t paletteIndex =
+                        static_cast<size_t>(
+                            ((static_cast<u16>(source[0]) << 8u) |
+                             static_cast<u16>(source[1])) &
+                            0x3fffu);
+                    source += 2u;
+                    const size_t destinationX = blockX * 4u + x;
+                    const size_t destinationY = blockY * 4u + y;
+                    if (destinationX >= width ||
+                        destinationY >= height) {
+                        continue;
+                    }
+                    WritePalettePixel(
+                        rgba,
+                        (destinationY * width + destinationX) * 4u,
+                        palette,
+                        paletteIndex);
                 }
             }
         }
@@ -1349,10 +1573,15 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         const bool supported =
             texture.format == GX_TF_I4 ||
             texture.format == GX_TF_I8 ||
+            texture.format == GX_TF_IA4 ||
+            texture.format == GX_TF_IA8 ||
             texture.format == GX_TF_RGB565 ||
             texture.format == GX_TF_RGB5A3 ||
             texture.format == GX_TF_RGBA8 ||
             texture.format == GX_TF_CMPR ||
+            texture.format == GX_TF_C4 ||
+            texture.format == GX_TF_C8 ||
+            texture.format == GX_TF_C14X2 ||
             texture.format == GX_TF_Z8 ||
             texture.format == GX_TF_Z16 ||
             texture.format == GX_TF_Z24X8;
@@ -1373,6 +1602,13 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             mTextures[textureIndex]);
         if (mTextureRevisions[textureIndex] != texture.revision) {
             std::vector<u8> rgba;
+            std::vector<u8> palette;
+            if (texture.format == GX_TF_C4 ||
+                texture.format == GX_TF_C8 ||
+                texture.format == GX_TF_C14X2) {
+                palette = DecodeTlut(
+                    gxState.GetTlutState(texture.tlutName));
+            }
             if (texture.format == GX_TF_RGBA8 ||
                 texture.format == GX_TF_Z24X8) {
                 DecodeRGBA8(
@@ -1398,6 +1634,39 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
                     rgba,
                     texture.width,
                     texture.height);
+            } else if (texture.format == GX_TF_IA4) {
+                DecodeIA4(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height);
+            } else if (texture.format == GX_TF_IA8) {
+                DecodeIA8(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height);
+            } else if (texture.format == GX_TF_C4) {
+                DecodeC4(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height,
+                    palette);
+            } else if (texture.format == GX_TF_C8) {
+                DecodeC8(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height,
+                    palette);
+            } else if (texture.format == GX_TF_C14X2) {
+                DecodeC14X2(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height,
+                    palette);
             } else if (texture.format == GX_TF_Z8) {
                 DecodeI8(
                     static_cast<const u8*>(texture.data),
