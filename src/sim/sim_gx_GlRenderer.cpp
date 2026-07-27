@@ -1243,6 +1243,16 @@ void DecodeC14X2(
 
 namespace SIM::GX {
 
+u8 ConvertRgbToCopyIntensity(u8 red, u8 green, u8 blue) {
+    const int y =
+        (257 * static_cast<int>(red) +
+         504 * static_cast<int>(green) +
+          98 * static_cast<int>(blue) +
+         16500) /
+        1000;
+    return static_cast<u8>(std::clamp(y, 16, 235));
+}
+
 void ApplyTextureCoordinateGeneration(
     const GlobalState& state,
     std::vector<RenderVertex>& vertices) {
@@ -2073,7 +2083,7 @@ extern "C" void __GXHostCopyTex(
                     for (size_t x = 0; x < 8u; ++x) {
                         const size_t destinationX = blockX * 8u + x;
                         const size_t destinationY = blockY * 4u + y;
-                        u8 alpha = 0;
+                        u8 value = 0;
                         if (destinationX < destinationWidth &&
                             destinationY < destinationHeight) {
                             const float sourceX =
@@ -2100,9 +2110,16 @@ extern "C" void __GXHostCopyTex(
                                      static_cast<size_t>(drawableWidth) +
                                  static_cast<size_t>(framebufferX)) *
                                 4u;
-                            alpha = framebuffer[sourceOffset + 3u];
+                            if (destinationFormat == GX_CTF_A8) {
+                                value = framebuffer[sourceOffset + 3u];
+                            } else {
+                                value = SIM::GX::ConvertRgbToCopyIntensity(
+                                    framebuffer[sourceOffset],
+                                    framebuffer[sourceOffset + 1u],
+                                    framebuffer[sourceOffset + 2u]);
+                            }
                         }
-                        *encoded++ = alpha;
+                        *encoded++ = value;
                     }
                 }
             }

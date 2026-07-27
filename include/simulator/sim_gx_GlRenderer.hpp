@@ -16,6 +16,8 @@ void ApplyTextureCoordinateGeneration(
     const GlobalState& state,
     std::vector<RenderVertex>& vertices);
 
+u8 ConvertRgbToCopyIntensity(u8 red, u8 green, u8 blue);
+
 class GlRenderer {
  public:
   void Draw(const std::vector<RenderVertex>& vertices, GXPrimitive primitive);
