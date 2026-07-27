@@ -41,6 +41,26 @@ bool TestTextureCopyIntensityConversion() {
         SIM::GX::ConvertRgbToCopyIntensity(0, 0, 255) == 41;
 }
 
+bool TestRgb565TextureCopyEncoding() {
+    std::array<u8, 4 * 4 * 4> rgba = {};
+    rgba[0] = 255;
+    rgba[4 + 1] = 255;
+    rgba[8 + 2] = 255;
+    rgba[12] = 255;
+    rgba[12 + 1] = 255;
+    rgba[12 + 2] = 255;
+
+    std::array<u8, 4 * 4 * 2> encoded = {};
+    SIM::GX::EncodeRgb565TextureCopy(
+        rgba.data(), 4, 4, encoded.data());
+
+    return
+        encoded[0] == 0xf8 && encoded[1] == 0x00 &&
+        encoded[2] == 0x07 && encoded[3] == 0xe0 &&
+        encoded[4] == 0x00 && encoded[5] == 0x1f &&
+        encoded[6] == 0xff && encoded[7] == 0xff;
+}
+
 bool TestIndependentTextureLodSetters() {
     GXTexObj texture = {};
 
@@ -806,6 +826,9 @@ bool TestBpTextureAndScissorCommands() {
 int main() {
     if (!TestTextureCopyIntensityConversion()) {
         return 20;
+    }
+    if (!TestRgb565TextureCopyEncoding()) {
+        return 21;
     }
     if (!TestIndependentTextureLodSetters()) {
         return 1;
