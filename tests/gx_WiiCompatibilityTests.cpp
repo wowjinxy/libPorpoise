@@ -467,11 +467,29 @@ bool TestBpRenderStateCommands() {
         (static_cast<u32>(GX_LESS) << 16) |
         (static_cast<u32>(GX_GREATER) << 19) |
         (static_cast<u32>(GX_AOP_XOR) << 22));
+    SendBpRegister(0xee000000u | 0x0003e800u);
+    SendBpRegister(0xef000000u | 0x00400000u);
+    SendBpRegister(0xf0000000u | 2u);
+    SendBpRegister(
+        0xf1000000u |
+        0x0003e000u |
+        (static_cast<u32>(GX_FOG_EXPONENT2) << 21));
+    SendBpRegister(
+        0xf2000000u |
+        (0x80u << 16) |
+        (0x40u << 8) |
+        0x20u);
+    SendBpRegister(0xe9000000u | 0x120u | (0x140u << 12));
+    SendBpRegister(
+        0xe8000000u |
+        (342u + 160u) |
+        (1u << 10));
 
     const auto& state = SIM::GX::GetGlobalState();
     const auto& blend = state.GetBlendState();
     const auto& depth = state.GetDepthState();
     const auto& alphaCompare = state.GetAlphaCompareState();
+    const auto& fog = state.GetFogState();
     const auto& raster = state.GetRasterState();
     const auto& firstStage = state.GetTevStageState(0);
     return
@@ -490,6 +508,19 @@ bool TestBpRenderStateCommands() {
         alphaCompare.operation == GX_AOP_XOR &&
         alphaCompare.comparison1 == GX_GREATER &&
         alphaCompare.reference1 == 40 &&
+        fog.type == GX_FOG_EXPONENT2 &&
+        !fog.orthographic &&
+        NearlyEqual(fog.parameterA, 0.25f) &&
+        fog.parameterBMagnitude == 0x400000u &&
+        fog.parameterBShift == 2 &&
+        NearlyEqual(fog.parameterC, 0.125f) &&
+        NearlyEqual(fog.color[0], 0x80 / 255.0f) &&
+        NearlyEqual(fog.color[1], 0x40 / 255.0f) &&
+        NearlyEqual(fog.color[2], 0x20 / 255.0f) &&
+        fog.rangeAdjustmentEnabled &&
+        fog.rangeAdjustmentCenter == 160 &&
+        fog.rangeAdjustmentTable[0] == 0x120 &&
+        fog.rangeAdjustmentTable[1] == 0x140 &&
         raster.cullMode == GX_CULL_BACK &&
         NearlyEqual(raster.lineWidth, 2.0f) &&
         NearlyEqual(raster.pointSize, 3.0f) &&
