@@ -575,6 +575,15 @@ void SIM_GX_CommandProcessor_SetVertexArray(GXAttr attr, void * ptr, int stride)
     SIM::GX::GetGlobalState().SetVertexArray(attr, vtxArray);
 }
 
+void SIM_GX_CommandProcessor_SetVertexArrayU32(
+    GXAttr attr, void * ptr, int stride) {
+    SIM::GX::VertexArray vtxArray;
+    vtxArray.mArrayPtr = ptr;
+    vtxArray.mStride = stride;
+    vtxArray.mHostPackedU32 = true;
+    SIM::GX::GetGlobalState().SetVertexArray(attr, vtxArray);
+}
+
 void SIM_GX_CommandProcessor_LoadTlut(
     u32 id, const void* data, u32 format, u16 entries) {
     SIM::GX::TlutState tlut;

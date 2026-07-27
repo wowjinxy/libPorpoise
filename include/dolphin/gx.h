@@ -1,6 +1,8 @@
 #ifndef _DOLPHIN_GX_H
 #define _DOLPHIN_GX_H
 
+#define LIBPORPOISE_GX_UMBRELLA_HEADER
+
 #include <dolphin/gx/GXAttr.h>
 #include <dolphin/gx/GXBump.h>
 #include <dolphin/gx/GXCommandList.h>
@@ -25,5 +27,8 @@
 #include <dolphin/gx/GXVert.h>
 #include <dolphin/mtx.h>
 #include <dolphin/vi.h>
+
+#undef LIBPORPOISE_GX_UMBRELLA_HEADER
+#include <dolphin/gx/GXHostArray.h>
 
 #endif
