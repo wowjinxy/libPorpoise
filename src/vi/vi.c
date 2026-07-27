@@ -1072,6 +1072,17 @@ u32 VIGetRetraceCount(void)
  */
 static u32 getCurrentHalfLine(void)
 {
+#ifdef LIBPORPOISE_PORT
+	VITimingInfo* tm = CurrTiming != NULL ? CurrTiming : HorVer.timing;
+	u32 numHalfLines = tm != NULL ? tm->numHalfLines : 525;
+
+	/*
+	 * The host has no continuously ticking VI beam counters. Model the two
+	 * interlaced fields at retrace granularity instead of reading the static
+	 * emulated hardware registers and underflowing their zero values.
+	 */
+	return (retraceCount & 1) != 0 ? numHalfLines : 0;
+#else
 	u32 hcount;
 	u32 vcount0;
 	u32 vcount;
@@ -1094,6 +1105,7 @@ static u32 getCurrentHalfLine(void)
 #else
 	return ((vcount - 1) * 2) + ((hcount - 1) / tm->hlw);
 #endif
+#endif
 }
 
 /**
@@ -1109,7 +1121,11 @@ static u32 getCurrentFieldEvenOdd()
 	VITimingInfo* tm;
 
 #if OS_BUILD_VERSION >= 20011002L
+	#ifdef LIBPORPOISE_PORT
+	if ((retraceCount & 1) == 0) {
+	#else
 	if (getCurrentHalfLine() < CurrTiming->numHalfLines) {
+	#endif
 		return 1;
 	}
 #else
@@ -1158,7 +1174,14 @@ u32 VIGetCurrentLine(void)
 	BOOL enabled;
 
 #if OS_BUILD_VERSION >= 20011002L
+	#ifdef LIBPORPOISE_PORT
+	tm = CurrTiming != NULL ? CurrTiming : HorVer.timing;
+	if (tm == NULL) {
+		return 0;
+	}
+	#else
 	tm = CurrTiming;
+	#endif
 #else
 	// I am making up this version difference.  It might be something else.
 	tm = HorVer.timing;

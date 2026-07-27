@@ -41,6 +41,8 @@ int main() {
     VISetNextFrameBuffer(reinterpret_cast<void*>(0x1000));
     VIFlush();
 
+    const u32 initialField = VIGetNextField();
+    const u32 initialLine = VIGetCurrentLine();
     const u32 initialRetraceCount = VIGetRetraceCount();
     const VIRetraceCallback previousPre =
         VISetPreRetraceCallback(RecordPreRetrace);
@@ -50,8 +52,10 @@ int main() {
     VIWaitForRetrace();
 
     const u32 afterWaitRetraceCount = VIGetRetraceCount();
+    const u32 afterWaitField = VIGetNextField();
     __VIHostOnCopyDisp();
     const u32 afterCopyRetraceCount = VIGetRetraceCount();
+    const u32 afterCopyField = VIGetNextField();
     VIWaitForRetrace();
 
     VISetPreRetraceCallback(previousPre);
@@ -63,6 +67,10 @@ int main() {
         afterWaitRetraceCount == expectedWaitRetraceCount &&
         afterCopyRetraceCount == expectedCopyRetraceCount &&
         VIGetRetraceCount() == expectedCopyRetraceCount &&
+        initialLine == 0u &&
+        initialField != afterWaitField &&
+        afterWaitField != afterCopyField &&
+        VIGetNextField() == afterCopyField &&
         PreRetraceCount == expectedCopyRetraceCount &&
         PostRetraceCount == expectedCopyRetraceCount &&
         EventCount == EventOrder.size() &&
