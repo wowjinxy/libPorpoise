@@ -126,6 +126,14 @@ struct TextureState {
     GXTexWrapMode wrapT = GX_CLAMP;
     GXTexFilter minFilter = GX_NEAR;
     GXTexFilter magFilter = GX_NEAR;
+    u32 tlutName = GX_TLUT0;
+    u64 revision = 0;
+};
+
+struct TlutState {
+    const void* data = nullptr;
+    GXTlutFmt format = GX_TL_IA8;
+    u16 entries = 0;
     u64 revision = 0;
 };
 
@@ -209,6 +217,7 @@ class GlobalState {
   const ChannelState& GetChannelState(size_t index) const;
   const LightState& GetLightState(size_t index) const;
   const TextureState& GetTextureState(size_t index) const;
+  const TlutState& GetTlutState(size_t index) const;
   const TexCoordGenState& GetTexCoordGenState(size_t index) const;
   const std::array<float, 16>& GetTexCoordGenMatrix(size_t index) const;
   const TevStageState& GetTevStageState(size_t index) const;
@@ -231,6 +240,7 @@ class GlobalState {
   void SetVertexFormatDataType(GXVtxFmt formatIndex, GXAttr attrIndex, GXCompType dataType);
   void SetVertexFormatFraction(GXVtxFmt formatIndex, GXAttr attrIndex, u8 fraction);
   void LoadTexture(size_t index, const TextureState& texture);
+  void LoadTlut(size_t index, const TlutState& tlut);
   void SetXfData(u32 address, const u8* data, size_t wordCount);
 
  private:
@@ -279,6 +289,7 @@ class GlobalState {
   std::array<ChannelState, 2> mChannels = {};
   std::array<LightState, 8> mLights = {};
   std::array<TextureState, 8> mTextures = {};
+  std::array<TlutState, 20> mTluts = {};
   std::array<TevStageState, 16> mTevStages = {};
   std::array<std::array<u8, 4>, 4> mTevSwapTables = {};
   std::array<std::array<float, 4>, 4> mTevColors = {};

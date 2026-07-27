@@ -64,6 +64,11 @@ extern void GXLoadTexObj(GXTexObj* obj, GXTexMapID map);
 // Tlut functions.
 extern void GXInitTlutObj(GXTlutObj* obj, void* table, GXTlutFmt format, u16 numEntries);
 extern void GXLoadTlut(GXTlutObj* obj, u32 tlutName);
+extern void GXGetTlutObjAll(const GXTlutObj* obj, void** table,
+                            GXTlutFmt* format, u16* numEntries);
+extern void* GXGetTlutObjData(const GXTlutObj* obj);
+extern GXTlutFmt GXGetTlutObjFmt(const GXTlutObj* obj);
+extern u16 GXGetTlutObjNumEntries(const GXTlutObj* obj);
 
 // Region functions.
 extern void GXInitTexCacheRegion(GXTexRegion* region, GXBool is32bMIPmap, u32 memEven, GXTexCacheSize sizeEven, u32 memOdd,
