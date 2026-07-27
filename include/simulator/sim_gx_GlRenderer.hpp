@@ -9,7 +9,12 @@
 
 namespace SIM::GX {
 
+class GlobalState;
 struct RenderVertex;
+
+void ApplyTextureCoordinateGeneration(
+    const GlobalState& state,
+    std::vector<RenderVertex>& vertices);
 
 class GlRenderer {
  public:

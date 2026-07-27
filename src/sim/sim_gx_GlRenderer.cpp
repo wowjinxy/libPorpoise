@@ -480,7 +480,7 @@ void ApplyTexCoordGenerators(
                 source = {
                     coordinate.s,
                     coordinate.t,
-                    0.0f,
+                    coordinate.q,
                     1.0f,
                 };
             } else if (
@@ -1243,6 +1243,12 @@ void DecodeC14X2(
 
 namespace SIM::GX {
 
+void ApplyTextureCoordinateGeneration(
+    const GlobalState& state,
+    std::vector<RenderVertex>& vertices) {
+    ApplyTexCoordGenerators(state, vertices);
+}
+
 void GlRenderer::Initialize() {
     if (mVertexArray != 0) {
         return;
@@ -1332,7 +1338,7 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
     const auto& gxState = GetGlobalState();
     std::vector<RenderVertex> shadedVertices(vertices);
     ApplyColorChannels(gxState, shadedVertices);
-    ApplyTexCoordGenerators(gxState, shadedVertices);
+    ApplyTextureCoordinateGeneration(gxState, shadedVertices);
     ApplyPositionMatrices(gxState, shadedVertices);
 
     std::vector<RenderVertex> expandedVertices;

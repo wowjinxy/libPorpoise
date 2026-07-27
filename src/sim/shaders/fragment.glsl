@@ -420,6 +420,8 @@ void main()
         }
         depth = (depth + u_ztexture_bias) & 0x00ffffffu;
         gl_FragDepth = float(depth) / 16777215.0;
+    } else {
+        gl_FragDepth = gl_FragCoord.z;
     }
 }
 )""
