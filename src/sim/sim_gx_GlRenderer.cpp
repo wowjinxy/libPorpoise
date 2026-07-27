@@ -789,6 +789,46 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         glGetUniformLocation(
             static_cast<GLuint>(shaderProgram),
             "u_alpha_reference1");
+    const GLint fogTypeLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_fog_type");
+    const GLint fogOrthographicLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_fog_orthographic");
+    const GLint fogALocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_fog_a");
+    const GLint fogBLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_fog_b");
+    const GLint fogCLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_fog_c");
+    const GLint fogColorLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_fog_color");
+    const GLint fogRangeEnabledLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_fog_range_adjustment_enabled");
+    const GLint fogRangeCenterLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_fog_range_adjustment_center");
+    const GLint fogRangeTableLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_fog_range_adjustment[0]");
+    const GLint fogXScaleLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_fog_x_scale");
     if (projectionLocation >= 0) {
         glUniformMatrix4fv(
             projectionLocation,
@@ -927,6 +967,64 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         glUniform1i(
             alphaReference1Location,
             static_cast<GLint>(alphaCompare.reference1));
+    }
+    const auto& fog = gxState.GetFogState();
+    const float fogA =
+        std::ldexp(fog.parameterA, fog.parameterBShift);
+    const float fogB =
+        static_cast<float>(fog.parameterBMagnitude) /
+        8388638.0f *
+        std::ldexp(1.0f, static_cast<int>(fog.parameterBShift) - 1);
+    if (fogTypeLocation >= 0) {
+        glUniform1i(fogTypeLocation, static_cast<GLint>(fog.type));
+    }
+    if (fogOrthographicLocation >= 0) {
+        glUniform1i(fogOrthographicLocation, fog.orthographic ? 1 : 0);
+    }
+    if (fogALocation >= 0) {
+        glUniform1f(fogALocation, fogA);
+    }
+    if (fogBLocation >= 0) {
+        glUniform1f(fogBLocation, fogB);
+    }
+    if (fogCLocation >= 0) {
+        glUniform1f(fogCLocation, fog.parameterC);
+    }
+    if (fogColorLocation >= 0) {
+        glUniform3fv(fogColorLocation, 1, fog.color.data());
+    }
+    if (fogRangeEnabledLocation >= 0) {
+        glUniform1i(
+            fogRangeEnabledLocation,
+            fog.rangeAdjustmentEnabled ? 1 : 0);
+    }
+    if (fogRangeCenterLocation >= 0) {
+        glUniform1f(
+            fogRangeCenterLocation,
+            static_cast<float>(fog.rangeAdjustmentCenter));
+    }
+    if (fogRangeTableLocation >= 0) {
+        std::array<float, 10> rangeAdjustments = {};
+        for (size_t index = 0;
+             index < rangeAdjustments.size();
+             ++index) {
+            rangeAdjustments[index] =
+                static_cast<float>(fog.rangeAdjustmentTable[index]) /
+                256.0f;
+        }
+        glUniform1fv(
+            fogRangeTableLocation,
+            static_cast<GLsizei>(rangeAdjustments.size()),
+            rangeAdjustments.data());
+    }
+    if (fogXScaleLocation >= 0) {
+        const auto& viewport = gxState.GetViewportState();
+        const float xScale =
+            mDrawableWidth > 0 && viewport.referenceWidth > 0.0f
+                ? viewport.referenceWidth /
+                    static_cast<float>(mDrawableWidth)
+                : 1.0f;
+        glUniform1f(fogXScaleLocation, xScale);
     }
 
     glBindVertexArray(mVertexArray);

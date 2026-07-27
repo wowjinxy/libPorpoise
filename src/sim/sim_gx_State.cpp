@@ -95,6 +95,7 @@ void GlobalState::Reset() {
     mBlendState = {};
     mDepthState = {};
     mAlphaCompareState = {};
+    mFogState = {};
     mRasterState = {};
     mChannels = {};
     mLights = {};
@@ -300,6 +301,10 @@ const DepthState& GlobalState::GetDepthState() const {
 
 const AlphaCompareState& GlobalState::GetAlphaCompareState() const {
     return mAlphaCompareState;
+}
+
+const FogState& GlobalState::GetFogState() const {
+    return mFogState;
 }
 
 const RasterState& GlobalState::GetRasterState() const {
@@ -584,6 +589,55 @@ void GlobalState::SetBpRegister(u32 registerValue) {
             if (field(1, 14) != 0 && field(1, 11) != 0) {
                 mCopyClearRequested = true;
             }
+            break;
+        case 0xe8: {
+            const u32 encodedCenter = field(10, 0);
+            mFogState.rangeAdjustmentCenter =
+                static_cast<u16>(
+                    encodedCenter >= 342u
+                        ? encodedCenter - 342u
+                        : 0u);
+            mFogState.rangeAdjustmentEnabled =
+                field(1, 10) != 0;
+            break;
+        }
+        case 0xe9:
+        case 0xea:
+        case 0xeb:
+        case 0xec:
+        case 0xed: {
+            const size_t firstIndex =
+                static_cast<size_t>(address - 0xe9u) * 2u;
+            mFogState.rangeAdjustmentTable[firstIndex] =
+                static_cast<u16>(field(12, 0));
+            mFogState.rangeAdjustmentTable[firstIndex + 1u] =
+                static_cast<u16>(field(12, 12));
+            break;
+        }
+        case 0xee:
+            mFogState.parameterA =
+                WordToFloat((value & 0x000fffffu) << 12u);
+            break;
+        case 0xef:
+            mFogState.parameterBMagnitude = field(24, 0);
+            break;
+        case 0xf0:
+            mFogState.parameterBShift =
+                static_cast<u8>(field(5, 0));
+            break;
+        case 0xf1:
+            mFogState.parameterC =
+                WordToFloat((value & 0x000fffffu) << 12u);
+            mFogState.orthographic = field(1, 20) != 0;
+            mFogState.type =
+                static_cast<GXFogType>(field(3, 21));
+            break;
+        case 0xf2:
+            mFogState.color = {
+                static_cast<float>(field(8, 16)) / 255.0f,
+                static_cast<float>(field(8, 8)) / 255.0f,
+                static_cast<float>(field(8, 0)) / 255.0f,
+            };
             break;
         case 0xf3:
             mAlphaCompareState.reference0 =
