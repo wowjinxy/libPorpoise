@@ -350,8 +350,13 @@ SIM::GX::RenderColor EvaluateChannelLighting(
 void ApplyColorChannels(
     const SIM::GX::GlobalState& state,
     std::vector<SIM::GX::RenderVertex>& vertices) {
-    const auto& modelView = state.GetPositionMatrix();
     for (auto& vertex : vertices) {
+        const auto& modelView =
+            state.GetVertexDescriptor(GX_VA_PNMTXIDX) != GX_NONE
+                ? state.GetPositionMatrix(
+                    static_cast<size_t>(
+                        vertex.positionMatrixIndex / 3u))
+                : state.GetPositionMatrix();
         const auto viewPosition =
             TransformPoint(modelView, vertex.position);
         const auto viewNormal =
@@ -374,8 +379,13 @@ void ApplyColorChannels(
 void ApplyTexCoordGenerators(
     const SIM::GX::GlobalState& state,
     std::vector<SIM::GX::RenderVertex>& vertices) {
-    const auto& modelView = state.GetPositionMatrix();
     for (auto& vertex : vertices) {
+        const auto& modelView =
+            state.GetVertexDescriptor(GX_VA_PNMTXIDX) != GX_NONE
+                ? state.GetPositionMatrix(
+                    static_cast<size_t>(
+                        vertex.positionMatrixIndex / 3u))
+                : state.GetPositionMatrix();
         const auto sourceTexCoords = vertex.texCoords;
         std::array<SIM::GX::RenderTexCoord, 8> generated = {};
         for (auto& coordinate : generated) {
@@ -522,6 +532,20 @@ void ApplyTexCoordGenerators(
                     : 1.0f;
         }
         vertex.texCoords = generated;
+    }
+}
+
+void ApplyPositionMatrices(
+    const SIM::GX::GlobalState& state,
+    std::vector<SIM::GX::RenderVertex>& vertices) {
+    for (auto& vertex : vertices) {
+        const auto& modelView =
+            state.GetVertexDescriptor(GX_VA_PNMTXIDX) != GX_NONE
+                ? state.GetPositionMatrix(
+                    static_cast<size_t>(
+                        vertex.positionMatrixIndex / 3u))
+                : state.GetPositionMatrix();
+        vertex.position = TransformPoint(modelView, vertex.position);
     }
 }
 
@@ -684,7 +708,7 @@ void DecodeI4(
                         rgba[destination] = intensity;
                         rgba[destination + 1u] = intensity;
                         rgba[destination + 2u] = intensity;
-                        rgba[destination + 3u] = 255u;
+                        rgba[destination + 3u] = intensity;
                     }
                 }
             }
@@ -718,7 +742,7 @@ void DecodeI8(
                     rgba[destination] = intensity;
                     rgba[destination + 1u] = intensity;
                     rgba[destination + 2u] = intensity;
-                    rgba[destination + 3u] = 255u;
+                    rgba[destination + 3u] = intensity;
                 }
             }
         }
@@ -963,6 +987,7 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
     std::vector<RenderVertex> shadedVertices(vertices);
     ApplyColorChannels(gxState, shadedVertices);
     ApplyTexCoordGenerators(gxState, shadedVertices);
+    ApplyPositionMatrices(gxState, shadedVertices);
 
     std::vector<RenderVertex> expandedVertices;
     const std::vector<RenderVertex>* drawVertices = &shadedVertices;
@@ -1101,11 +1126,17 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             gxState.GetProjectionMatrix().data());
     }
     if (modelViewLocation >= 0) {
+        constexpr std::array<float, 16> identityModelView = {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f,
+        };
         glUniformMatrix4fv(
             modelViewLocation,
             1,
             GL_TRUE,
-            gxState.GetPositionMatrix().data());
+            identityModelView.data());
     }
     constexpr size_t maxTevStages = 16;
     std::array<GLint, maxTevStages> useTextures = {};
