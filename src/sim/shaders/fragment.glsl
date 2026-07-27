@@ -43,6 +43,9 @@ uniform bool u_fog_range_adjustment_enabled;
 uniform float u_fog_range_adjustment_center;
 uniform float u_fog_range_adjustment[10];
 uniform float u_fog_x_scale;
+uniform int u_ztexture_operation;
+uniform int u_ztexture_format;
+uniform uint u_ztexture_bias;
 
 vec3 selectTextureCoordinate(int index)
 {
@@ -290,15 +293,24 @@ void main()
     registers[1] = u_tev_registers[1];
     registers[2] = u_tev_registers[2];
     registers[3] = u_tev_registers[3];
+    vec4 lastTextureColor = vec4(0.0);
+    int lastStage = clamp(
+        u_num_tev_stages - 1,
+        0,
+        MAX_TEV_STAGES - 1);
 
     for (int stage = 0; stage < MAX_TEV_STAGES; ++stage) {
         if (stage >= u_num_tev_stages) break;
 
         ivec2 swapSelectors = u_tev_swap_selectors[stage];
+        vec4 rawTextureColor = sampleStageTexture(
+            stage,
+            selectTextureCoordinate(u_stage_texcoord[stage]));
+        if (stage == lastStage) {
+            lastTextureColor = rawTextureColor;
+        }
         vec4 textureColor = swapColor(
-            sampleStageTexture(
-                stage,
-                selectTextureCoordinate(u_stage_texcoord[stage])),
+            rawTextureColor,
             swapSelectors.y);
         vec4 raster = swapColor(
             rasterColor(u_stage_raster_channel[stage]),
@@ -375,5 +387,39 @@ void main()
         passes = pass0 == pass1;
     }
     if (!passes) discard;
+
+    if (u_ztexture_operation != 0 &&
+        u_use_texture[lastStage] != 0) {
+        uint textureDepth;
+        if (u_ztexture_format == 0) {
+            textureDepth = uint(
+                floor(lastTextureColor.r * 255.0 + 0.5));
+        } else if (u_ztexture_format == 1) {
+            uint highByte = uint(
+                floor(lastTextureColor.a * 255.0 + 0.5));
+            uint lowByte = uint(
+                floor(lastTextureColor.r * 255.0 + 0.5));
+            textureDepth = (highByte << 8u) | lowByte;
+        } else {
+            uvec3 bytes = uvec3(
+                floor(lastTextureColor.rgb * 255.0 + 0.5));
+            textureDepth =
+                (bytes.r << 16u) |
+                (bytes.g << 8u) |
+                bytes.b;
+        }
+
+        uint depth = textureDepth;
+        if (u_ztexture_operation == 1) {
+            uint referenceDepth = uint(
+                floor(
+                    clamp(gl_FragCoord.z, 0.0, 1.0) *
+                        16777215.0 +
+                    0.5));
+            depth += referenceDepth;
+        }
+        depth = (depth + u_ztexture_bias) & 0x00ffffffu;
+        gl_FragDepth = float(depth) / 16777215.0;
+    }
 }
 )""

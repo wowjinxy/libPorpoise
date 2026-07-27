@@ -94,6 +94,7 @@ void GlobalState::Reset() {
     mCopySourceValid = false;
     mBlendState = {};
     mDepthState = {};
+    mZTextureState = {};
     mAlphaCompareState = {};
     mFogState = {};
     mRasterState = {};
@@ -311,6 +312,10 @@ const BlendState& GlobalState::GetBlendState() const {
 
 const DepthState& GlobalState::GetDepthState() const {
     return mDepthState;
+}
+
+const ZTextureState& GlobalState::GetZTextureState() const {
+    return mZTextureState;
 }
 
 const AlphaCompareState& GlobalState::GetAlphaCompareState() const {
@@ -688,6 +693,25 @@ void GlobalState::SetBpRegister(u32 registerValue) {
                 static_cast<GXCompare>(field(3, 19));
             mAlphaCompareState.operation =
                 static_cast<GXAlphaOp>(field(2, 22));
+            break;
+        case 0xf4:
+            mZTextureState.bias = field(24, 0);
+            break;
+        case 0xf5:
+            switch (field(2, 0)) {
+                case 0:
+                    mZTextureState.format = GX_TF_Z8;
+                    break;
+                case 1:
+                    mZTextureState.format = GX_TF_Z16;
+                    break;
+                case 2:
+                default:
+                    mZTextureState.format = GX_TF_Z24X8;
+                    break;
+            }
+            mZTextureState.operation =
+                static_cast<GXZTexOp>(field(2, 2));
             break;
         case 0xf6:
         case 0xf7:
