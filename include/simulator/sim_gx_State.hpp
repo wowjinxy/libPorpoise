@@ -142,6 +142,8 @@ struct TevStageState {
     u8 textureMap = 0;
     u8 textureCoordinate = 0;
     u8 rasterChannel = 0;
+    u8 rasterSwapTable = GX_TEV_SWAP0;
+    u8 textureSwapTable = GX_TEV_SWAP0;
     bool textureEnabled = false;
     TevColorMode colorMode = TevColorMode::PassColor;
     std::array<u8, 4> colorInputs = {
@@ -203,6 +205,7 @@ class GlobalState {
   const TexCoordGenState& GetTexCoordGenState(size_t index) const;
   const std::array<float, 16>& GetTexCoordGenMatrix(size_t index) const;
   const TevStageState& GetTevStageState(size_t index) const;
+  const std::array<u8, 4>& GetTevSwapTable(size_t index) const;
   const std::array<float, 4>& GetTevColor(size_t index) const;
   size_t GetNumTevStages() const;
   const std::array<float, 4>& GetCopyClearColor() const;
@@ -269,6 +272,7 @@ class GlobalState {
   std::array<LightState, 8> mLights = {};
   std::array<TextureState, 8> mTextures = {};
   std::array<TevStageState, 16> mTevStages = {};
+  std::array<std::array<u8, 4>, 4> mTevSwapTables = {};
   std::array<std::array<float, 4>, 4> mTevColors = {};
   size_t mNumTevStages = 1;
   u64 mTextureRevision = 0;

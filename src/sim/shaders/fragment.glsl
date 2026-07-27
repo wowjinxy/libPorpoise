@@ -24,6 +24,8 @@ uniform ivec4 u_tev_alpha_inputs[MAX_TEV_STAGES];
 uniform ivec4 u_tev_color_operation[MAX_TEV_STAGES];
 uniform ivec4 u_tev_alpha_operation[MAX_TEV_STAGES];
 uniform ivec2 u_tev_output_registers[MAX_TEV_STAGES];
+uniform ivec2 u_tev_swap_selectors[MAX_TEV_STAGES];
+uniform ivec4 u_tev_swap_tables[4];
 uniform vec4 u_tev_registers[4];
 
 uniform int u_alpha_comparison0;
@@ -80,6 +82,16 @@ vec4 rasterColor(int channel)
     if (channel == 1) return color1;
     if (channel == 7) return vec4(1.0);
     return color0;
+}
+
+vec4 swapColor(vec4 inputColor, int tableIndex)
+{
+    ivec4 selectors = u_tev_swap_tables[clamp(tableIndex, 0, 3)];
+    return vec4(
+        inputColor[selectors.x],
+        inputColor[selectors.y],
+        inputColor[selectors.z],
+        inputColor[selectors.w]);
 }
 
 vec3 colorInput(
@@ -282,10 +294,15 @@ void main()
     for (int stage = 0; stage < MAX_TEV_STAGES; ++stage) {
         if (stage >= u_num_tev_stages) break;
 
-        vec4 textureColor = sampleStageTexture(
-            stage,
-            selectTextureCoordinate(u_stage_texcoord[stage]));
-        vec4 raster = rasterColor(u_stage_raster_channel[stage]);
+        ivec2 swapSelectors = u_tev_swap_selectors[stage];
+        vec4 textureColor = swapColor(
+            sampleStageTexture(
+                stage,
+                selectTextureCoordinate(u_stage_texcoord[stage])),
+            swapSelectors.y);
+        vec4 raster = swapColor(
+            rasterColor(u_stage_raster_channel[stage]),
+            swapSelectors.x);
         ivec4 colorInputs = u_tev_color_inputs[stage];
         ivec4 alphaInputs = u_tev_alpha_inputs[stage];
         ivec4 colorOperation = u_tev_color_operation[stage];
