@@ -112,6 +112,7 @@ void GlobalState::Reset() {
         };
     }
     mTevColors = {};
+    mTevKonstColors = {};
     mNumTevStages = 1;
     mTextureRevision = 0;
     mCopyClearColor = {
@@ -414,6 +415,73 @@ const std::array<float, 4>& GlobalState::GetTevColor(size_t index) const {
     }
     static const std::array<float, 4> empty = {};
     return empty;
+}
+
+std::array<float, 4> GlobalState::GetTevKonstColor(size_t stage) const {
+    const u8 selection = GetTevStageState(stage).konstColorSelection;
+    if (selection <= GX_TEV_KCSEL_1_8) {
+        static constexpr std::array<float, 8> fractions = {
+            1.0f,
+            7.0f / 8.0f,
+            3.0f / 4.0f,
+            5.0f / 8.0f,
+            1.0f / 2.0f,
+            3.0f / 8.0f,
+            1.0f / 4.0f,
+            1.0f / 8.0f,
+        };
+        return {
+            fractions[selection],
+            fractions[selection],
+            fractions[selection],
+            fractions[selection],
+        };
+    }
+
+    if (selection >= GX_TEV_KCSEL_K0 &&
+        selection <= GX_TEV_KCSEL_K3) {
+        return mTevKonstColors[selection - GX_TEV_KCSEL_K0];
+    }
+
+    if (selection >= GX_TEV_KCSEL_K0_R &&
+        selection <= GX_TEV_KCSEL_K3_A) {
+        const size_t component =
+            static_cast<size_t>((selection - GX_TEV_KCSEL_K0_R) / 4u);
+        const size_t color =
+            static_cast<size_t>((selection - GX_TEV_KCSEL_K0_R) % 4u);
+        const float value = mTevKonstColors[color][component];
+        return {value, value, value, value};
+    }
+
+    return {};
+}
+
+float GlobalState::GetTevKonstAlpha(size_t stage) const {
+    const u8 selection = GetTevStageState(stage).konstAlphaSelection;
+    if (selection <= GX_TEV_KASEL_1_8) {
+        static constexpr std::array<float, 8> fractions = {
+            1.0f,
+            7.0f / 8.0f,
+            3.0f / 4.0f,
+            5.0f / 8.0f,
+            1.0f / 2.0f,
+            3.0f / 8.0f,
+            1.0f / 4.0f,
+            1.0f / 8.0f,
+        };
+        return fractions[selection];
+    }
+
+    if (selection >= GX_TEV_KASEL_K0_R &&
+        selection <= GX_TEV_KASEL_K3_A) {
+        const size_t component =
+            static_cast<size_t>((selection - GX_TEV_KASEL_K0_R) / 4u);
+        const size_t color =
+            static_cast<size_t>((selection - GX_TEV_KASEL_K0_R) % 4u);
+        return mTevKonstColors[color][component];
+    }
+
+    return 0.0f;
 }
 
 size_t GlobalState::GetNumTevStages() const {
@@ -740,13 +808,26 @@ void GlobalState::SetBpRegister(u32 registerValue) {
                 static_cast<u8>(field(2, 0));
             table[componentOffset + 1u] =
                 static_cast<u8>(field(2, 2));
+
+            const size_t firstStage = registerIndex * 2u;
+            mTevStages[firstStage].konstColorSelection =
+                static_cast<u8>(field(5, 4));
+            mTevStages[firstStage].konstAlphaSelection =
+                static_cast<u8>(field(5, 9));
+            mTevStages[firstStage + 1u].konstColorSelection =
+                static_cast<u8>(field(5, 14));
+            mTevStages[firstStage + 1u].konstAlphaSelection =
+                static_cast<u8>(field(5, 19));
             break;
         }
         default:
             if (address >= 0xe0u && address <= 0xe7u) {
                 const size_t colorIndex =
                     static_cast<size_t>((address - 0xe0u) / 2u);
-                auto& color = mTevColors[colorIndex];
+                auto& color =
+                    field(4, 20) == 8u
+                        ? mTevKonstColors[colorIndex]
+                        : mTevColors[colorIndex];
                 if ((address & 1u) == 0u) {
                     color[0] =
                         static_cast<float>(field(8, 0)) / 255.0f;

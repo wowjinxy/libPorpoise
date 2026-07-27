@@ -27,6 +27,8 @@ uniform ivec2 u_tev_output_registers[MAX_TEV_STAGES];
 uniform ivec2 u_tev_swap_selectors[MAX_TEV_STAGES];
 uniform ivec4 u_tev_swap_tables[4];
 uniform vec4 u_tev_registers[4];
+uniform vec4 u_tev_konst_color[MAX_TEV_STAGES];
+uniform float u_tev_konst_alpha[MAX_TEV_STAGES];
 
 uniform int u_alpha_comparison0;
 uniform int u_alpha_reference0;
@@ -62,22 +64,23 @@ vec3 selectTextureCoordinate(int index)
 vec4 sampleStageTexture(int stage, vec3 coordinate)
 {
     if (u_use_texture[stage] == 0) return vec4(1.0);
-    if (stage == 0) return textureProj(u_stage_texture[0], coordinate);
-    if (stage == 1) return textureProj(u_stage_texture[1], coordinate);
-    if (stage == 2) return textureProj(u_stage_texture[2], coordinate);
-    if (stage == 3) return textureProj(u_stage_texture[3], coordinate);
-    if (stage == 4) return textureProj(u_stage_texture[4], coordinate);
-    if (stage == 5) return textureProj(u_stage_texture[5], coordinate);
-    if (stage == 6) return textureProj(u_stage_texture[6], coordinate);
-    if (stage == 7) return textureProj(u_stage_texture[7], coordinate);
-    if (stage == 8) return textureProj(u_stage_texture[8], coordinate);
-    if (stage == 9) return textureProj(u_stage_texture[9], coordinate);
-    if (stage == 10) return textureProj(u_stage_texture[10], coordinate);
-    if (stage == 11) return textureProj(u_stage_texture[11], coordinate);
-    if (stage == 12) return textureProj(u_stage_texture[12], coordinate);
-    if (stage == 13) return textureProj(u_stage_texture[13], coordinate);
-    if (stage == 14) return textureProj(u_stage_texture[14], coordinate);
-    return textureProj(u_stage_texture[15], coordinate);
+    vec2 projected = coordinate.xy / coordinate.z;
+    if (stage == 0) return texture(u_stage_texture[0], projected);
+    if (stage == 1) return texture(u_stage_texture[1], projected);
+    if (stage == 2) return texture(u_stage_texture[2], projected);
+    if (stage == 3) return texture(u_stage_texture[3], projected);
+    if (stage == 4) return texture(u_stage_texture[4], projected);
+    if (stage == 5) return texture(u_stage_texture[5], projected);
+    if (stage == 6) return texture(u_stage_texture[6], projected);
+    if (stage == 7) return texture(u_stage_texture[7], projected);
+    if (stage == 8) return texture(u_stage_texture[8], projected);
+    if (stage == 9) return texture(u_stage_texture[9], projected);
+    if (stage == 10) return texture(u_stage_texture[10], projected);
+    if (stage == 11) return texture(u_stage_texture[11], projected);
+    if (stage == 12) return texture(u_stage_texture[12], projected);
+    if (stage == 13) return texture(u_stage_texture[13], projected);
+    if (stage == 14) return texture(u_stage_texture[14], projected);
+    return texture(u_stage_texture[15], projected);
 }
 
 vec4 rasterColor(int channel)
@@ -104,7 +107,8 @@ vec3 colorInput(
     vec4 reg1,
     vec4 reg2,
     vec4 textureColor,
-    vec4 raster)
+    vec4 raster,
+    vec3 konst)
 {
     if (input == 0) return previous.rgb;
     if (input == 1) return vec3(previous.a);
@@ -120,6 +124,7 @@ vec3 colorInput(
     if (input == 11) return vec3(raster.a);
     if (input == 12) return vec3(1.0);
     if (input == 13) return vec3(0.5);
+    if (input == 14) return konst;
     return vec3(0.0);
 }
 
@@ -130,7 +135,8 @@ float alphaInput(
     vec4 reg1,
     vec4 reg2,
     vec4 textureColor,
-    vec4 raster)
+    vec4 raster,
+    float konst)
 {
     if (input == 0) return previous.a;
     if (input == 1) return reg0.a;
@@ -138,6 +144,7 @@ float alphaInput(
     if (input == 3) return reg2.a;
     if (input == 4) return textureColor.a;
     if (input == 5) return raster.a;
+    if (input == 6) return konst;
     return 0.0;
 }
 
@@ -328,19 +335,19 @@ void main()
             colorInput(
                 colorInputs.x,
                 registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster),
+                textureColor, raster, u_tev_konst_color[stage].rgb),
             colorInput(
                 colorInputs.y,
                 registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster),
+                textureColor, raster, u_tev_konst_color[stage].rgb),
             colorInput(
                 colorInputs.z,
                 registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster),
+                textureColor, raster, u_tev_konst_color[stage].rgb),
             colorInput(
                 colorInputs.w,
                 registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster));
+                textureColor, raster, u_tev_konst_color[stage].rgb));
         float resultAlpha = applyAlphaOperation(
             alphaOperation.x,
             alphaOperation.y,
@@ -349,19 +356,19 @@ void main()
             alphaInput(
                 alphaInputs.x,
                 registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster),
+                textureColor, raster, u_tev_konst_alpha[stage]),
             alphaInput(
                 alphaInputs.y,
                 registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster),
+                textureColor, raster, u_tev_konst_alpha[stage]),
             alphaInput(
                 alphaInputs.z,
                 registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster),
+                textureColor, raster, u_tev_konst_alpha[stage]),
             alphaInput(
                 alphaInputs.w,
                 registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster));
+                textureColor, raster, u_tev_konst_alpha[stage]));
 
         ivec2 outputs = u_tev_output_registers[stage];
         registers[outputs.x].rgb = resultColor;
