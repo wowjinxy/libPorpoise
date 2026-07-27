@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <vector>
 
+#include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
 #include <simulator/sim_gx_Geometry.hpp>
 #include <simulator/sim_gx_State.hpp>
@@ -537,6 +538,39 @@ void DecodeI4(
     }
 }
 
+void DecodeI8(
+    const u8* source,
+    std::vector<u8>& rgba,
+    u16 width,
+    u16 height) {
+    const size_t blockColumns = (static_cast<size_t>(width) + 7u) / 8u;
+    const size_t blockRows = (static_cast<size_t>(height) + 3u) / 4u;
+    rgba.assign(
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u,
+        0);
+
+    for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+        for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+            for (size_t y = 0; y < 4u; ++y) {
+                for (size_t x = 0; x < 8u; ++x) {
+                    const u8 intensity = *source++;
+                    const size_t destinationX = blockX * 8u + x;
+                    const size_t destinationY = blockY * 4u + y;
+                    if (destinationX >= width || destinationY >= height) {
+                        continue;
+                    }
+                    const size_t destination =
+                        (destinationY * width + destinationX) * 4u;
+                    rgba[destination] = intensity;
+                    rgba[destination + 1u] = intensity;
+                    rgba[destination + 2u] = intensity;
+                    rgba[destination + 3u] = 255u;
+                }
+            }
+        }
+    }
+}
+
 void DecodeRGBA8(
     const u8* source,
     std::vector<u8>& rgba,
@@ -767,6 +801,8 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_use_texture0");
     const GLint tevColorModeLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_tev_color_mode");
+    const GLint tevColor0Location =
+        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_tev_color0");
     const GLint textureLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texture0");
     const GLint alphaComparison0Location =
@@ -872,6 +908,7 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             texture.width > 0 &&
             texture.height > 0 &&
             (texture.format == GX_TF_I4 ||
+             texture.format == GX_TF_I8 ||
              texture.format == GX_TF_RGB5A3 ||
              texture.format == GX_TF_RGBA8)) {
             if (mTextures[textureIndex] == 0u) {
@@ -883,6 +920,12 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
                 std::vector<u8> rgba;
                 if (texture.format == GX_TF_RGBA8) {
                     DecodeRGBA8(
+                        static_cast<const u8*>(texture.data),
+                        rgba,
+                        texture.width,
+                        texture.height);
+                } else if (texture.format == GX_TF_I8) {
+                    DecodeI8(
                         static_cast<const u8*>(texture.data),
                         rgba,
                         texture.width,
@@ -938,6 +981,12 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         glUniform1i(
             tevColorModeLocation,
             static_cast<GLint>(firstStage.colorMode));
+    }
+    if (tevColor0Location >= 0) {
+        glUniform4fv(
+            tevColor0Location,
+            1,
+            gxState.GetTevColor(GX_TEVREG0).data());
     }
     if (textureLocation >= 0) {
         glUniform1i(textureLocation, 0);
@@ -1045,4 +1094,223 @@ GlRenderer& GetGlRenderer() {
     return renderer;
 }
 
+}
+
+extern "C" void __GXHostCopyTex(
+    void* destination,
+    u16 sourceLeft,
+    u16 sourceTop,
+    u16 sourceWidth,
+    u16 sourceHeight,
+    u16 destinationWidth,
+    u16 destinationHeight,
+    u32 destinationFormat,
+    GXBool clear) {
+    if (destination == nullptr ||
+        sourceWidth == 0 ||
+        sourceHeight == 0 ||
+        destinationWidth == 0 ||
+        destinationHeight == 0) {
+        return;
+    }
+
+    SDL_Window* currentWindow = SDL_GL_GetCurrentWindow();
+    if (currentWindow == nullptr) {
+        return;
+    }
+    int drawableWidth = 0;
+    int drawableHeight = 0;
+    SDL_GL_GetDrawableSize(
+        currentWindow,
+        &drawableWidth,
+        &drawableHeight);
+    if (drawableWidth <= 0 || drawableHeight <= 0) {
+        return;
+    }
+
+    auto& gxState = SIM::GX::GetGlobalState();
+    const auto& viewport = gxState.GetViewportState();
+    const float referenceWidth =
+        viewport.referenceWidth > 0.0f
+            ? viewport.referenceWidth
+            : 640.0f;
+    const float referenceHeight =
+        viewport.referenceHeight > 0.0f
+            ? viewport.referenceHeight
+            : 480.0f;
+    const float scaleX =
+        static_cast<float>(drawableWidth) / referenceWidth;
+    const float scaleY =
+        static_cast<float>(drawableHeight) / referenceHeight;
+
+    GLint previousReadBuffer = GL_BACK;
+    GLint previousPackAlignment = 4;
+    glGetIntegerv(GL_READ_BUFFER, &previousReadBuffer);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &previousPackAlignment);
+    glReadBuffer(GL_BACK);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+
+    std::vector<u8> framebuffer(
+        static_cast<size_t>(drawableWidth) *
+        static_cast<size_t>(drawableHeight) *
+        4u);
+    glReadPixels(
+        0,
+        0,
+        drawableWidth,
+        drawableHeight,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        framebuffer.data());
+
+    glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
+    glReadBuffer(static_cast<GLenum>(previousReadBuffer));
+
+    if (destinationFormat == GX_CTF_A8 ||
+        destinationFormat == GX_TF_I8) {
+        u8* encoded = static_cast<u8*>(destination);
+        const size_t blockColumns =
+            (static_cast<size_t>(destinationWidth) + 7u) / 8u;
+        const size_t blockRows =
+            (static_cast<size_t>(destinationHeight) + 3u) / 4u;
+        for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+            for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+                for (size_t y = 0; y < 4u; ++y) {
+                    for (size_t x = 0; x < 8u; ++x) {
+                        const size_t destinationX = blockX * 8u + x;
+                        const size_t destinationY = blockY * 4u + y;
+                        u8 alpha = 0;
+                        if (destinationX < destinationWidth &&
+                            destinationY < destinationHeight) {
+                            const float sourceX =
+                                static_cast<float>(sourceLeft) +
+                                (static_cast<float>(destinationX) + 0.5f) *
+                                    static_cast<float>(sourceWidth) /
+                                    static_cast<float>(destinationWidth);
+                            const float sourceY =
+                                static_cast<float>(sourceTop) +
+                                (static_cast<float>(destinationY) + 0.5f) *
+                                    static_cast<float>(sourceHeight) /
+                                    static_cast<float>(destinationHeight);
+                            const int framebufferX = std::clamp(
+                                static_cast<int>(sourceX * scaleX),
+                                0,
+                                drawableWidth - 1);
+                            const int framebufferY = std::clamp(
+                                drawableHeight - 1 -
+                                    static_cast<int>(sourceY * scaleY),
+                                0,
+                                drawableHeight - 1);
+                            const size_t sourceOffset =
+                                (static_cast<size_t>(framebufferY) *
+                                     static_cast<size_t>(drawableWidth) +
+                                 static_cast<size_t>(framebufferX)) *
+                                4u;
+                            alpha = framebuffer[sourceOffset + 3u];
+                        }
+                        *encoded++ = alpha;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!clear) {
+        return;
+    }
+
+    const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+    GLint previousScissor[4] = {};
+    GLboolean previousColorMask[4] = {};
+    GLboolean previousDepthMask = GL_FALSE;
+    GLfloat previousClearColor[4] = {};
+    GLfloat previousClearDepth = 1.0f;
+    glGetIntegerv(GL_SCISSOR_BOX, previousScissor);
+    glGetBooleanv(GL_COLOR_WRITEMASK, previousColorMask);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &previousDepthMask);
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, previousClearColor);
+    glGetFloatv(GL_DEPTH_CLEAR_VALUE, &previousClearDepth);
+
+    const int clearLeft =
+        std::clamp(
+            static_cast<int>(
+                std::floor(static_cast<float>(sourceLeft) * scaleX)),
+            0,
+            drawableWidth);
+    const int clearRight =
+        std::clamp(
+            static_cast<int>(
+                std::ceil(
+                    static_cast<float>(sourceLeft + sourceWidth) *
+                    scaleX)),
+            clearLeft,
+            drawableWidth);
+    const int clearTop =
+        std::clamp(
+            static_cast<int>(
+                std::floor(static_cast<float>(sourceTop) * scaleY)),
+            0,
+            drawableHeight);
+    const int clearBottom =
+        std::clamp(
+            static_cast<int>(
+                std::ceil(
+                    static_cast<float>(sourceTop + sourceHeight) *
+                    scaleY)),
+            clearTop,
+            drawableHeight);
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(
+        clearLeft,
+        drawableHeight - clearBottom,
+        clearRight - clearLeft,
+        clearBottom - clearTop);
+
+    const auto& blend = gxState.GetBlendState();
+    const auto& depth = gxState.GetDepthState();
+    glColorMask(
+        blend.colorUpdateEnabled ? GL_TRUE : GL_FALSE,
+        blend.colorUpdateEnabled ? GL_TRUE : GL_FALSE,
+        blend.colorUpdateEnabled ? GL_TRUE : GL_FALSE,
+        blend.alphaUpdateEnabled ? GL_TRUE : GL_FALSE);
+    glDepthMask(depth.updateEnabled ? GL_TRUE : GL_FALSE);
+
+    GLbitfield clearBits = 0;
+    if (blend.colorUpdateEnabled || blend.alphaUpdateEnabled) {
+        const auto& clearColor = gxState.GetCopyClearColor();
+        glClearColor(
+            clearColor[0],
+            clearColor[1],
+            clearColor[2],
+            clearColor[3]);
+        clearBits |= GL_COLOR_BUFFER_BIT;
+    }
+    if (depth.updateEnabled) {
+        glClearDepth(gxState.GetCopyClearDepth());
+        clearBits |= GL_DEPTH_BUFFER_BIT;
+    }
+    if (clearBits != 0) {
+        glClear(clearBits);
+    }
+
+    glColorMask(
+        previousColorMask[0],
+        previousColorMask[1],
+        previousColorMask[2],
+        previousColorMask[3]);
+    glDepthMask(previousDepthMask);
+    glClearColor(
+        previousClearColor[0],
+        previousClearColor[1],
+        previousClearColor[2],
+        previousClearColor[3]);
+    glClearDepth(previousClearDepth);
+    glScissor(
+        previousScissor[0],
+        previousScissor[1],
+        previousScissor[2],
+        previousScissor[3]);
+    if (!scissorEnabled) {
+        glDisable(GL_SCISSOR_TEST);
+    }
 }

@@ -101,6 +101,7 @@ void GlobalState::Reset() {
     mLights = {};
     mTextures = {};
     mTevStages = {};
+    mTevColors = {};
     mNumTevStages = 1;
     mTextureRevision = 0;
     mCopyClearColor = {
@@ -363,6 +364,14 @@ const TevStageState& GlobalState::GetTevStageState(size_t index) const {
         return mTevStages[index];
     }
     static const TevStageState empty = {};
+    return empty;
+}
+
+const std::array<float, 4>& GlobalState::GetTevColor(size_t index) const {
+    if (index < mTevColors.size()) {
+        return mTevColors[index];
+    }
+    static const std::array<float, 4> empty = {};
     return empty;
 }
 
@@ -652,6 +661,22 @@ void GlobalState::SetBpRegister(u32 registerValue) {
                 static_cast<GXAlphaOp>(field(2, 22));
             break;
         default:
+            if (address >= 0xe0u && address <= 0xe7u) {
+                const size_t colorIndex =
+                    static_cast<size_t>((address - 0xe0u) / 2u);
+                auto& color = mTevColors[colorIndex];
+                if ((address & 1u) == 0u) {
+                    color[0] =
+                        static_cast<float>(field(8, 0)) / 255.0f;
+                    color[3] =
+                        static_cast<float>(field(8, 12)) / 255.0f;
+                } else {
+                    color[2] =
+                        static_cast<float>(field(8, 0)) / 255.0f;
+                    color[1] =
+                        static_cast<float>(field(8, 12)) / 255.0f;
+                }
+            }
             if (address >= 0xc0u &&
                 address <= 0xdeu &&
                 (address & 1u) == 0u) {
@@ -661,7 +686,20 @@ void GlobalState::SetBpRegister(u32 registerValue) {
                 const u32 inputB = field(4, 8);
                 const u32 inputC = field(4, 4);
                 const u32 inputD = field(4, 0);
-                if (inputA == GX_CC_ZERO &&
+                const u32 operation =
+                    // Bias encoding 3 selects the TEV comparison operations.
+                    field(2, 16) == 3u
+                        ? 8u | (field(2, 20) << 1u) | field(1, 18)
+                        : field(1, 18);
+                if (operation == GX_TEV_COMP_RGB8_EQ &&
+                    inputA == GX_CC_TEXC &&
+                    inputB == GX_CC_ZERO &&
+                    inputC == GX_CC_ONE &&
+                    inputD == GX_CC_C0) {
+                    mTevStages[stage].colorMode =
+                        TevColorMode::CompareTextureRgb8EqualZero;
+                } else if (
+                    inputA == GX_CC_ZERO &&
                     inputB == GX_CC_TEXC &&
                     inputC == GX_CC_RASC &&
                     inputD == GX_CC_ZERO) {

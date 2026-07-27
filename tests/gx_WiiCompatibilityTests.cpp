@@ -527,6 +527,41 @@ bool TestBpRenderStateCommands() {
         firstStage.colorMode == SIM::GX::TevColorMode::Modulate;
 }
 
+bool TestBpTevCompareCommands() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    SendBpRegister(
+        0xe2000000u |
+        0xa0u |
+        (0xffu << 12));
+    SendBpRegister(
+        0xe3000000u |
+        0xa0u |
+        (0xa0u << 12));
+    SendBpRegister(
+        0xc0000000u |
+        (static_cast<u32>(GX_CC_TEXC) << 12) |
+        (static_cast<u32>(GX_CC_ZERO) << 8) |
+        (static_cast<u32>(GX_CC_ONE) << 4) |
+        static_cast<u32>(GX_CC_C0) |
+        (3u << 16) |
+        (1u << 18) |
+        (1u << 19) |
+        (3u << 20));
+
+    const auto& state = SIM::GX::GetGlobalState();
+    const auto& firstStage = state.GetTevStageState(0);
+    const auto& color0 = state.GetTevColor(GX_TEVREG0);
+    return
+        firstStage.colorMode ==
+            SIM::GX::TevColorMode::CompareTextureRgb8EqualZero &&
+        NearlyEqual(color0[0], 0xa0 / 255.0f) &&
+        NearlyEqual(color0[1], 0xa0 / 255.0f) &&
+        NearlyEqual(color0[2], 0xa0 / 255.0f) &&
+        NearlyEqual(color0[3], 1.0f);
+}
+
 bool TestBpCopyClearCommands() {
     SIM::GX::InitGlobalState();
     SIM_GX_CommandProcessor_Init();
@@ -679,6 +714,9 @@ int main() {
     }
     if (!TestHostPerformanceMetrics()) {
         return 16;
+    }
+    if (!TestBpTevCompareCommands()) {
+        return 17;
     }
     return 0;
 }

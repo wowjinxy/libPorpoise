@@ -6,6 +6,7 @@ out vec4 color;
 
 uniform bool u_use_texture0;
 uniform int u_tev_color_mode;
+uniform vec4 u_tev_color0;
 uniform sampler2D u_texture0;
 uniform int u_alpha_comparison0;
 uniform int u_alpha_reference0;
@@ -111,6 +112,15 @@ void main()
         vec4 texture_color = textureProj(u_texture0, texture_coordinate0);
         if (u_tev_color_mode == 2) {
             color = texture_color * color0;
+        } else if (u_tev_color_mode == 3) {
+            ivec3 textureRgb = ivec3(
+                floor(clamp(texture_color.rgb, 0.0, 1.0) * 255.0 + 0.5));
+            bool textureIsZero = all(equal(textureRgb, ivec3(0)));
+            color = vec4(
+                textureIsZero
+                    ? vec3(1.0)
+                    : u_tev_color0.rgb,
+                1.0);
         } else {
             color = texture_color;
         }
