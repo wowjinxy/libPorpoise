@@ -17,6 +17,11 @@ void ApplyTextureCoordinateGeneration(
     std::vector<RenderVertex>& vertices);
 
 u8 ConvertRgbToCopyIntensity(u8 red, u8 green, u8 blue);
+void EncodeRgb565TextureCopy(
+    const u8* rgba,
+    u16 width,
+    u16 height,
+    u8* encoded);
 
 class GlRenderer {
  public:

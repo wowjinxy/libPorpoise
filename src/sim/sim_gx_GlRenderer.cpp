@@ -1289,6 +1289,43 @@ u8 ConvertRgbToCopyIntensity(u8 red, u8 green, u8 blue) {
     return static_cast<u8>(std::clamp(y, 16, 235));
 }
 
+void EncodeRgb565TextureCopy(
+    const u8* rgba,
+    u16 width,
+    u16 height,
+    u8* encoded) {
+    if (rgba == nullptr || encoded == nullptr || width == 0 || height == 0) {
+        return;
+    }
+
+    const size_t blockColumns =
+        (static_cast<size_t>(width) + 3u) / 4u;
+    const size_t blockRows =
+        (static_cast<size_t>(height) + 3u) / 4u;
+    for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+        for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+            for (size_t y = 0; y < 4u; ++y) {
+                for (size_t x = 0; x < 4u; ++x) {
+                    const size_t sourceX = blockX * 4u + x;
+                    const size_t sourceY = blockY * 4u + y;
+                    u16 packed = 0;
+                    if (sourceX < width && sourceY < height) {
+                        const size_t source =
+                            (sourceY * width + sourceX) * 4u;
+                        packed =
+                            static_cast<u16>(
+                                (static_cast<u16>(rgba[source] >> 3u) << 11u) |
+                                (static_cast<u16>(rgba[source + 1u] >> 2u) << 5u) |
+                                static_cast<u16>(rgba[source + 2u] >> 3u));
+                    }
+                    *encoded++ = static_cast<u8>(packed >> 8u);
+                    *encoded++ = static_cast<u8>(packed & 0xffu);
+                }
+            }
+        }
+    }
+}
+
 void ApplyTextureCoordinateGeneration(
     const GlobalState& state,
     std::vector<RenderVertex>& vertices) {
@@ -2106,8 +2143,60 @@ extern "C" void __GXHostCopyTex(
     glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
     glReadBuffer(static_cast<GLenum>(previousReadBuffer));
 
-    if (destinationFormat == GX_CTF_A8 ||
-        destinationFormat == GX_TF_I8) {
+    if (destinationFormat == GX_TF_RGB565) {
+        std::vector<u8> copiedPixels(
+            static_cast<size_t>(destinationWidth) *
+                static_cast<size_t>(destinationHeight) *
+                4u,
+            0);
+        for (size_t destinationY = 0;
+             destinationY < destinationHeight;
+             ++destinationY) {
+            for (size_t destinationX = 0;
+                 destinationX < destinationWidth;
+                 ++destinationX) {
+                const float sourceX =
+                    static_cast<float>(sourceLeft) +
+                    (static_cast<float>(destinationX) + 0.5f) *
+                        static_cast<float>(sourceWidth) /
+                        static_cast<float>(destinationWidth);
+                const float sourceY =
+                    static_cast<float>(sourceTop) +
+                    (static_cast<float>(destinationY) + 0.5f) *
+                        static_cast<float>(sourceHeight) /
+                        static_cast<float>(destinationHeight);
+                const int framebufferX = std::clamp(
+                    static_cast<int>(sourceX * scaleX),
+                    0,
+                    drawableWidth - 1);
+                const int framebufferY = std::clamp(
+                    drawableHeight - 1 -
+                        static_cast<int>(sourceY * scaleY),
+                    0,
+                    drawableHeight - 1);
+                const size_t sourceOffset =
+                    (static_cast<size_t>(framebufferY) *
+                         static_cast<size_t>(drawableWidth) +
+                     static_cast<size_t>(framebufferX)) *
+                    4u;
+                const size_t destinationOffset =
+                    (destinationY *
+                         static_cast<size_t>(destinationWidth) +
+                     destinationX) *
+                    4u;
+                std::copy_n(
+                    framebuffer.data() + sourceOffset,
+                    4u,
+                    copiedPixels.data() + destinationOffset);
+            }
+        }
+        SIM::GX::EncodeRgb565TextureCopy(
+            copiedPixels.data(),
+            destinationWidth,
+            destinationHeight,
+            static_cast<u8*>(destination));
+    } else if (destinationFormat == GX_CTF_A8 ||
+               destinationFormat == GX_TF_I8) {
         u8* encoded = static_cast<u8*>(destination);
         const size_t blockColumns =
             (static_cast<size_t>(destinationWidth) + 7u) / 8u;
