@@ -769,6 +769,26 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_tev_color_mode");
     const GLint textureLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texture0");
+    const GLint alphaComparison0Location =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_alpha_comparison0");
+    const GLint alphaReference0Location =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_alpha_reference0");
+    const GLint alphaOperationLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_alpha_operation");
+    const GLint alphaComparison1Location =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_alpha_comparison1");
+    const GLint alphaReference1Location =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_alpha_reference1");
     if (projectionLocation >= 0) {
         glUniformMatrix4fv(
             projectionLocation,
@@ -881,6 +901,32 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
     }
     if (textureLocation >= 0) {
         glUniform1i(textureLocation, 0);
+    }
+    const auto& alphaCompare = gxState.GetAlphaCompareState();
+    if (alphaComparison0Location >= 0) {
+        glUniform1i(
+            alphaComparison0Location,
+            static_cast<GLint>(alphaCompare.comparison0));
+    }
+    if (alphaReference0Location >= 0) {
+        glUniform1i(
+            alphaReference0Location,
+            static_cast<GLint>(alphaCompare.reference0));
+    }
+    if (alphaOperationLocation >= 0) {
+        glUniform1i(
+            alphaOperationLocation,
+            static_cast<GLint>(alphaCompare.operation));
+    }
+    if (alphaComparison1Location >= 0) {
+        glUniform1i(
+            alphaComparison1Location,
+            static_cast<GLint>(alphaCompare.comparison1));
+    }
+    if (alphaReference1Location >= 0) {
+        glUniform1i(
+            alphaReference1Location,
+            static_cast<GLint>(alphaCompare.reference1));
     }
 
     glBindVertexArray(mVertexArray);

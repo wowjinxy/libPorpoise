@@ -94,6 +94,7 @@ void GlobalState::Reset() {
     mCopySourceValid = false;
     mBlendState = {};
     mDepthState = {};
+    mAlphaCompareState = {};
     mRasterState = {};
     mChannels = {};
     mLights = {};
@@ -295,6 +296,10 @@ const BlendState& GlobalState::GetBlendState() const {
 
 const DepthState& GlobalState::GetDepthState() const {
     return mDepthState;
+}
+
+const AlphaCompareState& GlobalState::GetAlphaCompareState() const {
+    return mAlphaCompareState;
 }
 
 const RasterState& GlobalState::GetRasterState() const {
@@ -579,6 +584,18 @@ void GlobalState::SetBpRegister(u32 registerValue) {
             if (field(1, 14) != 0 && field(1, 11) != 0) {
                 mCopyClearRequested = true;
             }
+            break;
+        case 0xf3:
+            mAlphaCompareState.reference0 =
+                static_cast<u8>(field(8, 0));
+            mAlphaCompareState.reference1 =
+                static_cast<u8>(field(8, 8));
+            mAlphaCompareState.comparison0 =
+                static_cast<GXCompare>(field(3, 16));
+            mAlphaCompareState.comparison1 =
+                static_cast<GXCompare>(field(3, 19));
+            mAlphaCompareState.operation =
+                static_cast<GXAlphaOp>(field(2, 22));
             break;
         default:
             if (address >= 0xc0u &&

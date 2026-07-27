@@ -186,6 +186,16 @@ void SIM_Render() {
     auto& gxState = SIM::GX::GetGlobalState();
     if (gxState.ConsumeCopyClearRequest()) {
         const auto& clearColor = gxState.GetCopyClearColor();
+        const GLboolean scissorEnabled =
+            glIsEnabled(GL_SCISSOR_TEST);
+        GLboolean colorWriteMask[4] = {};
+        GLboolean depthWriteMask = GL_FALSE;
+        glGetBooleanv(GL_COLOR_WRITEMASK, colorWriteMask);
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteMask);
+
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDepthMask(GL_TRUE);
         glClearColor(
             clearColor[0],
             clearColor[1],
@@ -193,5 +203,15 @@ void SIM_Render() {
             clearColor[3]);
         glClearDepth(gxState.GetCopyClearDepth());
         glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+
+        glColorMask(
+            colorWriteMask[0],
+            colorWriteMask[1],
+            colorWriteMask[2],
+            colorWriteMask[3]);
+        glDepthMask(depthWriteMask);
+        if (scissorEnabled) {
+            glEnable(GL_SCISSOR_TEST);
+        }
     }
 }
