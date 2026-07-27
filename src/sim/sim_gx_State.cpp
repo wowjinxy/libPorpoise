@@ -101,6 +101,7 @@ void GlobalState::Reset() {
     mChannels = {};
     mLights = {};
     mTextures = {};
+    mTluts = {};
     mTevStages = {};
     for (auto& table : mTevSwapTables) {
         table = {
@@ -382,6 +383,14 @@ const TevStageState& GlobalState::GetTevStageState(size_t index) const {
         return mTevStages[index];
     }
     static const TevStageState empty = {};
+    return empty;
+}
+
+const TlutState& GlobalState::GetTlutState(size_t index) const {
+    if (index < mTluts.size()) {
+        return mTluts[index];
+    }
+    static const TlutState empty = {};
     return empty;
 }
 
@@ -895,6 +904,23 @@ void GlobalState::LoadTexture(size_t index, const TextureState& texture) {
     }
     mTextures[index] = texture;
     mTextures[index].revision = ++mTextureRevision;
+}
+
+void GlobalState::LoadTlut(size_t index, const TlutState& tlut) {
+    if (index >= mTluts.size()) {
+        return;
+    }
+    mTluts[index] = tlut;
+    mTluts[index].revision = ++mTextureRevision;
+
+    for (auto& texture : mTextures) {
+        if (texture.tlutName == index &&
+            (texture.format == GX_TF_C4 ||
+             texture.format == GX_TF_C8 ||
+             texture.format == GX_TF_C14X2)) {
+            texture.revision = ++mTextureRevision;
+        }
+    }
 }
 
 void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {

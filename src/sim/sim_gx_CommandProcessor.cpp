@@ -575,9 +575,19 @@ void SIM_GX_CommandProcessor_SetVertexArray(GXAttr attr, void * ptr, int stride)
     SIM::GX::GetGlobalState().SetVertexArray(attr, vtxArray);
 }
 
+void SIM_GX_CommandProcessor_LoadTlut(
+    u32 id, const void* data, u32 format, u16 entries) {
+    SIM::GX::TlutState tlut;
+    tlut.data = data;
+    tlut.format = static_cast<GXTlutFmt>(format);
+    tlut.entries = entries;
+    SIM::GX::GetGlobalState().LoadTlut(id, tlut);
+}
+
 void SIM_GX_CommandProcessor_LoadTexture(
     u32 id, const void* data, u16 width, u16 height, u32 format,
-    u32 wrap_s, u32 wrap_t, u32 min_filter, u32 mag_filter) {
+    u32 wrap_s, u32 wrap_t, u32 min_filter, u32 mag_filter,
+    u32 tlut_name) {
     SIM::GX::TextureState texture;
     texture.data = data;
     texture.width = width;
@@ -587,5 +597,6 @@ void SIM_GX_CommandProcessor_LoadTexture(
     texture.wrapT = static_cast<GXTexWrapMode>(wrap_t);
     texture.minFilter = static_cast<GXTexFilter>(min_filter);
     texture.magFilter = static_cast<GXTexFilter>(mag_filter);
+    texture.tlutName = tlut_name;
     SIM::GX::GetGlobalState().LoadTexture(id, texture);
 }

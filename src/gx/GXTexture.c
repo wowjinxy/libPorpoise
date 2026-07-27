@@ -17,8 +17,14 @@ typedef struct GXHostTexImageDataEntry {
 	void* imageData;
 } GXHostTexImageDataEntry;
 
+typedef struct GXHostTlutDataEntry {
+	const GXTlutObj* object;
+	void* data;
+} GXHostTlutDataEntry;
+
 static GXHostTexUserDataEntry gxHostTexUserData[GX_HOST_TEX_USER_DATA_SLOTS];
 static GXHostTexImageDataEntry gxHostTexImageData[GX_HOST_TEX_USER_DATA_SLOTS];
+static GXHostTlutDataEntry gxHostTlutData[GX_HOST_TEX_USER_DATA_SLOTS];
 
 static void GXHostSetTexUserData(const GXTexObj* object, void* userData)
 {
@@ -103,6 +109,50 @@ static void* GXHostGetTexImageData(const GXTexObj* object)
 	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
 		if (gxHostTexImageData[i].object == object) {
 			return gxHostTexImageData[i].imageData;
+		}
+	}
+	return NULL;
+}
+
+static void GXHostSetTlutData(const GXTlutObj* object, void* data)
+{
+	s32 firstFree = -1;
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTlutData[i].object == object) {
+			if (data == NULL) {
+				gxHostTlutData[i].object = NULL;
+			}
+			gxHostTlutData[i].data = data;
+			return;
+		}
+		if (firstFree < 0 && gxHostTlutData[i].object == NULL) {
+			firstFree = (s32)i;
+		}
+	}
+
+	if (data == NULL) {
+		return;
+	}
+	if (firstFree >= 0) {
+		gxHostTlutData[firstFree].object = object;
+		gxHostTlutData[firstFree].data = data;
+		return;
+	}
+
+	i = (u32)(((uintptr_t)object >> 2) % GX_HOST_TEX_USER_DATA_SLOTS);
+	gxHostTlutData[i].object = object;
+	gxHostTlutData[i].data = data;
+}
+
+static void* GXHostGetTlutData(const GXTlutObj* object)
+{
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTlutData[i].object == object) {
+			return gxHostTlutData[i].data;
 		}
 	}
 	return NULL;
@@ -909,7 +959,8 @@ void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion* region, GXTexMapID id)
 	    GET_REG_FIELD(t->mode0, 2, 0),
 	    GET_REG_FIELD(t->mode0, 2, 2),
 	    HW2GXFiltConv[GET_REG_FIELD(t->mode0, 3, 5)],
-	    GET_REG_FIELD(t->mode0, 1, 4));
+	    GET_REG_FIELD(t->mode0, 1, 4),
+	    t->tlutName);
 #endif
 #if OS_BUILD_VERSION >= 20011002L
 	gx->bpSent = GX_FALSE;
@@ -945,6 +996,9 @@ void GXInitTlutObj(GXTlutObj* tlut_obj, void* lut, GXTlutFmt fmt, u16 n_entries)
 	CHECK_GXBEGIN(0x453, "GXInitTlutObj");
 	OSAssertMsgLine(0x456, n_entries <= 0x4000, "%s: number of entries exceeds maximum", "GXInitTlutObj");
 	OSAssertMsgLine(0x458, ((u32)lut & 0x1F) == 0, "%s: %s pointer not aligned to 32B", "GXInitTlutObj", "Tlut");
+#ifdef LIBPORPOISE_PORT
+	GXHostSetTlutData(tlut_obj, lut);
+#endif
 	t->tlut = 0;
 	SET_REG_FIELD(0x45B, t->tlut, 2, 10, fmt);
 	SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, ((u32)lut & 0x3FFFFFFF) >> 5);
@@ -961,7 +1015,11 @@ void GXGetTlutObjAll(const GXTlutObj* tlut_obj, void** data, GXTlutFmt* format, 
 	GXTlutObjPriv* t = (GXTlutObjPriv*)tlut_obj;
 
 	OSAssertMsgLine(0x472, tlut_obj, "TLut Object Pointer is null");
+#ifdef LIBPORPOISE_PORT
+	*data       = GXHostGetTlutData(tlut_obj);
+#else
 	*data       = (void*)(GET_REG_FIELD(t->loadTlut0, 21, 0) << 5);
+#endif
 	*format     = GET_REG_FIELD(t->tlut, 2, 10);
 	*numEntries = t->numEntries;
 }
@@ -975,7 +1033,11 @@ void* GXGetTlutObjData(const GXTlutObj* tlut_obj)
 	GXTlutObjPriv* t = (GXTlutObjPriv*)tlut_obj;
 
 	OSAssertMsgLine(0x47B, tlut_obj, "TLut Object Pointer is null");
+#ifdef LIBPORPOISE_PORT
+	return GXHostGetTlutData(tlut_obj);
+#else
 	return (void*)(GET_REG_FIELD(t->loadTlut0, 21, 0) << 5);
+#endif
 }
 
 /**
@@ -1024,6 +1086,13 @@ void GXLoadTlut(GXTlutObj* tlut_obj, u32 tlut_name)
 	tlut_offset = r->loadTlut1 & 0x3FF;
 	SET_REG_FIELD(0x4B9, t->tlut, 10, 0, tlut_offset);
 	r->tlutObj = *t;
+#ifdef LIBPORPOISE_PORT
+	SIM_GX_CommandProcessor_LoadTlut(
+	    tlut_name,
+	    GXHostGetTlutData(tlut_obj),
+	    GET_REG_FIELD(t->tlut, 2, 10),
+	    t->numEntries);
+#endif
 }
 
 /**

@@ -103,7 +103,7 @@ bool TestTextureObjectAbiBounds() {
         std::array<u8, 16> guard;
     } guardedTlut = {};
     alignas(32) std::array<u8, 32> image = {};
-    std::array<u16, 16> palette = {};
+    alignas(32) std::array<u16, 16> palette = {};
 
     guardedTexture.guard.fill(0xa5);
     guardedTlut.guard.fill(0x5a);
@@ -143,7 +143,7 @@ bool TestTextureObjectAbiBounds() {
             return false;
         }
     }
-    return true;
+    return GXGetTlutObjData(&guardedTlut.tlut) == palette.data();
 }
 
 bool TestFifoQueries() {
@@ -630,6 +630,12 @@ bool TestBpTextureAndScissorCommands() {
         (encodedRight << 12));
 
     alignas(32) std::array<u8, 32> image = {};
+    alignas(32) std::array<u16, 16> palette = {};
+    SIM_GX_CommandProcessor_LoadTlut(
+        5,
+        palette.data(),
+        GX_TL_RGB565,
+        static_cast<u16>(palette.size()));
     SIM_GX_CommandProcessor_LoadTexture(
         3,
         image.data(),
@@ -639,12 +645,14 @@ bool TestBpTextureAndScissorCommands() {
         GX_CLAMP,
         GX_REPEAT,
         GX_NEAR,
-        GX_LINEAR);
+        GX_LINEAR,
+        5);
 
     const auto& state = SIM::GX::GetGlobalState();
     const auto& stage = state.GetTevStageState(0);
     const auto& scissor = state.GetScissorState();
     const auto& texture = state.GetTextureState(3);
+    const auto& tlut = state.GetTlutState(5);
     return
         stage.textureEnabled &&
         stage.textureMap == 3 &&
@@ -661,7 +669,11 @@ bool TestBpTextureAndScissorCommands() {
         texture.wrapS == GX_CLAMP &&
         texture.wrapT == GX_REPEAT &&
         texture.minFilter == GX_NEAR &&
-        texture.magFilter == GX_LINEAR;
+        texture.magFilter == GX_LINEAR &&
+        texture.tlutName == 5 &&
+        tlut.data == palette.data() &&
+        tlut.format == GX_TL_RGB565 &&
+        tlut.entries == palette.size();
 }
 
 }
