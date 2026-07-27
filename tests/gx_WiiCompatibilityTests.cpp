@@ -32,6 +32,15 @@ bool NearlyEqual(float left, float right, float tolerance = 0.0001f) {
     return std::fabs(left - right) <= tolerance;
 }
 
+bool TestTextureCopyIntensityConversion() {
+    return
+        SIM::GX::ConvertRgbToCopyIntensity(0, 0, 0) == 16 &&
+        SIM::GX::ConvertRgbToCopyIntensity(255, 255, 255) == 235 &&
+        SIM::GX::ConvertRgbToCopyIntensity(255, 0, 0) == 82 &&
+        SIM::GX::ConvertRgbToCopyIntensity(0, 255, 0) == 145 &&
+        SIM::GX::ConvertRgbToCopyIntensity(0, 0, 255) == 41;
+}
+
 bool TestIndependentTextureLodSetters() {
     GXTexObj texture = {};
 
@@ -746,6 +755,9 @@ bool TestBpTextureAndScissorCommands() {
 }
 
 int main() {
+    if (!TestTextureCopyIntensityConversion()) {
+        return 20;
+    }
     if (!TestIndependentTextureLodSetters()) {
         return 1;
     }
