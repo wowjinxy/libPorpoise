@@ -41,6 +41,12 @@ struct DepthState {
     bool updateEnabled = true;
 };
 
+struct ZTextureState {
+    GXZTexOp operation = GX_ZT_DISABLE;
+    GXTexFmt format = GX_TF_Z24X8;
+    u32 bias = 0;
+};
+
 struct AlphaCompareState {
     GXCompare comparison0 = GX_ALWAYS;
     u8 reference0 = 0;
@@ -196,6 +202,7 @@ class GlobalState {
   const ScissorState& GetScissorState() const;
   const BlendState& GetBlendState() const;
   const DepthState& GetDepthState() const;
+  const ZTextureState& GetZTextureState() const;
   const AlphaCompareState& GetAlphaCompareState() const;
   const FogState& GetFogState() const;
   const RasterState& GetRasterState() const;
@@ -265,6 +272,7 @@ class GlobalState {
   bool mCopySourceValid = false;
   BlendState mBlendState = {};
   DepthState mDepthState = {};
+  ZTextureState mZTextureState = {};
   AlphaCompareState mAlphaCompareState = {};
   FogState mFogState = {};
   RasterState mRasterState = {};

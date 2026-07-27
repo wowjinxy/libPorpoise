@@ -315,6 +315,22 @@ bool TestTevSwapState() {
         table[3] == GX_CH_RED;
 }
 
+bool TestZTextureState() {
+    SIM::GX::GlobalState state;
+
+    state.SetBpRegister((0xf4u << 24u) | 0x00ff8000u);
+    state.SetBpRegister(
+        (0xf5u << 24u) |
+        1u |
+        (static_cast<u32>(GX_ZT_REPLACE) << 2u));
+
+    const auto& zTexture = state.GetZTextureState();
+    return
+        zTexture.operation == GX_ZT_REPLACE &&
+        zTexture.format == GX_TF_Z16 &&
+        zTexture.bias == 0x00ff8000u;
+}
+
 }
 
 int main() {
@@ -344,6 +360,9 @@ int main() {
     }
     if (!TestTevSwapState()) {
         return 9;
+    }
+    if (!TestZTextureState()) {
+        return 10;
     }
     return 0;
 }

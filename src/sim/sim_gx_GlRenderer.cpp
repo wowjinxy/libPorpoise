@@ -749,6 +749,40 @@ void DecodeI8(
     }
 }
 
+void DecodeIA8(
+    const u8* source,
+    std::vector<u8>& rgba,
+    u16 width,
+    u16 height) {
+    const size_t blockColumns = (static_cast<size_t>(width) + 3u) / 4u;
+    const size_t blockRows = (static_cast<size_t>(height) + 3u) / 4u;
+    rgba.assign(
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u,
+        0);
+
+    for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+        for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+            for (size_t y = 0; y < 4u; ++y) {
+                for (size_t x = 0; x < 4u; ++x) {
+                    const u8 alpha = *source++;
+                    const u8 intensity = *source++;
+                    const size_t destinationX = blockX * 4u + x;
+                    const size_t destinationY = blockY * 4u + y;
+                    if (destinationX >= width || destinationY >= height) {
+                        continue;
+                    }
+                    const size_t destination =
+                        (destinationY * width + destinationX) * 4u;
+                    rgba[destination] = intensity;
+                    rgba[destination + 1u] = intensity;
+                    rgba[destination + 2u] = intensity;
+                    rgba[destination + 3u] = alpha;
+                }
+            }
+        }
+    }
+}
+
 void DecodeRGBA8(
     const u8* source,
     std::vector<u8>& rgba,
@@ -784,6 +818,94 @@ void DecodeRGBA8(
                         greenBlue[sourcePixel * 2u + 1u];
                     rgba[destination + 3u] =
                         alphaRed[sourcePixel * 2u];
+                }
+            }
+        }
+    }
+}
+
+void DecodeCMPR(
+    const u8* source,
+    std::vector<u8>& rgba,
+    u16 width,
+    u16 height) {
+    const size_t blockColumns = (static_cast<size_t>(width) + 7u) / 8u;
+    const size_t blockRows = (static_cast<size_t>(height) + 7u) / 8u;
+    rgba.assign(
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u,
+        0);
+
+    for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+        for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+            for (size_t subBlock = 0; subBlock < 4u; ++subBlock) {
+                const size_t subX = (subBlock & 1u) * 4u;
+                const size_t subY = (subBlock >> 1u) * 4u;
+                const u16 endpoints[2] = {
+                    static_cast<u16>(
+                        (static_cast<u16>(source[0]) << 8u) |
+                        static_cast<u16>(source[1])),
+                    static_cast<u16>(
+                        (static_cast<u16>(source[2]) << 8u) |
+                        static_cast<u16>(source[3])),
+                };
+                source += 4u;
+
+                std::array<std::array<u8, 4>, 4> palette = {};
+                for (size_t endpoint = 0; endpoint < 2u; ++endpoint) {
+                    const u16 packed = endpoints[endpoint];
+                    palette[endpoint][0] = static_cast<u8>(
+                        ((packed >> 11u) & 0x1fu) * 255u / 31u);
+                    palette[endpoint][1] = static_cast<u8>(
+                        ((packed >> 5u) & 0x3fu) * 255u / 63u);
+                    palette[endpoint][2] = static_cast<u8>(
+                        (packed & 0x1fu) * 255u / 31u);
+                    palette[endpoint][3] = 255u;
+                }
+
+                if (endpoints[0] > endpoints[1]) {
+                    for (size_t component = 0; component < 3u; ++component) {
+                        palette[2][component] = static_cast<u8>(
+                            (2u * palette[0][component] +
+                             palette[1][component]) /
+                            3u);
+                        palette[3][component] = static_cast<u8>(
+                            (palette[0][component] +
+                             2u * palette[1][component]) /
+                            3u);
+                    }
+                    palette[2][3] = 255u;
+                    palette[3][3] = 255u;
+                } else {
+                    for (size_t component = 0; component < 3u; ++component) {
+                        palette[2][component] = static_cast<u8>(
+                            (palette[0][component] +
+                             palette[1][component]) /
+                            2u);
+                    }
+                    palette[2][3] = 255u;
+                }
+
+                for (size_t y = 0; y < 4u; ++y) {
+                    const u8 selectors = *source++;
+                    for (size_t x = 0; x < 4u; ++x) {
+                        const size_t paletteIndex =
+                            (selectors >> (6u - x * 2u)) & 0x03u;
+                        const size_t destinationX =
+                            blockX * 8u + subX + x;
+                        const size_t destinationY =
+                            blockY * 8u + subY + y;
+                        if (destinationX >= width ||
+                            destinationY >= height) {
+                            continue;
+                        }
+                        const size_t destination =
+                            (destinationY * width + destinationX) * 4u;
+                        std::copy(
+                            palette[paletteIndex].begin(),
+                            palette[paletteIndex].end(),
+                            rgba.begin() +
+                                static_cast<std::ptrdiff_t>(destination));
+                    }
                 }
             }
         }
@@ -1126,6 +1248,18 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         glGetUniformLocation(
             static_cast<GLuint>(shaderProgram),
             "u_fog_x_scale");
+    const GLint zTextureOperationLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_ztexture_operation");
+    const GLint zTextureFormatLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_ztexture_format");
+    const GLint zTextureBiasLocation =
+        glGetUniformLocation(
+            static_cast<GLuint>(shaderProgram),
+            "u_ztexture_bias");
     if (projectionLocation >= 0) {
         glUniformMatrix4fv(
             projectionLocation,
@@ -1217,7 +1351,11 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             texture.format == GX_TF_I8 ||
             texture.format == GX_TF_RGB565 ||
             texture.format == GX_TF_RGB5A3 ||
-            texture.format == GX_TF_RGBA8;
+            texture.format == GX_TF_RGBA8 ||
+            texture.format == GX_TF_CMPR ||
+            texture.format == GX_TF_Z8 ||
+            texture.format == GX_TF_Z16 ||
+            texture.format == GX_TF_Z24X8;
         if (texture.data == nullptr ||
             texture.width == 0 ||
             texture.height == 0 ||
@@ -1235,7 +1373,8 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
             mTextures[textureIndex]);
         if (mTextureRevisions[textureIndex] != texture.revision) {
             std::vector<u8> rgba;
-            if (texture.format == GX_TF_RGBA8) {
+            if (texture.format == GX_TF_RGBA8 ||
+                texture.format == GX_TF_Z24X8) {
                 DecodeRGBA8(
                     static_cast<const u8*>(texture.data),
                     rgba,
@@ -1255,6 +1394,24 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
                     texture.height);
             } else if (texture.format == GX_TF_I8) {
                 DecodeI8(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height);
+            } else if (texture.format == GX_TF_Z8) {
+                DecodeI8(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height);
+            } else if (texture.format == GX_TF_Z16) {
+                DecodeIA8(
+                    static_cast<const u8*>(texture.data),
+                    rgba,
+                    texture.width,
+                    texture.height);
+            } else if (texture.format == GX_TF_CMPR) {
+                DecodeCMPR(
                     static_cast<const u8*>(texture.data),
                     rgba,
                     texture.width,
@@ -1487,6 +1644,24 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
                     static_cast<float>(mDrawableWidth)
                 : 1.0f;
         glUniform1f(fogXScaleLocation, xScale);
+    }
+    const auto& zTexture = gxState.GetZTextureState();
+    if (zTextureOperationLocation >= 0) {
+        glUniform1i(
+            zTextureOperationLocation,
+            static_cast<GLint>(zTexture.operation));
+    }
+    if (zTextureFormatLocation >= 0) {
+        GLint format = 2;
+        if (zTexture.format == GX_TF_Z8) {
+            format = 0;
+        } else if (zTexture.format == GX_TF_Z16) {
+            format = 1;
+        }
+        glUniform1i(zTextureFormatLocation, format);
+    }
+    if (zTextureBiasLocation >= 0) {
+        glUniform1ui(zTextureBiasLocation, zTexture.bias);
     }
 
     glBindVertexArray(mVertexArray);
