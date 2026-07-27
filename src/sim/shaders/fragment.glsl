@@ -156,6 +156,16 @@ float operationScale(int scale)
     return 1.0;
 }
 
+ivec3 quantizeTevColor(vec3 value)
+{
+    return ivec3(floor(clamp(value, 0.0, 1.0) * 255.0 + 0.5));
+}
+
+int quantizeTevAlpha(float value)
+{
+    return int(floor(clamp(value, 0.0, 1.0) * 255.0 + 0.5));
+}
+
 vec3 applyColorOperation(
     int operation,
     int bias,
@@ -174,26 +184,34 @@ vec3 applyColorOperation(
         if (bias == 2) result -= 0.5;
         result *= operationScale(scale);
     } else if (operation == 8 || operation == 9) {
-        bool passes = operation == 8 ? a.r > b.r : a.r == b.r;
+        int qa = quantizeTevColor(a).r;
+        int qb = quantizeTevColor(b).r;
+        bool passes = operation == 8 ? qa > qb : qa == qb;
         result = d + (passes ? c : vec3(0.0));
     } else if (operation == 10 || operation == 11) {
-        float packedA = a.r * 256.0 + a.g;
-        float packedB = b.r * 256.0 + b.g;
+        ivec3 qa = quantizeTevColor(a);
+        ivec3 qb = quantizeTevColor(b);
+        int packedA = qa.r * 256 + qa.g;
+        int packedB = qb.r * 256 + qb.g;
         bool passes = operation == 10
             ? packedA > packedB
             : packedA == packedB;
         result = d + (passes ? c : vec3(0.0));
     } else if (operation == 12 || operation == 13) {
-        float packedA = a.b * 65536.0 + a.g * 256.0 + a.r;
-        float packedB = b.b * 65536.0 + b.g * 256.0 + b.r;
+        ivec3 qa = quantizeTevColor(a);
+        ivec3 qb = quantizeTevColor(b);
+        int packedA = qa.b * 65536 + qa.g * 256 + qa.r;
+        int packedB = qb.b * 65536 + qb.g * 256 + qb.r;
         bool passes = operation == 12
             ? packedA > packedB
             : packedA == packedB;
         result = d + (passes ? c : vec3(0.0));
     } else {
+        ivec3 qa = quantizeTevColor(a);
+        ivec3 qb = quantizeTevColor(b);
         bvec3 passes = operation == 14
-            ? greaterThan(a, b)
-            : equal(a, b);
+            ? greaterThan(qa, qb)
+            : equal(qa, qb);
         result = d + mix(vec3(0.0), c, passes);
     }
     return clampEnabled != 0
@@ -219,7 +237,9 @@ float applyAlphaOperation(
         if (bias == 2) result -= 0.5;
         result *= operationScale(scale);
     } else {
-        bool passes = (operation & 1) == 0 ? a > b : a == b;
+        int qa = quantizeTevAlpha(a);
+        int qb = quantizeTevAlpha(b);
+        bool passes = (operation & 1) == 0 ? qa > qb : qa == qb;
         result = d + (passes ? c : 0.0);
     }
     return clampEnabled != 0

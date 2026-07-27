@@ -1289,6 +1289,27 @@ u8 ConvertRgbToCopyIntensity(u8 red, u8 green, u8 blue) {
     return static_cast<u8>(std::clamp(y, 16, 235));
 }
 
+u8 ConvertColorToTextureCopyByte(
+    u32 destinationFormat,
+    u8 red,
+    u8 green,
+    u8 blue,
+    u8 alpha) {
+    switch (destinationFormat) {
+        case GX_CTF_A8:
+            return alpha;
+        case GX_CTF_R8:
+            return red;
+        case GX_CTF_G8:
+            return green;
+        case GX_CTF_B8:
+            return blue;
+        case GX_TF_I8:
+        default:
+            return ConvertRgbToCopyIntensity(red, green, blue);
+    }
+}
+
 void EncodeRgb565TextureCopy(
     const u8* rgba,
     u16 width,
@@ -2196,6 +2217,9 @@ extern "C" void __GXHostCopyTex(
             destinationHeight,
             static_cast<u8*>(destination));
     } else if (destinationFormat == GX_CTF_A8 ||
+               destinationFormat == GX_CTF_R8 ||
+               destinationFormat == GX_CTF_G8 ||
+               destinationFormat == GX_CTF_B8 ||
                destinationFormat == GX_TF_I8) {
         u8* encoded = static_cast<u8*>(destination);
         const size_t blockColumns =
@@ -2235,14 +2259,12 @@ extern "C" void __GXHostCopyTex(
                                      static_cast<size_t>(drawableWidth) +
                                  static_cast<size_t>(framebufferX)) *
                                 4u;
-                            if (destinationFormat == GX_CTF_A8) {
-                                value = framebuffer[sourceOffset + 3u];
-                            } else {
-                                value = SIM::GX::ConvertRgbToCopyIntensity(
-                                    framebuffer[sourceOffset],
-                                    framebuffer[sourceOffset + 1u],
-                                    framebuffer[sourceOffset + 2u]);
-                            }
+                            value = SIM::GX::ConvertColorToTextureCopyByte(
+                                destinationFormat,
+                                framebuffer[sourceOffset],
+                                framebuffer[sourceOffset + 1u],
+                                framebuffer[sourceOffset + 2u],
+                                framebuffer[sourceOffset + 3u]);
                         }
                         *encoded++ = value;
                     }
