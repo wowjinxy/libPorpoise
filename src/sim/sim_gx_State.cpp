@@ -988,8 +988,8 @@ void GlobalState::RefreshTexCoordGenState(
         } else {
             mTexCoordGens[index].function =
                 (texGenWord & (1u << 1u)) != 0u
-                    ? GX_TG_MTX3x4
-                    : GX_TG_MTX2x4;
+                    ? GX_TG_MTX2x4
+                    : GX_TG_MTX3x4;
         }
     }
 }
