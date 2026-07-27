@@ -171,6 +171,79 @@ bool TestViewportTransformState() {
     return true;
 }
 
+bool TestMultiStageTevState() {
+    SIM::GX::GlobalState state;
+
+    const u32 textureReference =
+        (0x28u << 24u) |
+        3u |
+        (4u << 3u) |
+        (1u << 6u) |
+        (1u << 7u);
+    state.SetBpRegister(textureReference);
+
+    const u32 colorEnvironment =
+        (0xc0u << 24u) |
+        GX_CC_RASC |
+        (GX_CC_TEXC << 4u) |
+        (GX_CC_CPREV << 8u) |
+        (GX_CC_ZERO << 12u) |
+        (GX_TB_ADDHALF << 16u) |
+        (1u << 19u) |
+        (GX_CS_SCALE_2 << 20u) |
+        (GX_TEVREG2 << 22u);
+    state.SetBpRegister(colorEnvironment);
+
+    const u32 alphaEnvironment =
+        (0xc1u << 24u) |
+        (GX_CA_RASA << 4u) |
+        (GX_CA_TEXA << 7u) |
+        (GX_CA_APREV << 10u) |
+        (GX_CA_ZERO << 13u) |
+        (1u << 18u) |
+        (1u << 19u) |
+        (GX_CS_DIVIDE_2 << 20u) |
+        (GX_TEVREG1 << 22u);
+    state.SetBpRegister(alphaEnvironment);
+
+    const auto& stage = state.GetTevStageState(0);
+    if (stage.textureMap != 3 ||
+        stage.textureCoordinate != 4 ||
+        !stage.textureEnabled ||
+        stage.rasterChannel != 1 ||
+        stage.colorInputs[1] != GX_CC_CPREV ||
+        stage.colorInputs[2] != GX_CC_TEXC ||
+        stage.colorInputs[3] != GX_CC_RASC ||
+        stage.colorBias != GX_TB_ADDHALF ||
+        stage.colorScale != GX_CS_SCALE_2 ||
+        !stage.colorClamp ||
+        stage.colorOutput != GX_TEVREG2 ||
+        stage.alphaInputs[1] != GX_CA_APREV ||
+        stage.alphaInputs[2] != GX_CA_TEXA ||
+        stage.alphaInputs[3] != GX_CA_RASA ||
+        stage.alphaOperation != GX_TEV_SUB ||
+        stage.alphaScale != GX_CS_DIVIDE_2 ||
+        !stage.alphaClamp ||
+        stage.alphaOutput != GX_TEVREG1) {
+        return false;
+    }
+
+    const u32 embossTexGen =
+        (1u << 4u) |
+        (2u << 12u) |
+        (3u << 15u);
+    state.SetXfData(
+        0x1040,
+        reinterpret_cast<const u8*>(&embossTexGen),
+        1);
+    const auto& texGen = state.GetTexCoordGenState(0);
+    return
+        texGen.function == GX_TG_BUMP3 &&
+        texGen.source == GX_TG_TEXCOORD2 &&
+        texGen.embossSource == 2 &&
+        texGen.embossLight == 3;
+}
+
 }
 
 int main() {
@@ -188,6 +261,9 @@ int main() {
     }
     if (!TestViewportTransformState()) {
         return 5;
+    }
+    if (!TestMultiStageTevState()) {
+        return 6;
     }
     return 0;
 }

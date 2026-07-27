@@ -125,7 +125,10 @@ struct TextureState {
 
 struct TexCoordGenState {
     GXTexGenSrc source = GX_TG_TEX0;
+    GXTexGenType function = GX_TG_MTX2x4;
     u8 matrixId = GX_IDENTITY;
+    u8 embossSource = 0;
+    u8 embossLight = 0;
 };
 
 enum class TevColorMode {
@@ -138,8 +141,31 @@ enum class TevColorMode {
 struct TevStageState {
     u8 textureMap = 0;
     u8 textureCoordinate = 0;
+    u8 rasterChannel = 0;
     bool textureEnabled = false;
     TevColorMode colorMode = TevColorMode::PassColor;
+    std::array<u8, 4> colorInputs = {
+        GX_CC_ZERO,
+        GX_CC_ZERO,
+        GX_CC_ZERO,
+        GX_CC_RASC,
+    };
+    std::array<u8, 4> alphaInputs = {
+        GX_CA_ZERO,
+        GX_CA_ZERO,
+        GX_CA_ZERO,
+        GX_CA_RASA,
+    };
+    GXTevOp colorOperation = GX_TEV_ADD;
+    GXTevOp alphaOperation = GX_TEV_ADD;
+    GXTevBias colorBias = GX_TB_ZERO;
+    GXTevBias alphaBias = GX_TB_ZERO;
+    GXTevScale colorScale = GX_CS_SCALE_1;
+    GXTevScale alphaScale = GX_CS_SCALE_1;
+    bool colorClamp = true;
+    bool alphaClamp = true;
+    GXTevRegID colorOutput = GX_TEVPREV;
+    GXTevRegID alphaOutput = GX_TEVPREV;
 };
 
 class GlobalState {

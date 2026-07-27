@@ -484,11 +484,13 @@ void GlobalState::SetBpRegister(u32 registerValue) {
             evenStage.textureMap = static_cast<u8>(field(3, 0));
             evenStage.textureCoordinate = static_cast<u8>(field(3, 3));
             evenStage.textureEnabled = field(1, 6) != 0;
+            evenStage.rasterChannel = static_cast<u8>(field(3, 7));
 
             auto& oddStage = mTevStages[firstStage + 1u];
             oddStage.textureMap = static_cast<u8>(field(3, 12));
             oddStage.textureCoordinate = static_cast<u8>(field(3, 15));
             oddStage.textureEnabled = field(1, 18) != 0;
+            oddStage.rasterChannel = static_cast<u8>(field(3, 19));
             break;
         }
         case 0x22:
@@ -691,35 +693,81 @@ void GlobalState::SetBpRegister(u32 registerValue) {
                     field(2, 16) == 3u
                         ? 8u | (field(2, 20) << 1u) | field(1, 18)
                         : field(1, 18);
+                auto& tevStage = mTevStages[stage];
+                tevStage.colorInputs = {
+                    static_cast<u8>(inputA),
+                    static_cast<u8>(inputB),
+                    static_cast<u8>(inputC),
+                    static_cast<u8>(inputD),
+                };
+                tevStage.colorOperation =
+                    static_cast<GXTevOp>(operation);
+                tevStage.colorBias =
+                    field(2, 16) == 3u
+                        ? GX_TB_ZERO
+                        : static_cast<GXTevBias>(field(2, 16));
+                tevStage.colorScale =
+                    static_cast<GXTevScale>(field(2, 20));
+                tevStage.colorClamp = field(1, 19) != 0u;
+                tevStage.colorOutput =
+                    static_cast<GXTevRegID>(field(2, 22));
                 if (operation == GX_TEV_COMP_RGB8_EQ &&
                     inputA == GX_CC_TEXC &&
                     inputB == GX_CC_ZERO &&
                     inputC == GX_CC_ONE &&
                     inputD == GX_CC_C0) {
-                    mTevStages[stage].colorMode =
+                    tevStage.colorMode =
                         TevColorMode::CompareTextureRgb8EqualZero;
                 } else if (
                     inputA == GX_CC_ZERO &&
                     inputB == GX_CC_TEXC &&
                     inputC == GX_CC_RASC &&
                     inputD == GX_CC_ZERO) {
-                    mTevStages[stage].colorMode =
+                    tevStage.colorMode =
                         TevColorMode::Modulate;
                 } else if (
                     inputA == GX_CC_ZERO &&
                     inputB == GX_CC_ZERO &&
                     inputC == GX_CC_ZERO &&
                     inputD == GX_CC_TEXC) {
-                    mTevStages[stage].colorMode =
+                    tevStage.colorMode =
                         TevColorMode::ReplaceTexture;
                 } else if (
                     inputA == GX_CC_ZERO &&
                     inputB == GX_CC_ZERO &&
                     inputC == GX_CC_ZERO &&
                     inputD == GX_CC_RASC) {
-                    mTevStages[stage].colorMode =
+                    tevStage.colorMode =
                         TevColorMode::PassColor;
                 }
+            }
+            if (address >= 0xc1u &&
+                address <= 0xdfu &&
+                (address & 1u) != 0u) {
+                const size_t stage =
+                    static_cast<size_t>((address - 0xc1u) / 2u);
+                const u32 operation =
+                    field(2, 16) == 3u
+                        ? 8u | (field(2, 20) << 1u) | field(1, 18)
+                        : field(1, 18);
+                auto& tevStage = mTevStages[stage];
+                tevStage.alphaInputs = {
+                    static_cast<u8>(field(3, 13)),
+                    static_cast<u8>(field(3, 10)),
+                    static_cast<u8>(field(3, 7)),
+                    static_cast<u8>(field(3, 4)),
+                };
+                tevStage.alphaOperation =
+                    static_cast<GXTevOp>(operation);
+                tevStage.alphaBias =
+                    field(2, 16) == 3u
+                        ? GX_TB_ZERO
+                        : static_cast<GXTevBias>(field(2, 16));
+                tevStage.alphaScale =
+                    static_cast<GXTevScale>(field(2, 20));
+                tevStage.alphaClamp = field(1, 19) != 0u;
+                tevStage.alphaOutput =
+                    static_cast<GXTevRegID>(field(2, 22));
             }
             break;
     }
@@ -919,6 +967,30 @@ void GlobalState::RefreshTexCoordGenState(
         mTexCoordGens[index].source = source;
         mTexCoordGens[index].matrixId = static_cast<u8>(
             (matrixWords[matrixWord] >> matrixShift) & 0x3fu);
+        const u32 texGenType = (texGenWord >> 4u) & 0x07u;
+        if (texGenType == 1u) {
+            mTexCoordGens[index].embossSource =
+                static_cast<u8>((texGenWord >> 12u) & 0x07u);
+            mTexCoordGens[index].embossLight =
+                static_cast<u8>((texGenWord >> 15u) & 0x07u);
+            mTexCoordGens[index].function =
+                static_cast<GXTexGenType>(
+                    GX_TG_BUMP0 +
+                    mTexCoordGens[index].embossLight);
+            mTexCoordGens[index].source =
+                static_cast<GXTexGenSrc>(
+                    GX_TG_TEXCOORD0 +
+                    mTexCoordGens[index].embossSource);
+        } else if (texGenType == 2u || texGenType == 3u) {
+            mTexCoordGens[index].function = GX_TG_SRTG;
+            mTexCoordGens[index].source =
+                texGenType == 3u ? GX_TG_COLOR1 : GX_TG_COLOR0;
+        } else {
+            mTexCoordGens[index].function =
+                (texGenWord & (1u << 1u)) != 0u
+                    ? GX_TG_MTX3x4
+                    : GX_TG_MTX2x4;
+        }
     }
 }
 
