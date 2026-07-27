@@ -137,6 +137,42 @@ bool TestIndexedVertexSuppression() {
         NearlyEqual(decoded[1].position.z, -3.0f);
 }
 
+bool TestIndexedPackedU32Color() {
+    SIM::GX::GlobalState state;
+    state.SetVertexDescriptor(GX_VA_CLR0, GX_INDEX8);
+    state.SetVertexFormatComponents(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA);
+    state.SetVertexFormatDataType(GX_VTXFMT0, GX_VA_CLR0, GX_RGBA8);
+
+    std::array<u32, 2> colors = {
+        0x00ff0000u,
+        0x12345678u,
+    };
+    state.SetVertexArray(
+        GX_VA_CLR0,
+        {
+            colors.data(),
+            static_cast<int>(sizeof(u32)),
+            true,
+        });
+
+    const std::vector<u8> stream = {0, 1};
+    std::vector<SIM::GX::RenderVertex> decoded;
+    if (!SIM::GX::DecodeVertexStream(state, stream, true, decoded) ||
+        decoded.size() != 2) {
+        return false;
+    }
+
+    return
+        NearlyEqual(decoded[0].color0.r, 0.0f) &&
+        NearlyEqual(decoded[0].color0.g, 1.0f) &&
+        NearlyEqual(decoded[0].color0.b, 0.0f) &&
+        NearlyEqual(decoded[0].color0.a, 0.0f) &&
+        NearlyEqual(decoded[1].color0.r, 0x12 / 255.0f) &&
+        NearlyEqual(decoded[1].color0.g, 0x34 / 255.0f) &&
+        NearlyEqual(decoded[1].color0.b, 0x56 / 255.0f) &&
+        NearlyEqual(decoded[1].color0.a, 0x78 / 255.0f);
+}
+
 bool TestMalformedStreamClearsOutput() {
     SIM::GX::GlobalState state;
     state.SetVertexDescriptor(GX_VA_POS, GX_DIRECT);
@@ -343,26 +379,29 @@ int main() {
     if (!TestIndexedVertexSuppression()) {
         return 3;
     }
-    if (!TestMalformedStreamClearsOutput()) {
+    if (!TestIndexedPackedU32Color()) {
         return 4;
     }
-    if (!TestViewportTransformState()) {
+    if (!TestMalformedStreamClearsOutput()) {
         return 5;
     }
-    if (!TestIndexedPositionMatrixState()) {
+    if (!TestViewportTransformState()) {
         return 6;
     }
-    if (!TestMultiStageTevState()) {
+    if (!TestIndexedPositionMatrixState()) {
         return 7;
     }
-    if (!TestTexGenTypeDecode()) {
+    if (!TestMultiStageTevState()) {
         return 8;
     }
-    if (!TestTevSwapState()) {
+    if (!TestTexGenTypeDecode()) {
         return 9;
     }
-    if (!TestZTextureState()) {
+    if (!TestTevSwapState()) {
         return 10;
+    }
+    if (!TestZTextureState()) {
+        return 11;
     }
     return 0;
 }

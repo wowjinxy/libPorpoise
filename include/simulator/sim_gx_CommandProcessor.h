@@ -24,6 +24,8 @@ u32 SIM_GX_CommandProcessor_EndDisplayList(void);
 void SIM_GX_CommandProcessor_CallDisplayList(const void* list, u32 size);
 
 void SIM_GX_CommandProcessor_SetVertexArray(GXAttr attr, void * ptr, int stride);
+void SIM_GX_CommandProcessor_SetVertexArrayU32(
+    GXAttr attr, void * ptr, int stride);
 void SIM_GX_CommandProcessor_LoadTlut(
     u32 id, const void* data, u32 format, u16 entries);
 void SIM_GX_CommandProcessor_LoadTexture(

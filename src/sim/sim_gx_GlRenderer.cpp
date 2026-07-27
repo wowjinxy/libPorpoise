@@ -530,6 +530,42 @@ void ApplyTexCoordGenerators(
                         matrix[10] * source[2] +
                         matrix[11] * source[3]
                     : 1.0f;
+
+            if (texGen.normalize) {
+                const float length = std::sqrt(
+                    generated[index].s * generated[index].s +
+                    generated[index].t * generated[index].t +
+                    generated[index].q * generated[index].q);
+                if (length > 0.00000001f) {
+                    generated[index].s /= length;
+                    generated[index].t /= length;
+                    generated[index].q /= length;
+                }
+            }
+
+            const auto& postMatrix =
+                state.GetTexCoordGenPostMatrix(index);
+            const std::array<float, 4> postSource = {
+                generated[index].s,
+                generated[index].t,
+                generated[index].q,
+                1.0f,
+            };
+            generated[index].s =
+                postMatrix[0] * postSource[0] +
+                postMatrix[1] * postSource[1] +
+                postMatrix[2] * postSource[2] +
+                postMatrix[3] * postSource[3];
+            generated[index].t =
+                postMatrix[4] * postSource[0] +
+                postMatrix[5] * postSource[1] +
+                postMatrix[6] * postSource[2] +
+                postMatrix[7] * postSource[3];
+            generated[index].q =
+                postMatrix[8] * postSource[0] +
+                postMatrix[9] * postSource[1] +
+                postMatrix[10] * postSource[2] +
+                postMatrix[11] * postSource[3];
         }
         vertex.texCoords = generated;
     }

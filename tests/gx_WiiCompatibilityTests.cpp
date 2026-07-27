@@ -325,6 +325,55 @@ bool TestTextureCoordinateSourceImplicitQ() {
         NearlyEqual(vertices[0].texCoords[0].q, 1.0f);
 }
 
+bool TestDualTextureCoordinateGeneration() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    Mtx positionMatrix = {
+        {2.0f, 0.0f, 0.0f, 1.0f},
+        {0.0f, 3.0f, 0.0f, 2.0f},
+        {0.0f, 0.0f, 4.0f, 3.0f},
+    };
+    Mtx postMatrix = {
+        {0.5f, 0.0f, 0.0f, 0.25f},
+        {0.0f, 0.25f, 0.0f, 0.50f},
+        {0.0f, 0.0f, 2.0f, 1.0f},
+    };
+    GXLoadPosMtxImm(positionMatrix, GX_PNMTX0);
+    GXLoadTexMtxImm(postMatrix, GX_PTTEXMTX0, GX_MTX3x4);
+    GXSetTexCoordGen2(
+        GX_TEXCOORD0,
+        GX_TG_MTX3x4,
+        GX_TG_POS,
+        GX_PNMTX0,
+        GX_TRUE,
+        GX_PTTEXMTX0);
+
+    SIM::GX::RenderVertex vertex;
+    vertex.position = {1.0f, 1.0f, 1.0f};
+    std::vector<SIM::GX::RenderVertex> vertices = {vertex};
+    SIM::GX::ApplyTextureCoordinateGeneration(
+        SIM::GX::GetGlobalState(),
+        vertices);
+
+    const float primaryLength = std::sqrt(83.0f);
+    const auto& texGen =
+        SIM::GX::GetGlobalState().GetTexCoordGenState(0);
+    return
+        texGen.matrixId == GX_PNMTX0 &&
+        texGen.postMatrixId == GX_PTTEXMTX0 &&
+        texGen.normalize &&
+        NearlyEqual(
+            vertices[0].texCoords[0].s,
+            0.5f * 3.0f / primaryLength + 0.25f) &&
+        NearlyEqual(
+            vertices[0].texCoords[0].t,
+            0.25f * 5.0f / primaryLength + 0.50f) &&
+        NearlyEqual(
+            vertices[0].texCoords[0].q,
+            2.0f * 7.0f / primaryLength + 1.0f);
+}
+
 bool TestHostPerformanceMetrics() {
     SIM::GX::InitGlobalState();
     SIM_GX_CommandProcessor_Init();
@@ -806,14 +855,17 @@ int main() {
     if (!TestTextureCoordinateSourceImplicitQ()) {
         return 16;
     }
-    if (!TestHostPerformanceMetrics()) {
+    if (!TestDualTextureCoordinateGeneration()) {
         return 17;
     }
-    if (!TestBpTevCompareCommands()) {
+    if (!TestHostPerformanceMetrics()) {
         return 18;
     }
-    if (!TestTevKonstSelections()) {
+    if (!TestBpTevCompareCommands()) {
         return 19;
+    }
+    if (!TestTevKonstSelections()) {
+        return 21;
     }
     return 0;
 }
