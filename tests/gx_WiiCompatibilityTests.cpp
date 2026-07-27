@@ -3,10 +3,13 @@
 #include <dolphin/pad.h>
 #include <revolution/gx.h>
 #include <simulator/sim_gx_CommandProcessor.h>
+#include <simulator/sim_gx_Geometry.hpp>
+#include <simulator/sim_gx_GlRenderer.hpp>
 #include <simulator/sim_gx_State.hpp>
 
 #include <array>
 #include <cmath>
+#include <vector>
 
 extern "C" u32 VIGetCurrentLine(void) {
     return 0;
@@ -288,6 +291,29 @@ bool TestTextureMatrix2x4ImplicitQ() {
         NearlyEqual(matrix[9], 0.0f) &&
         NearlyEqual(matrix[10], 0.0f) &&
         NearlyEqual(matrix[11], 1.0f);
+}
+
+bool TestTextureCoordinateSourceImplicitQ() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    GXSetTexCoordGen(
+        GX_TEXCOORD0,
+        GX_TG_MTX3x4,
+        GX_TG_TEX0,
+        GX_IDENTITY);
+
+    SIM::GX::RenderVertex vertex;
+    vertex.texCoords[0] = {0.25f, 0.75f, 1.0f};
+    std::vector<SIM::GX::RenderVertex> vertices = {vertex};
+    SIM::GX::ApplyTextureCoordinateGeneration(
+        SIM::GX::GetGlobalState(),
+        vertices);
+
+    return
+        NearlyEqual(vertices[0].texCoords[0].s, 0.25f) &&
+        NearlyEqual(vertices[0].texCoords[0].t, 0.75f) &&
+        NearlyEqual(vertices[0].texCoords[0].q, 1.0f);
 }
 
 bool TestHostPerformanceMetrics() {
@@ -724,11 +750,14 @@ int main() {
     if (!TestTextureMatrix2x4ImplicitQ()) {
         return 15;
     }
-    if (!TestHostPerformanceMetrics()) {
+    if (!TestTextureCoordinateSourceImplicitQ()) {
         return 16;
     }
-    if (!TestBpTevCompareCommands()) {
+    if (!TestHostPerformanceMetrics()) {
         return 17;
+    }
+    if (!TestBpTevCompareCommands()) {
+        return 18;
     }
     return 0;
 }
