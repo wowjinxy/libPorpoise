@@ -171,6 +171,26 @@ bool TestViewportTransformState() {
     return true;
 }
 
+bool TestIndexedPositionMatrixState() {
+    SIM::GX::GlobalState state;
+    const std::array<float, 12> matrix = {
+        1.0f, 0.0f, 0.0f, 10.0f,
+        0.0f, 1.0f, 0.0f, 20.0f,
+        0.0f, 0.0f, 1.0f, 30.0f,
+    };
+    state.SetXfData(
+        12,
+        reinterpret_cast<const u8*>(matrix.data()),
+        matrix.size());
+
+    const auto& decoded = state.GetPositionMatrix(1);
+    return
+        NearlyEqual(decoded[3], 10.0f) &&
+        NearlyEqual(decoded[7], 20.0f) &&
+        NearlyEqual(decoded[11], 30.0f) &&
+        NearlyEqual(state.GetPositionMatrix(0)[0], 1.0f);
+}
+
 bool TestMultiStageTevState() {
     SIM::GX::GlobalState state;
 
@@ -282,11 +302,14 @@ int main() {
     if (!TestViewportTransformState()) {
         return 5;
     }
-    if (!TestMultiStageTevState()) {
+    if (!TestIndexedPositionMatrixState()) {
         return 6;
     }
-    if (!TestTexGenTypeDecode()) {
+    if (!TestMultiStageTevState()) {
         return 7;
+    }
+    if (!TestTexGenTypeDecode()) {
+        return 8;
     }
     return 0;
 }
