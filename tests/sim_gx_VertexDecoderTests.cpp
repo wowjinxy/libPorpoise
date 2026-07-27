@@ -244,6 +244,26 @@ bool TestMultiStageTevState() {
         texGen.embossLight == 3;
 }
 
+bool TestTexGenTypeDecode() {
+    SIM::GX::GlobalState state;
+
+    const u32 matrix2x4 = 1u << 1u;
+    state.SetXfData(
+        0x1040,
+        reinterpret_cast<const u8*>(&matrix2x4),
+        1);
+    if (state.GetTexCoordGenState(0).function != GX_TG_MTX2x4) {
+        return false;
+    }
+
+    const u32 matrix3x4 = 0;
+    state.SetXfData(
+        0x1040,
+        reinterpret_cast<const u8*>(&matrix3x4),
+        1);
+    return state.GetTexCoordGenState(0).function == GX_TG_MTX3x4;
+}
+
 }
 
 int main() {
@@ -264,6 +284,9 @@ int main() {
     }
     if (!TestMultiStageTevState()) {
         return 6;
+    }
+    if (!TestTexGenTypeDecode()) {
+        return 7;
     }
     return 0;
 }
