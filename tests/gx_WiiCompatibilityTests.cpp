@@ -73,6 +73,46 @@ bool TestRgb565TextureCopyEncoding() {
         encoded[6] == 0xff && encoded[7] == 0xff;
 }
 
+bool TestDepthTextureCopyEncoding() {
+    std::array<float, 4 * 4> depth = {};
+    depth[0] = 0.25f;
+    depth[1] = 0.5f;
+
+    std::array<u8, 8 * 4> encodedZ8 = {};
+    SIM::GX::EncodeDepthTextureCopy(
+        depth.data(), 4, 4, GX_TF_Z8, encodedZ8.data());
+    if (encodedZ8[0] != 0x80 || encodedZ8[1] != 0xff) {
+        return false;
+    }
+
+    std::array<u8, 4 * 4 * 2> encodedZ16 = {};
+    SIM::GX::EncodeDepthTextureCopy(
+        depth.data(), 4, 4, GX_TF_Z16, encodedZ16.data());
+    return
+        encodedZ16[0] == 0x00 && encodedZ16[1] == 0x80 &&
+        encodedZ16[2] == 0xff && encodedZ16[3] == 0xff;
+}
+
+bool TestNormalMatrixState() {
+    SIM::GX::GlobalState state;
+    const std::array<float, 9> matrix = {
+        0.25f, 0.0f, 0.0f,
+        0.0f, 0.5f, 0.0f,
+        0.0f, 0.0f, 2.0f,
+    };
+    state.SetXfData(
+        0x400,
+        reinterpret_cast<const u8*>(matrix.data()),
+        matrix.size());
+
+    const auto& decoded = state.GetNormalMatrix(0);
+    return
+        decoded[0] == 0.25f &&
+        decoded[5] == 0.5f &&
+        decoded[10] == 2.0f &&
+        decoded[15] == 1.0f;
+}
+
 bool TestIndependentTextureLodSetters() {
     GXTexObj texture = {};
 
@@ -844,6 +884,12 @@ int main() {
     }
     if (!TestRgb565TextureCopyEncoding()) {
         return 21;
+    }
+    if (!TestDepthTextureCopyEncoding()) {
+        return 23;
+    }
+    if (!TestNormalMatrixState()) {
+        return 24;
     }
     if (!TestIndependentTextureLodSetters()) {
         return 1;

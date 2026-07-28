@@ -12,6 +12,8 @@
 #include <simulator/sim_gx_Geometry.hpp>
 #include <simulator/sim_gx_State.hpp>
 
+extern "C" void __VIHostOnDraw(void) __attribute__((weak));
+
 namespace {
 
 std::vector<SIM::GX::RenderVertex> ExpandQuads(
@@ -351,16 +353,21 @@ void ApplyColorChannels(
     const SIM::GX::GlobalState& state,
     std::vector<SIM::GX::RenderVertex>& vertices) {
     for (auto& vertex : vertices) {
-        const auto& modelView =
-            state.GetVertexDescriptor(GX_VA_PNMTXIDX) != GX_NONE
-                ? state.GetPositionMatrix(
-                    static_cast<size_t>(
-                        vertex.positionMatrixIndex / 3u))
-                : state.GetPositionMatrix();
+        const bool indexedMatrix =
+            state.GetVertexDescriptor(GX_VA_PNMTXIDX) != GX_NONE;
+        const size_t matrixIndex = indexedMatrix
+            ? static_cast<size_t>(vertex.positionMatrixIndex / 3u)
+            : 0u;
+        const auto& modelView = indexedMatrix
+            ? state.GetPositionMatrix(matrixIndex)
+            : state.GetPositionMatrix();
+        const auto& normalMatrix = indexedMatrix
+            ? state.GetNormalMatrix(matrixIndex)
+            : state.GetNormalMatrix();
         const auto viewPosition =
             TransformPoint(modelView, vertex.position);
         const auto viewNormal =
-            Normalize(TransformDirection(modelView, vertex.normal));
+            Normalize(TransformDirection(normalMatrix, vertex.normal));
         vertex.color0 = EvaluateChannelLighting(
             state,
             state.GetChannelState(0),
@@ -1347,6 +1354,58 @@ void EncodeRgb565TextureCopy(
     }
 }
 
+void EncodeDepthTextureCopy(
+    const float* depth,
+    u16 width,
+    u16 height,
+    u32 destinationFormat,
+    u8* encoded) {
+    if (depth == nullptr || encoded == nullptr || width == 0 || height == 0) {
+        return;
+    }
+
+    const size_t blockWidth =
+        destinationFormat == GX_TF_Z8 ? 8u : 4u;
+    const size_t blockColumns =
+        (static_cast<size_t>(width) + blockWidth - 1u) / blockWidth;
+    const size_t blockRows =
+        (static_cast<size_t>(height) + 3u) / 4u;
+    for (size_t blockY = 0; blockY < blockRows; ++blockY) {
+        for (size_t blockX = 0; blockX < blockColumns; ++blockX) {
+            for (size_t y = 0; y < 4u; ++y) {
+                for (size_t x = 0; x < blockWidth; ++x) {
+                    const size_t sourceX = blockX * blockWidth + x;
+                    const size_t sourceY = blockY * 4u + y;
+                    u32 depth24 = 0;
+                    if (sourceX < width && sourceY < height) {
+                        // GX projection produces NDC depth in -1..0. OpenGL
+                        // maps that into window depth 0..0.5, so expand it
+                        // back to the GX EFB's full 0..1 depth range.
+                        const float normalized = std::clamp(
+                            depth[sourceY * width + sourceX] * 2.0f,
+                            0.0f,
+                            1.0f);
+                        depth24 = static_cast<u32>(
+                            std::lround(normalized * 16777215.0f));
+                    }
+
+                    if (destinationFormat == GX_TF_Z8) {
+                        *encoded++ = static_cast<u8>(depth24 >> 16u);
+                    } else {
+                        const u16 depth16 =
+                            static_cast<u16>(depth24 >> 8u);
+                        // Z16 copies are sampled as IA8 by GX. The copy
+                        // engine places the low depth byte in alpha and the
+                        // high byte in intensity, opposite a native IA8 word.
+                        *encoded++ = static_cast<u8>(depth16 & 0xffu);
+                        *encoded++ = static_cast<u8>(depth16 >> 8u);
+                    }
+                }
+            }
+        }
+    }
+}
+
 void ApplyTextureCoordinateGeneration(
     const GlobalState& state,
     std::vector<RenderVertex>& vertices) {
@@ -1437,6 +1496,9 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         return;
     }
 
+    if (__VIHostOnDraw != nullptr) {
+        __VIHostOnDraw();
+    }
     Initialize();
 
     const auto& gxState = GetGlobalState();
@@ -2094,6 +2156,41 @@ GlRenderer& GetGlRenderer() {
 
 }
 
+extern "C" __attribute__((weak)) void __GXHostApplyCopyClear(void) {
+    auto& gxState = SIM::GX::GetGlobalState();
+    if (!gxState.ConsumeCopyClearRequest()) {
+        return;
+    }
+
+    const auto& clearColor = gxState.GetCopyClearColor();
+    const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+    GLboolean colorWriteMask[4] = {};
+    GLboolean depthWriteMask = GL_FALSE;
+    glGetBooleanv(GL_COLOR_WRITEMASK, colorWriteMask);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteMask);
+
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glClearColor(
+        clearColor[0],
+        clearColor[1],
+        clearColor[2],
+        clearColor[3]);
+    glClearDepth(gxState.GetCopyClearDepth());
+    glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+
+    glColorMask(
+        colorWriteMask[0],
+        colorWriteMask[1],
+        colorWriteMask[2],
+        colorWriteMask[3]);
+    glDepthMask(depthWriteMask);
+    if (scissorEnabled) {
+        glEnable(GL_SCISSOR_TEST);
+    }
+}
+
 extern "C" void __GXHostCopyTex(
     void* destination,
     u16 sourceLeft,
@@ -2148,23 +2245,88 @@ extern "C" void __GXHostCopyTex(
     glReadBuffer(GL_BACK);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
-    std::vector<u8> framebuffer(
-        static_cast<size_t>(drawableWidth) *
-        static_cast<size_t>(drawableHeight) *
-        4u);
-    glReadPixels(
-        0,
-        0,
-        drawableWidth,
-        drawableHeight,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        framebuffer.data());
+    const bool depthCopy =
+        destinationFormat == GX_TF_Z8 ||
+        destinationFormat == GX_TF_Z16;
+    std::vector<u8> framebuffer;
+    std::vector<float> depthBuffer;
+    if (depthCopy) {
+        depthBuffer.resize(
+            static_cast<size_t>(drawableWidth) *
+            static_cast<size_t>(drawableHeight));
+        glReadPixels(
+            0,
+            0,
+            drawableWidth,
+            drawableHeight,
+            GL_DEPTH_COMPONENT,
+            GL_FLOAT,
+            depthBuffer.data());
+    } else {
+        framebuffer.resize(
+            static_cast<size_t>(drawableWidth) *
+            static_cast<size_t>(drawableHeight) *
+            4u);
+        glReadPixels(
+            0,
+            0,
+            drawableWidth,
+            drawableHeight,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            framebuffer.data());
+    }
 
     glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
     glReadBuffer(static_cast<GLenum>(previousReadBuffer));
 
-    if (destinationFormat == GX_TF_RGB565) {
+    if (depthCopy) {
+        std::vector<float> copiedDepth(
+            static_cast<size_t>(destinationWidth) *
+                static_cast<size_t>(destinationHeight),
+            0.0f);
+        for (size_t destinationY = 0;
+             destinationY < destinationHeight;
+             ++destinationY) {
+            for (size_t destinationX = 0;
+                 destinationX < destinationWidth;
+                 ++destinationX) {
+                const float sourceX =
+                    static_cast<float>(sourceLeft) +
+                    (static_cast<float>(destinationX) + 0.5f) *
+                        static_cast<float>(sourceWidth) /
+                        static_cast<float>(destinationWidth);
+                const float sourceY =
+                    static_cast<float>(sourceTop) +
+                    (static_cast<float>(destinationY) + 0.5f) *
+                        static_cast<float>(sourceHeight) /
+                        static_cast<float>(destinationHeight);
+                const int framebufferX = std::clamp(
+                    static_cast<int>(sourceX * scaleX),
+                    0,
+                    drawableWidth - 1);
+                const int framebufferY = std::clamp(
+                    drawableHeight - 1 -
+                        static_cast<int>(sourceY * scaleY),
+                    0,
+                    drawableHeight - 1);
+                copiedDepth[
+                    destinationY *
+                        static_cast<size_t>(destinationWidth) +
+                    destinationX] =
+                    depthBuffer[
+                        static_cast<size_t>(framebufferY) *
+                            static_cast<size_t>(drawableWidth) +
+                        static_cast<size_t>(framebufferX)];
+            }
+        }
+        SIM::GX::EncodeDepthTextureCopy(
+            copiedDepth.data(),
+            destinationWidth,
+            destinationHeight,
+            destinationFormat,
+            static_cast<u8*>(destination));
+    } else if (destinationFormat == GX_TF_RGB565) {
         std::vector<u8> copiedPixels(
             static_cast<size_t>(destinationWidth) *
                 static_cast<size_t>(destinationHeight) *

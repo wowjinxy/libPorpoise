@@ -73,6 +73,10 @@ void GlobalState::Reset() {
     for (auto& matrix : mPositionMatrices) {
         matrix = IdentityMatrix();
     }
+    mNormalMatrixValid.fill(false);
+    for (auto& matrix : mNormalMatrices) {
+        matrix = IdentityMatrix();
+    }
     mTextureMatrixValid.fill(false);
     mTextureMatrix2x4.fill(false);
     for (auto& matrix : mTextureMatrices) {
@@ -276,6 +280,21 @@ const std::array<float, 16>& GlobalState::GetPositionMatrix(
     if (index < mPositionMatrices.size() &&
         mPositionMatrixValid[index]) {
         return mPositionMatrices[index];
+    }
+
+    static const std::array<float, 16> identity = IdentityMatrix();
+    return identity;
+}
+
+const std::array<float, 16>& GlobalState::GetNormalMatrix() const {
+    return GetNormalMatrix(mCurrentPositionMatrix);
+}
+
+const std::array<float, 16>& GlobalState::GetNormalMatrix(
+    size_t index) const {
+    if (index < mNormalMatrices.size() &&
+        mNormalMatrixValid[index]) {
+        return mNormalMatrices[index];
     }
 
     static const std::array<float, 16> identity = IdentityMatrix();
@@ -1064,6 +1083,7 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
 
     const u32 endAddress = address + static_cast<u32>(writableWords);
     RefreshPositionMatrices(address, endAddress);
+    RefreshNormalMatrices(address, endAddress);
     RefreshTextureMatrices(address, endAddress);
     RefreshPostTextureMatrices(address, endAddress);
     RefreshTexCoordGenState(address, endAddress);
@@ -1091,6 +1111,31 @@ void GlobalState::RefreshPositionMatrices(u32 firstAddress, u32 endAddress) {
             }
         }
         mPositionMatrixValid[slot] = true;
+    }
+}
+
+void GlobalState::RefreshNormalMatrices(u32 firstAddress, u32 endAddress) {
+    constexpr u32 normalMatrixStart = 0x400;
+    constexpr u32 wordsPerMatrix = 9;
+    for (size_t slot = 0; slot < mNormalMatrices.size(); ++slot) {
+        const u32 matrixStart =
+            normalMatrixStart + static_cast<u32>(slot) * wordsPerMatrix;
+        const u32 matrixEnd = matrixStart + wordsPerMatrix;
+        if (endAddress <= matrixStart || firstAddress >= matrixEnd) {
+            continue;
+        }
+
+        auto& matrix = mNormalMatrices[slot];
+        matrix = IdentityMatrix();
+        for (size_t row = 0; row < 3; ++row) {
+            for (size_t column = 0; column < 3; ++column) {
+                const size_t source =
+                    matrixStart + row * 3 + column;
+                matrix[row * 4 + column] =
+                    WordToFloat(mXfMemory[source]);
+            }
+        }
+        mNormalMatrixValid[slot] = true;
     }
 }
 

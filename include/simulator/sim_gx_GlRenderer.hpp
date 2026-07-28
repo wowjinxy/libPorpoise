@@ -28,6 +28,12 @@ void EncodeRgb565TextureCopy(
     u16 width,
     u16 height,
     u8* encoded);
+void EncodeDepthTextureCopy(
+    const float* depth,
+    u16 width,
+    u16 height,
+    u32 destinationFormat,
+    u8* encoded);
 
 class GlRenderer {
  public:
