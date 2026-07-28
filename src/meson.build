@@ -3,9 +3,13 @@ libporpoise_prebuilt = []
 
 subdir('amcExi2')
 subdir('amcnotstub')
+subdir('arc')
 subdir('ar')
 subdir('base')
 subdir('card')
+subdir('cnt')
+subdir('cx')
+subdir('darch')
 subdir('db')
 subdir('demo')
 subdir('dvd')

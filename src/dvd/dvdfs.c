@@ -1093,15 +1093,24 @@ BOOL DVDReadDir(DVDDir* dir, DVDDirEntry* dirent)
 			continue;
 		}
 
-		snprintf(slot->name, sizeof(slot->name), "%s", name);
 		if (strcmp(slot->dvdPath, "/") == 0) {
 			snprintf(childPath, sizeof(childPath), "/%s", name);
 		} else {
 			snprintf(childPath, sizeof(childPath), "%s/%s", slot->dvdPath, name);
 		}
-		dirent->entryNum = (u32)hostDVDRegisterEntry(childPath, isDir);
+		{
+			s32 entryNum = hostDVDRegisterEntry(childPath, isDir);
+			const char* stableName;
+			if (entryNum < 0) {
+				return FALSE;
+			}
+			stableName = strrchr(HostDVDEntries[entryNum].path, '/');
+			dirent->entryNum = (u32)entryNum;
+			dirent->name = stableName != NULL
+				? stableName + 1
+				: HostDVDEntries[entryNum].path;
+		}
 		dirent->isDir = isDir;
-		dirent->name = slot->name;
 		dir->location++;
 		return TRUE;
 	}

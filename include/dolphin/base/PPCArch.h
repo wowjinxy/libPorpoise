@@ -13,9 +13,9 @@ BEGIN_SCOPE_EXTERN_C
 #define PPC_MOVE_FROM_MSR(rD)       asm { mfmsr rD }
 #define PPC_MOVE_TO_MSR(rS)         asm { mtmsr rS }
 #else
-#define PPC_MOVE_FROM_SPR(name, rD) (void)0
+#define PPC_MOVE_FROM_SPR(name, rD) ((rD) = 0)
 #define PPC_MOVE_TO_SPR(name, rS)   (void)0
-#define PPC_MOVE_FROM_MSR(rD)       (void)0
+#define PPC_MOVE_FROM_MSR(rD)       ((rD) = 0)
 #define PPC_MOVE_TO_MSR(rS)         (void)0
 #endif
 
