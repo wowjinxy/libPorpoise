@@ -1,6 +1,39 @@
 #include <dolphin/os.h>
 #include <stddef.h>
 
+#ifdef LIBPORPOISE_PORT
+static BOOL LockHostMutex(OSMutex* mutex)
+{
+	int result;
+
+	for (;;) {
+		result = SDL_TryLockMutex(mutex->sdlMutex);
+		if (result == 0) {
+			return TRUE;
+		}
+		if (result != SDL_MUTEX_TIMEDOUT) {
+			return FALSE;
+		}
+
+		/*
+		 * Do not retain the single-core scheduler lock while waiting for an
+		 * object mutex. Drop the object immediately after it becomes
+		 * available, reacquire the scheduler, then retry in the canonical
+		 * scheduler-before-object order.
+		 */
+		__OSHostThreadWillWait(&mutex->queue);
+		result = SDL_LockMutex(mutex->sdlMutex);
+		if (result == 0) {
+			SDL_UnlockMutex(mutex->sdlMutex);
+		}
+		__OSHostThreadDidWait();
+		if (result != 0) {
+			return FALSE;
+		}
+	}
+}
+#endif
+
 /**
  * @TODO: Documentation
  */
@@ -11,6 +44,7 @@ void OSInitMutex(OSMutex* mutex)
 	mutex->count  = 0;
 	#ifdef LIBPORPOISE_PORT
 	mutex->sdlMutex = SDL_CreateMutex();
+	mutex->hostOwner = 0;
 	#endif
 }
 
@@ -20,7 +54,19 @@ void OSInitMutex(OSMutex* mutex)
 void OSLockMutex(OSMutex* mutex)
 {
 	#ifdef LIBPORPOISE_PORT
-	SDL_LockMutex(mutex->sdlMutex);
+	BOOL enabled = OSDisableInterrupts();
+	SDL_threadID currentThread = SDL_ThreadID();
+
+	if (LockHostMutex(mutex)) {
+		if (mutex->hostOwner == currentThread) {
+			mutex->count++;
+		} else {
+			mutex->hostOwner = currentThread;
+			mutex->thread = OSGetCurrentThread();
+			mutex->count = 1;
+		}
+	}
+	OSRestoreInterrupts(enabled);
 	#else
 	BOOL enabled            = OSDisableInterrupts();
 	OSThread* currentThread = OSGetCurrentThread();
@@ -53,7 +99,17 @@ void OSLockMutex(OSMutex* mutex)
 void OSUnlockMutex(OSMutex* mutex)
 {
 	#ifdef LIBPORPOISE_PORT
-	SDL_UnlockMutex(mutex->sdlMutex);
+	BOOL enabled = OSDisableInterrupts();
+
+	if (mutex->hostOwner == SDL_ThreadID() && mutex->count > 0) {
+		mutex->count--;
+		if (mutex->count == 0) {
+			mutex->hostOwner = 0;
+			mutex->thread = NULL;
+		}
+		SDL_UnlockMutex(mutex->sdlMutex);
+	}
+	OSRestoreInterrupts(enabled);
 	#else
 	BOOL enabled            = OSDisableInterrupts();
 	OSThread* currentThread = OSGetCurrentThread();
@@ -92,7 +148,25 @@ void __OSUnlockAllMutex(OSThread* thread)
  */
 BOOL OSTryLockMutex(OSMutex* mutex)
 {
+	#ifdef LIBPORPOISE_PORT
+	BOOL enabled = OSDisableInterrupts();
+	SDL_threadID currentThread = SDL_ThreadID();
+	BOOL locked = SDL_TryLockMutex(mutex->sdlMutex) == 0;
+
+	if (locked) {
+		if (mutex->hostOwner == currentThread) {
+			mutex->count++;
+		} else {
+			mutex->hostOwner = currentThread;
+			mutex->thread = OSGetCurrentThread();
+			mutex->count = 1;
+		}
+	}
+	OSRestoreInterrupts(enabled);
+	return locked;
+	#else
 	TRAP_UNIMPLEMENTED;
+	#endif
 }
 
 /**
@@ -101,6 +175,7 @@ BOOL OSTryLockMutex(OSMutex* mutex)
 void OSInitCond(OSCond* cond)
 {
 	#ifdef LIBPORPOISE_PORT
+	OSInitThreadQueue(&cond->queue);
 	cond->sdlSemaphore = SDL_CreateSemaphore(0);
 	#else
 	OSInitThreadQueue(&cond->queue);
@@ -113,7 +188,31 @@ void OSInitCond(OSCond* cond)
 void OSWaitCond(OSCond* cond, OSMutex* mutex)
 {
 	#ifdef LIBPORPOISE_PORT
+	BOOL enabled = OSDisableInterrupts();
+	s32 count;
+	s32 i;
+
+	if (mutex->hostOwner != SDL_ThreadID() || mutex->count <= 0) {
+		OSRestoreInterrupts(enabled);
+		return;
+	}
+
+	count = mutex->count;
+	mutex->count = 0;
+	mutex->hostOwner = 0;
+	mutex->thread = NULL;
+	for (i = 0; i < count; ++i) {
+		SDL_UnlockMutex(mutex->sdlMutex);
+	}
+
+	__OSHostThreadWillWait(&cond->queue);
 	SDL_SemWait(cond->sdlSemaphore);
+	__OSHostThreadDidWait();
+
+	for (i = 0; i < count; ++i) {
+		OSLockMutex(mutex);
+	}
+	OSRestoreInterrupts(enabled);
 	#else
 	BOOL enabled            = OSDisableInterrupts();
 	OSThread* currentThread = OSGetCurrentThread();
@@ -147,7 +246,9 @@ void OSWaitCond(OSCond* cond, OSMutex* mutex)
 void OSSignalCond(OSCond* cond)
 {
 	#ifdef LIBPORPOISE_PORT
+	BOOL enabled = OSDisableInterrupts();
 	SDL_SemPost(cond->sdlSemaphore);
+	OSRestoreInterrupts(enabled);
 	#else
 	OSWakeupThread(&cond->queue);
 	#endif

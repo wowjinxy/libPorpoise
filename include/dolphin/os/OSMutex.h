@@ -19,6 +19,7 @@ struct OSMutex {
 	OSMutexLink link;    // _10
 #ifdef LIBPORPOISE_PORT
 	SDL_mutex * sdlMutex; /* SDL Mutex used to implement OSMutex on ported platforms */
+	SDL_threadID hostOwner;
 #endif
 };
 

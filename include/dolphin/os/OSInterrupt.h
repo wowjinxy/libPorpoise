@@ -40,6 +40,14 @@ void __OSDispatchInterrupt(__OSException exception, OSContext* context);
 BOOL OSEnableInterrupts();
 BOOL OSDisableInterrupts();
 BOOL OSRestoreInterrupts(BOOL enabled);
+#ifdef LIBPORPOISE_PORT
+/*
+ * Blocking host implementations temporarily surrender the scheduler lock
+ * while preserving the emulated interrupt-disabled state.
+ */
+void __OSHostInterruptWillWait(void);
+void __OSHostInterruptDidWait(void);
+#endif
 
 // Mask functions.
 OSInterruptMask __OSMaskInterrupts(OSInterruptMask mask);

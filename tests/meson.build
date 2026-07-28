@@ -123,6 +123,62 @@ os_host_thread_queue_test = executable(
 
 test('os-host-thread-queue', os_host_thread_queue_test)
 
+os_host_interrupt_test = executable(
+    'os-host-interrupt-test',
+    sources: files('os_HostInterruptTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [
+        libar,
+        libbase,
+        libcard,
+        libdb,
+        libdemo,
+        libdvd,
+        libexi,
+        libgd,
+        libgx,
+        libmem,
+        libmtx,
+        libos,
+        libpad,
+        libsi,
+        libsim,
+        libvi,
+    ],
+    dependencies: sdl2_dep,
+    native: true,
+)
+
+test('os-host-interrupt', os_host_interrupt_test, timeout: 10)
+
+os_host_mutex_test = executable(
+    'os-host-mutex-test',
+    sources: files('os_HostMutexTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [
+        libar,
+        libbase,
+        libcard,
+        libdb,
+        libdemo,
+        libdvd,
+        libexi,
+        libgd,
+        libgx,
+        libmem,
+        libmtx,
+        libos,
+        libpad,
+        libsi,
+        libsim,
+        libvi,
+    ],
+    dependencies: sdl2_dep,
+    native: true,
+)
+
+test('os-host-mutex', os_host_mutex_test, timeout: 10)
+
 os_host_message_queue_test = executable(
     'os-host-message-queue-test',
     sources: files('os_HostMessageQueueTests.cpp'),
