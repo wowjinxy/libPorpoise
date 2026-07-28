@@ -45,6 +45,17 @@ void OSSetPeriodicAlarm(OSAlarm* alarm, OSTime start, OSTime period, OSAlarmHand
 void OSSetAlarmTag(OSAlarm* alarm, u32 tag);
 void OSCancelAlarms(u32 tag);
 
+#ifdef LIBPORPOISE_PORT
+/*
+ * Cooperative host alarm scheduling. Only the registered emulated CPU thread
+ * dispatches handlers; blocking primitives use the next deadline as their
+ * condition-wait timeout.
+ */
+void __OSHostRegisterAlarmThread(void);
+BOOL __OSHostIsAlarmThread(void);
+u32 __OSHostGetAlarmTimeoutMilliseconds(void);
+#endif
+
 //////////////////////////////////
 
 END_SCOPE_EXTERN_C

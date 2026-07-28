@@ -2,12 +2,83 @@
 #include <dolphin/os.h>
 #include <limits.h>
 #include <stddef.h>
+#ifdef LIBPORPOISE_PORT
+#include <SDL2/SDL_mutex.h>
+#include <SDL2/SDL_thread.h>
+#endif
 
 // forward declarations
 static OSAlarmQueue AlarmQueue;
+#ifdef LIBPORPOISE_PORT
+static SDL_threadID HostAlarmThread;
+static BOOL HostAlarmDispatching;
+#endif
 
 static void DecrementerExceptionHandler(__OSException exception, OSContext* context);
 static void InsertAlarm(OSAlarm* alarm, OSTime fire, OSAlarmHandler handler);
+
+#ifdef LIBPORPOISE_PORT
+void __OSHostRegisterAlarmThread(void)
+{
+	BOOL enabled = OSDisableInterrupts();
+
+	if (HostAlarmThread == 0) {
+		HostAlarmThread = SDL_ThreadID();
+	}
+	OSRestoreInterrupts(enabled);
+}
+
+BOOL __OSHostIsAlarmThread(void)
+{
+	BOOL enabled = OSDisableInterrupts();
+	BOOL isAlarmThread;
+
+	isAlarmThread =
+	    HostAlarmThread != 0 &&
+	    HostAlarmThread == SDL_ThreadID();
+	OSRestoreInterrupts(enabled);
+	return isAlarmThread;
+}
+
+u32 __OSHostGetAlarmTimeoutMilliseconds(void)
+{
+	OSAlarm* alarm;
+	OSTime delta;
+	OSTime ticksPerMillisecond;
+	OSTime milliseconds;
+	BOOL enabled;
+
+	if (!__OSHostIsAlarmThread()) {
+		return SDL_MUTEX_MAXWAIT;
+	}
+
+	enabled = OSDisableInterrupts();
+	alarm = AlarmQueue.head;
+	if (alarm == NULL) {
+		OSRestoreInterrupts(enabled);
+		return SDL_MUTEX_MAXWAIT;
+	}
+
+	delta = alarm->fire - __OSGetSystemTime();
+	if (delta <= 0) {
+		OSRestoreInterrupts(enabled);
+		return 0;
+	}
+
+	ticksPerMillisecond = OS_TIMER_CLOCK / 1000;
+	if (ticksPerMillisecond <= 0) {
+		OSRestoreInterrupts(enabled);
+		return 1;
+	}
+	milliseconds =
+	    (delta + ticksPerMillisecond - 1) / ticksPerMillisecond;
+	if (milliseconds >= SDL_MUTEX_MAXWAIT) {
+		milliseconds = SDL_MUTEX_MAXWAIT - 1;
+	}
+	OSRestoreInterrupts(enabled);
+	return (u32)milliseconds;
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -17,18 +88,22 @@ int OSCheckAlarmQueue(void)
 {
 #ifdef LIBPORPOISE_PORT
 	BOOL handled = FALSE;
+	BOOL enabled;
 
+	enabled = OSDisableInterrupts();
+	if (!__OSHostIsAlarmThread() || HostAlarmDispatching) {
+		OSRestoreInterrupts(enabled);
+		return FALSE;
+	}
+	HostAlarmDispatching = TRUE;
 	for (;;) {
 		OSAlarm* alarm;
 		OSAlarmHandler handler;
 		OSTime time;
-		BOOL enabled;
 
-		enabled = OSDisableInterrupts();
 		alarm = AlarmQueue.head;
 		time = __OSGetSystemTime();
 		if (alarm == NULL || time < alarm->fire) {
-			OSRestoreInterrupts(enabled);
 			break;
 		}
 
@@ -44,7 +119,6 @@ int OSCheckAlarmQueue(void)
 		if (alarm->period > 0) {
 			InsertAlarm(alarm, 0, handler);
 		}
-		OSRestoreInterrupts(enabled);
 
 		if (handler != NULL) {
 			handler(alarm, OSGetCurrentContext());
@@ -52,6 +126,8 @@ int OSCheckAlarmQueue(void)
 		}
 	}
 
+	HostAlarmDispatching = FALSE;
+	OSRestoreInterrupts(enabled);
 	return handled;
 #else
 	TRAP_UNIMPLEMENTED;
@@ -86,10 +162,13 @@ static void SetTimer(OSAlarm* alarm)
  */
 void OSInitAlarm(void)
 {
+	BOOL enabled = OSDisableInterrupts();
+
 	if (__OSGetExceptionHandler(__OS_EXCEPTION_DECREMENTER) != DecrementerExceptionHandler) {
 		AlarmQueue.head = AlarmQueue.tail = NULL;
 		__OSSetExceptionHandler(__OS_EXCEPTION_DECREMENTER, DecrementerExceptionHandler);
 	}
+	OSRestoreInterrupts(enabled);
 }
 
 /**
@@ -98,6 +177,10 @@ void OSInitAlarm(void)
 void OSCreateAlarm(OSAlarm* alarm)
 {
 	alarm->handler = NULL;
+	alarm->prev = NULL;
+	alarm->next = NULL;
+	alarm->period = 0;
+	alarm->start = 0;
 }
 
 /**
@@ -139,6 +222,9 @@ static void InsertAlarm(OSAlarm* alarm, OSTime fire, OSAlarmHandler handler)
 			AlarmQueue.head = alarm;
 			SetTimer(alarm);
 		}
+#ifdef LIBPORPOISE_PORT
+		__OSHostWakeAlarmThread();
+#endif
 		return;
 	}
 	alarm->next     = NULL;
@@ -151,6 +237,9 @@ static void InsertAlarm(OSAlarm* alarm, OSTime fire, OSAlarmHandler handler)
 		AlarmQueue.head = AlarmQueue.tail = alarm;
 		SetTimer(alarm);
 	}
+#ifdef LIBPORPOISE_PORT
+	__OSHostWakeAlarmThread();
+#endif
 }
 
 /**
@@ -186,9 +275,19 @@ void OSSetAbsAlarm(OSAlarm* alarm, OSTime tick, OSAlarmHandler handler)
  * @TODO: Documentation
  * @note UNUSED Size: 000070
  */
-void OSSetPeriodicAlarm(OSAlarm*, OSTime, OSTime, OSAlarmHandler)
+void OSSetPeriodicAlarm(
+	OSAlarm* alarm,
+	OSTime start,
+	OSTime period,
+	OSAlarmHandler handler)
 {
-	TRAP_UNIMPLEMENTED;
+	BOOL enabled;
+
+	enabled = OSDisableInterrupts();
+	alarm->period = period;
+	alarm->start = start;
+	InsertAlarm(alarm, 0, handler);
+	OSRestoreInterrupts(enabled);
 }
 
 /**
@@ -221,6 +320,11 @@ void OSCancelAlarm(OSAlarm* alarm)
 		}
 	}
 	alarm->handler = NULL;
+	alarm->prev = NULL;
+	alarm->next = NULL;
+#ifdef LIBPORPOISE_PORT
+	__OSHostWakeAlarmThread();
+#endif
 
 	OSRestoreInterrupts(enabled);
 }

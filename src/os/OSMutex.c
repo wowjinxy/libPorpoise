@@ -17,17 +17,16 @@ static BOOL LockHostMutex(OSMutex* mutex)
 
 		/*
 		 * Do not retain the single-core scheduler lock while waiting for an
-		 * object mutex. Drop the object immediately after it becomes
-		 * available, reacquire the scheduler, then retry in the canonical
-		 * scheduler-before-object order.
+		 * object mutex. Its thread queue is signaled when the owner releases
+		 * the final recursive lock; alarm timeouts may also wake this wait
+		 * without completing it.
 		 */
-		__OSHostThreadWillWait(&mutex->queue);
-		result = SDL_LockMutex(mutex->sdlMutex);
-		if (result == 0) {
-			SDL_UnlockMutex(mutex->sdlMutex);
-		}
-		__OSHostThreadDidWait();
-		if (result != 0) {
+		SDL_LockMutex(mutex->queue.hostMutex);
+		result = __OSHostWaitForCondition(
+		    &mutex->queue,
+		    mutex->queue.hostMutex);
+		SDL_UnlockMutex(mutex->queue.hostMutex);
+		if (result != 0 && result != SDL_MUTEX_TIMEDOUT) {
 			return FALSE;
 		}
 	}
@@ -100,14 +99,19 @@ void OSUnlockMutex(OSMutex* mutex)
 {
 	#ifdef LIBPORPOISE_PORT
 	BOOL enabled = OSDisableInterrupts();
+	BOOL released = FALSE;
 
 	if (mutex->hostOwner == SDL_ThreadID() && mutex->count > 0) {
 		mutex->count--;
 		if (mutex->count == 0) {
 			mutex->hostOwner = 0;
 			mutex->thread = NULL;
+			released = TRUE;
 		}
 		SDL_UnlockMutex(mutex->sdlMutex);
+	}
+	if (released) {
+		OSWakeupThread(&mutex->queue);
 	}
 	OSRestoreInterrupts(enabled);
 	#else
@@ -176,7 +180,6 @@ void OSInitCond(OSCond* cond)
 {
 	#ifdef LIBPORPOISE_PORT
 	OSInitThreadQueue(&cond->queue);
-	cond->sdlSemaphore = SDL_CreateSemaphore(0);
 	#else
 	OSInitThreadQueue(&cond->queue);
 	#endif
@@ -191,6 +194,7 @@ void OSWaitCond(OSCond* cond, OSMutex* mutex)
 	BOOL enabled = OSDisableInterrupts();
 	s32 count;
 	s32 i;
+	u64 wakeGeneration;
 
 	if (mutex->hostOwner != SDL_ThreadID() || mutex->count <= 0) {
 		OSRestoreInterrupts(enabled);
@@ -201,13 +205,19 @@ void OSWaitCond(OSCond* cond, OSMutex* mutex)
 	mutex->count = 0;
 	mutex->hostOwner = 0;
 	mutex->thread = NULL;
+	SDL_LockMutex(cond->queue.hostMutex);
+	wakeGeneration = cond->queue.hostWakeGeneration;
 	for (i = 0; i < count; ++i) {
 		SDL_UnlockMutex(mutex->sdlMutex);
 	}
 
-	__OSHostThreadWillWait(&cond->queue);
-	SDL_SemWait(cond->sdlSemaphore);
-	__OSHostThreadDidWait();
+	OSWakeupThread(&mutex->queue);
+	while (wakeGeneration == cond->queue.hostWakeGeneration) {
+		__OSHostWaitForCondition(
+		    &cond->queue,
+		    cond->queue.hostMutex);
+	}
+	SDL_UnlockMutex(cond->queue.hostMutex);
 
 	for (i = 0; i < count; ++i) {
 		OSLockMutex(mutex);
@@ -247,7 +257,10 @@ void OSSignalCond(OSCond* cond)
 {
 	#ifdef LIBPORPOISE_PORT
 	BOOL enabled = OSDisableInterrupts();
-	SDL_SemPost(cond->sdlSemaphore);
+	SDL_LockMutex(cond->queue.hostMutex);
+	cond->queue.hostWakeGeneration++;
+	SDL_CondBroadcast(cond->queue.hostCondition);
+	SDL_UnlockMutex(cond->queue.hostMutex);
 	OSRestoreInterrupts(enabled);
 	#else
 	OSWakeupThread(&cond->queue);

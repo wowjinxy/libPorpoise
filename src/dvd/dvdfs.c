@@ -549,6 +549,7 @@ BOOL DVDOpen(const char* fileName, DVDFileInfo* fileInfo)
 	long size;
 	s32 i;
 
+	OSCheckAlarmQueue();
 	if (fileName == NULL || fileInfo == NULL ||
 	    !hostDVDBuildPath(fileName, hostPath, sizeof(hostPath))) {
 		return FALSE;
@@ -564,6 +565,7 @@ BOOL DVDOpen(const char* fileName, DVDFileInfo* fileInfo)
 		fclose(file);
 		return FALSE;
 	}
+	OSCheckAlarmQueue();
 
 	for (i = 0; i < HOST_DVD_MAX_OPEN_FILES; i++) {
 		if (!HostDVDFiles[i].used) {
@@ -615,10 +617,12 @@ BOOL DVDClose(DVDFileInfo* fileInfo)
 {
 #ifdef LIBPORPOISE_PORT
 	HostDVDFile* slot = hostDVDFindFile(fileInfo);
+	OSCheckAlarmQueue();
 	if (slot == NULL) {
 		return FALSE;
 	}
 	fclose(slot->file);
+	OSCheckAlarmQueue();
 	memset(slot, 0, sizeof(*slot));
 	fileInfo->cBlock.state = DVD_STATE_END;
 	return TRUE;
@@ -820,6 +824,7 @@ s32 DVDReadPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset, s32 p
 	HostDVDFile* slot = hostDVDFindFile(fileInfo);
 	size_t bytesRead;
 	(void)prio;
+	OSCheckAlarmQueue();
 	if (slot == NULL || addr == NULL || length < 0 || offset < 0 ||
 	    (u32)offset > fileInfo->length) {
 		return DVD_RESULT_FATAL_ERROR;
@@ -830,6 +835,7 @@ s32 DVDReadPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset, s32 p
 	}
 	fileInfo->cBlock.state = DVD_STATE_BUSY;
 	bytesRead = fread(addr, 1, (size_t)length, slot->file);
+	OSCheckAlarmQueue();
 	fileInfo->cBlock.currTransferSize = (u32)bytesRead;
 	fileInfo->cBlock.transferredSize = (u32)bytesRead;
 	fileInfo->cBlock.state = DVD_STATE_END;
@@ -944,12 +950,14 @@ s32 DVDSeekPrio(DVDFileInfo* fileInfo, s32 offset, s32 prio)
 #ifdef LIBPORPOISE_PORT
 	HostDVDFile* slot = hostDVDFindFile(fileInfo);
 	(void)prio;
+	OSCheckAlarmQueue();
 	if (slot == NULL || offset < 0 || (u32)offset > fileInfo->length) {
 		return DVD_RESULT_FATAL_ERROR;
 	}
 	if (fseek(slot->file, offset, SEEK_SET) != 0) {
 		return DVD_RESULT_FATAL_ERROR;
 	}
+	OSCheckAlarmQueue();
 	fileInfo->cBlock.offset = (u32)offset;
 	fileInfo->cBlock.state = DVD_STATE_END;
 	return offset;

@@ -8,19 +8,9 @@ static BOOL WaitForMessageQueue(
 	OSMessageQueue* queue,
 	OSThreadQueue* waitQueue)
 {
-	int result;
-
-	__OSHostThreadWillWait(waitQueue);
-	result = SDL_CondWait(waitQueue->hostCondition, queue->hostMutex);
-	/*
-	 * Restore the scheduler-before-object lock order. SDL_CondWait returns
-	 * with the queue mutex held, while the scheduler lock was surrendered
-	 * for the sleep.
-	 */
-	SDL_UnlockMutex(queue->hostMutex);
-	__OSHostThreadDidWait();
-	SDL_LockMutex(queue->hostMutex);
-	return result == 0;
+	int result =
+	    __OSHostWaitForCondition(waitQueue, queue->hostMutex);
+	return result == 0 || result == SDL_MUTEX_TIMEDOUT;
 }
 #endif
 
@@ -37,6 +27,10 @@ void OSInitMessageQueue(OSMessageQueue* queue, OSMessage* msgArray, s32 msgCount
 	queue->usedCount  = 0;
 #ifdef LIBPORPOISE_PORT
 	queue->hostMutex = SDL_CreateMutex();
+	SDL_DestroyMutex(queue->queueSend.hostMutex);
+	SDL_DestroyMutex(queue->queueReceive.hostMutex);
+	queue->queueSend.hostMutex = queue->hostMutex;
+	queue->queueReceive.hostMutex = queue->hostMutex;
 #endif
 }
 

@@ -58,7 +58,7 @@ ASM u32 OSGetTick(void)
 	blr
 #endif // clang-format on
 #ifdef LIBPORPOISE_PORT
-	return OSMillisecondsToTicks(SDL_GetTicks());
+	return (u32)OSGetTime();
 #endif
 }
 
