@@ -136,7 +136,7 @@ See [SDL2_SETUP.md](docs/SDL2_SETUP.md) for full configuration options.
 | **PAD** | ✅ **Complete** | Controller input (SDL2 + keyboard fallback + config system) |
 | **DVD** | ✅ **Complete** | File I/O (5 modules: DVD, Queue, Low, Error, Fatal) |
 | **SI** | ✅ **Complete** | Serial Interface stubs (for PAD compatibility) |
-| **AR** | ✅ **Complete** | ARAM (16MB audio RAM simulation with DMA) |
+| **AR** | ⚠️ **Host compatibility** | 16 MiB synchronous ARAM DMA; queued priority/chunk timing is deferred |
 | **VI** | ✅ **Complete** | Video Interface (SDL2 window + OpenGL + config system) |
 | **EXI** | ✅ **Complete** | External Interface stubs (for CARD/network compatibility) |
 | **CARD** | ✅ **Complete** | Memory cards (maps to memcard_a/, memcard_b/ directories) |

@@ -9,6 +9,7 @@
  */
 
 #include <revolution/gd.h>
+#include <dolphin/os/OSHostEndian.h>
 
 #include <limits.h>
 #include <stdint.h>
@@ -21,12 +22,6 @@ enum {
     GD_FILE_DESC_SIZE = 8,
     GD_FILE_ALIGNMENT = 32
 };
-
-static u32 GDReadBE32(const u8* bytes)
-{
-    return ((u32)bytes[0] << 24) | ((u32)bytes[1] << 16) |
-           ((u32)bytes[2] << 8) | (u32)bytes[3];
-}
 
 static int GDWriteBE32(FILE* file, u32 value)
 {
@@ -239,14 +234,14 @@ s32 GDReadDLFile(const char* fName, u32* numDLs, u32* numPLs,
     }
     fclose(file);
 
-    if (GDReadBE32(fileBytes) != GDFileVersionNumber) {
+    if (OSReadBigEndian32(fileBytes) != GDFileVersionNumber) {
         free(fileBytes);
         return -4;
     }
-    dlCount = GDReadBE32(fileBytes + 4);
-    plCount = GDReadBE32(fileBytes + 8);
-    dlOffset = GDReadBE32(fileBytes + 12);
-    plOffset = GDReadBE32(fileBytes + 16);
+    dlCount = OSReadBigEndian32(fileBytes + 4);
+    plCount = OSReadBigEndian32(fileBytes + 8);
+    dlOffset = OSReadBigEndian32(fileBytes + 12);
+    plOffset = OSReadBigEndian32(fileBytes + 16);
 
     if ((size_t)dlCount > SIZE_MAX / sizeof(GDGList) ||
         (size_t)plCount > SIZE_MAX / sizeof(GDGList)) {
@@ -288,8 +283,8 @@ s32 GDReadDLFile(const char* fName, u32* numDLs, u32* numPLs,
 
     for (i = 0; i < dlCount; ++i) {
         const u8* desc = retainedFile + dlOffset + i * GD_FILE_DESC_SIZE;
-        const u32 dataOffset = GDReadBE32(desc);
-        const u32 byteLength = GDReadBE32(desc + 4);
+        const u32 dataOffset = OSReadBigEndian32(desc);
+        const u32 byteLength = OSReadBigEndian32(desc + 4);
         if (!GDRangeInFile(dataOffset, byteLength, fileLength)) {
             free(allocation);
             return -2;
@@ -300,8 +295,8 @@ s32 GDReadDLFile(const char* fName, u32* numDLs, u32* numPLs,
 
     for (i = 0; i < plCount; ++i) {
         const u8* desc = retainedFile + plOffset + i * GD_FILE_DESC_SIZE;
-        const u32 dataOffset = GDReadBE32(desc);
-        const u32 byteLength = GDReadBE32(desc + 4);
+        const u32 dataOffset = OSReadBigEndian32(desc);
+        const u32 byteLength = OSReadBigEndian32(desc + 4);
         if (!GDRangeInFile(dataOffset, byteLength, fileLength)) {
             free(allocation);
             return -2;

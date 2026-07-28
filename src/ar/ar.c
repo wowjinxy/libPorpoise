@@ -3,6 +3,12 @@
 #include <dolphin/os.h>
 #include <stddef.h>
 #include <string.h>
+#ifdef LIBPORPOISE_PORT
+#include <dolphin/os/OSHostAddress.h>
+#include <dolphin/os/OSHostMemory.h>
+#include <stdint.h>
+#include <stdio.h>
+#endif
 
 static ARCallback __AR_Callback;
 static u32 __AR_Size;
@@ -18,6 +24,102 @@ static volatile BOOL __AR_init_flag = FALSE;
 
 static void __ARHandler(__OSInterrupt interrupt, OSContext* context);
 static void __ARChecksize(void);
+
+#ifdef LIBPORPOISE_PORT
+#define HOST_ARAM_SIZE 0x01000000U
+
+static u8 __ARHostMemory[HOST_ARAM_SIZE];
+static volatile BOOL __ARHostDMABusy = FALSE;
+
+static BOOL __ARHostMainMemoryRangeIsValid(
+	u32 address,
+	u32 length,
+	void** pointer)
+{
+	const OSHostMemoryLayout* layout;
+	uintptr_t decodedAddress;
+	uintptr_t cachedBase;
+	uintptr_t uncachedBase;
+	u32 offset;
+
+	*pointer = __OSHostDecodeAddress(address);
+	if (*pointer == NULL) {
+		return FALSE;
+	}
+	if (((uintptr_t)*pointer & (ARQ_DMA_ALIGNMENT - 1U)) != 0) {
+		return FALSE;
+	}
+
+	/*
+	 * A token proves that the pointer is live, but the legacy u32 API carries
+	 * no allocation length. The caller remains responsible for the capacity
+	 * of a token-backed buffer. Strict console-memory addresses can be
+	 * bounds-checked completely.
+	 */
+	if (__OSHostIsAddressToken(address)) {
+		return TRUE;
+	}
+
+	layout = __OSHostMemoryGetLayout();
+	if (layout == NULL) {
+		return FALSE;
+	}
+
+	decodedAddress = (uintptr_t)*pointer;
+	cachedBase = (uintptr_t)layout->cachedBase;
+	uncachedBase = (uintptr_t)layout->uncachedBase;
+	if (decodedAddress >= cachedBase &&
+	    decodedAddress - cachedBase < layout->size) {
+		offset = (u32)(decodedAddress - cachedBase);
+	} else if (decodedAddress >= uncachedBase &&
+	           decodedAddress - uncachedBase < layout->size) {
+		offset = (u32)(decodedAddress - uncachedBase);
+	} else {
+		return FALSE;
+	}
+	return length <= layout->size - offset;
+}
+
+static BOOL __ARHostValidateDMA(
+	u32 type,
+	u32 mainmem_addr,
+	u32 aram_addr,
+	u32 length,
+	void** mainMemory)
+{
+	const char* reason = NULL;
+
+	if (type != ARAM_DIR_MRAM_TO_ARAM &&
+	    type != ARAM_DIR_ARAM_TO_MRAM) {
+		reason = "invalid transfer direction";
+	} else if ((aram_addr & (ARQ_DMA_ALIGNMENT - 1U)) != 0 ||
+	           (length & (ARQ_DMA_ALIGNMENT - 1U)) != 0) {
+		reason = "ARAM address or length is not 32-byte aligned";
+	} else if (aram_addr > HOST_ARAM_SIZE ||
+	           length > HOST_ARAM_SIZE - aram_addr) {
+		reason = "ARAM transfer is outside the 16 MiB backing store";
+	} else if (!__ARHostMainMemoryRangeIsValid(
+	               mainmem_addr,
+	               length,
+	               mainMemory)) {
+		reason = "main-memory address is invalid, stale, misaligned, or out of bounds";
+	}
+
+	if (reason != NULL) {
+		fprintf(
+		    stderr,
+		    "libPorpoise AR: rejected DMA "
+		    "(type=%u, mram=0x%08x, aram=0x%08x, length=%u): %s.\n",
+		    type,
+		    mainmem_addr,
+		    aram_addr,
+		    length,
+		    reason);
+		return FALSE;
+	}
+	return TRUE;
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -37,9 +139,13 @@ ARCallback ARRegisterDMACallback(ARCallback callback)
  * @TODO: Documentation
  * @note UNUSED Size: 00003C
  */
-void ARGetDMAStatus(void)
+u32 ARGetDMAStatus(void)
 {
-	TRAP_UNIMPLEMENTED;
+#ifdef LIBPORPOISE_PORT
+	return __ARHostDMABusy ? 1U : 0U;
+#else
+	return __DSPRegs[DSP_CONTROL_STATUS] & 0x0200U;
+#endif
 }
 
 /**
@@ -50,9 +156,24 @@ void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length)
 	BOOL enabled;
 
 #ifdef LIBPORPOISE_PORT
+	void* mainMemory = NULL;
+	BOOL valid;
+
 	OSCheckAlarmQueue();
 #endif
 	enabled = OSDisableInterrupts();
+
+#ifdef LIBPORPOISE_PORT
+	if (__ARHostDMABusy) {
+		fprintf(
+		    stderr,
+		    "libPorpoise AR: rejected DMA because another transfer "
+		    "is already in progress.\n");
+		OSRestoreInterrupts(enabled);
+		OSCheckAlarmQueue();
+		return;
+	}
+#endif
 
 	// Set main mem address
 	__DSPRegs[DSP_ARAM_DMA_MM_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_MM_HI] & ~0x3ff) | (u16)(mainmem_addr >> 16);
@@ -66,6 +187,36 @@ void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length)
 	__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)((__DSPRegs[DSP_ARAM_DMA_SIZE_HI] & ~0x8000) | (type << 15));
 	__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_HI] & ~0x3ff) | (u16)(length >> 16);
 	__DSPRegs[DSP_ARAM_DMA_SIZE_LO] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_LO] & ~0xffe0) | (u16)(length & 0xffff);
+
+#ifdef LIBPORPOISE_PORT
+	/*
+	 * Host compatibility backend: the DMA is completed synchronously on the
+	 * calling thread. Busy state is real for the duration of the copy, then
+	 * the registered completion callback is invoked deterministically before
+	 * ARStartDMA() returns.
+	 */
+	__ARHostDMABusy = TRUE;
+	__DSPRegs[DSP_CONTROL_STATUS] |= 0x0200U;
+	valid = __ARHostValidateDMA(
+	    type,
+	    mainmem_addr,
+	    aram_addr,
+	    length,
+	    &mainMemory);
+	if (valid && length != 0) {
+		if (type == ARAM_DIR_MRAM_TO_ARAM) {
+			memcpy(&__ARHostMemory[aram_addr], mainMemory, length);
+		} else {
+			memcpy(mainMemory, &__ARHostMemory[aram_addr], length);
+		}
+	}
+	__ARHostDMABusy = FALSE;
+	__DSPRegs[DSP_CONTROL_STATUS] &= (u16)~0x0200U;
+
+	if (__AR_Callback != NULL) {
+		(*__AR_Callback)();
+	}
+#endif
 
 	OSRestoreInterrupts(enabled);
 #ifdef LIBPORPOISE_PORT
@@ -95,9 +246,14 @@ void ARFree(void)
  * @TODO: Documentation
  * @note UNUSED Size: 000008
  */
-void ARCheckInit(void)
+BOOL ARCheckInit(void)
 {
+#ifdef LIBPORPOISE_PORT
+	return __AR_init_flag;
+#else
 	TRAP_UNIMPLEMENTED;
+	return FALSE;
+#endif
 }
 
 /**
@@ -119,6 +275,21 @@ u32 ARInit(u32* stack_index_addr, u32 num_entries)
 
 	__AR_Callback = NULL;
 
+#ifdef LIBPORPOISE_PORT
+	__AR_StackPointer = __AR_ARAM_USR_BASE_ADDR;
+	__AR_FreeBlocks = num_entries;
+	__AR_BlockLength = stack_index_addr;
+	__AR_Size = HOST_ARAM_SIZE;
+#if OS_BUILD_VERSION >= 20011217L
+	__AR_InternalSize = HOST_ARAM_SIZE;
+	__AR_ExpansionSize = 0;
+#endif
+	__ARHostDMABusy = FALSE;
+	memset(__ARHostMemory, 0, sizeof(__ARHostMemory));
+	__AR_init_flag = TRUE;
+	OSRestoreInterrupts(old);
+	return __AR_StackPointer;
+#else
 	__OSSetInterruptHandler(__OS_INTERRUPT_DSP_ARAM, __ARHandler);
 	__OSUnmaskInterrupts(OS_INTERRUPTMASK_DSP_ARAM);
 
@@ -142,6 +313,7 @@ u32 ARInit(u32* stack_index_addr, u32 num_entries)
 	OSRestoreInterrupts(old);
 
 	return __AR_StackPointer;
+#endif
 }
 
 /**
@@ -174,9 +346,14 @@ u32 ARGetBaseAddress()
  * @TODO: Documentation
  * @note UNUSED Size: 000008
  */
-void ARGetSize(void)
+u32 ARGetSize(void)
 {
+#ifdef LIBPORPOISE_PORT
+	return __AR_Size;
+#else
 	TRAP_UNIMPLEMENTED;
+	return 0;
+#endif
 }
 
 /**
