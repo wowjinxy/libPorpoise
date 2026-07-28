@@ -4,6 +4,8 @@
 #include <cstddef>
 
 extern "C" void __VIHostOnCopyDisp(void);
+extern "C" void __VIHostOnCopyTex(void);
+extern "C" void __VIHostOnDraw(void);
 
 namespace {
 
@@ -11,6 +13,7 @@ std::array<int, 6> EventOrder = {};
 size_t EventCount = 0;
 u32 PreRetraceCount = 0;
 u32 PostRetraceCount = 0;
+u32 CopyClearCount = 0;
 
 void RecordEvent(int event) {
     if (EventCount < EventOrder.size()) {
@@ -37,6 +40,10 @@ extern "C" void SIM_Render(void) {
     RecordEvent(3);
 }
 
+extern "C" void __GXHostApplyCopyClear(void) {
+    ++CopyClearCount;
+}
+
 int main() {
     VISetNextFrameBuffer(reinterpret_cast<void*>(0x1000));
     VIFlush();
@@ -53,6 +60,11 @@ int main() {
 
     const u32 afterWaitRetraceCount = VIGetRetraceCount();
     const u32 afterWaitField = VIGetNextField();
+    __VIHostOnCopyTex();
+    __VIHostOnCopyDisp();
+    const u32 afterIntermediateCopyRetraceCount = VIGetRetraceCount();
+    __VIHostOnCopyTex();
+    __VIHostOnDraw();
     __VIHostOnCopyDisp();
     const u32 afterCopyRetraceCount = VIGetRetraceCount();
     const u32 afterCopyField = VIGetNextField();
@@ -65,6 +77,7 @@ int main() {
     const u32 expectedCopyRetraceCount = initialRetraceCount + 2u;
     return
         afterWaitRetraceCount == expectedWaitRetraceCount &&
+        afterIntermediateCopyRetraceCount == expectedWaitRetraceCount &&
         afterCopyRetraceCount == expectedCopyRetraceCount &&
         VIGetRetraceCount() == expectedCopyRetraceCount &&
         initialLine == 0u &&
@@ -73,6 +86,7 @@ int main() {
         VIGetNextField() == afterCopyField &&
         PreRetraceCount == expectedCopyRetraceCount &&
         PostRetraceCount == expectedCopyRetraceCount &&
+        CopyClearCount == 1u &&
         EventCount == EventOrder.size() &&
         EventOrder[0] == 1 &&
         EventOrder[1] == 2 &&

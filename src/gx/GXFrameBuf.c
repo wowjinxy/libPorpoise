@@ -3,6 +3,7 @@
 
 #ifdef LIBPORPOISE_PORT
 extern void __VIHostOnCopyDisp(void);
+extern void __VIHostOnCopyTex(void);
 extern void __GXHostCopyTex(
     void* destination,
     u16 sourceLeft,
@@ -1090,6 +1091,9 @@ void GXCopyTex(void* dest, GXBool clear)
 	    HostTexCopyDestinationHeight,
 	    HostTexCopyDestinationFormat,
 	    clear);
+	if (clear) {
+		__VIHostOnCopyTex();
+	}
 #endif
 #if OS_BUILD_VERSION >= 20011002L
 	gx->bpSent = GX_FALSE;

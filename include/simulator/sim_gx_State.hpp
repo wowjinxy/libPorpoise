@@ -208,6 +208,8 @@ class GlobalState {
   const VertexFormat& GetVertexFormat(GXVtxFmt formatIdx) const;
   const std::array<float, 16>& GetPositionMatrix() const;
   const std::array<float, 16>& GetPositionMatrix(size_t index) const;
+  const std::array<float, 16>& GetNormalMatrix() const;
+  const std::array<float, 16>& GetNormalMatrix(size_t index) const;
   const std::array<float, 16>& GetProjectionMatrix() const;
   const std::array<float, 16>& GetTextureMatrix(size_t index) const;
   const std::array<float, 16>& GetPostTextureMatrix(size_t index) const;
@@ -256,6 +258,7 @@ class GlobalState {
   static std::array<float, 16> IdentityMatrix();
   static float WordToFloat(u32 word);
   void RefreshPositionMatrices(u32 firstAddress, u32 endAddress);
+  void RefreshNormalMatrices(u32 firstAddress, u32 endAddress);
   void RefreshTextureMatrices(u32 firstAddress, u32 endAddress);
   void RefreshPostTextureMatrices(u32 firstAddress, u32 endAddress);
   void RefreshTexCoordGenState(u32 firstAddress, u32 endAddress);
@@ -273,6 +276,8 @@ class GlobalState {
   std::array<u32, 0x1100> mXfMemory = {};
   std::array<std::array<float, 16>, 10> mPositionMatrices = {};
   std::array<bool, 10> mPositionMatrixValid = {};
+  std::array<std::array<float, 16>, 10> mNormalMatrices = {};
+  std::array<bool, 10> mNormalMatrixValid = {};
   std::array<std::array<float, 16>, 10> mTextureMatrices = {};
   std::array<bool, 10> mTextureMatrixValid = {};
   std::array<bool, 10> mTextureMatrix2x4 = {};

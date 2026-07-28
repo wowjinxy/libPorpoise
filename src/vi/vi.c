@@ -8,9 +8,15 @@
 #include <simulator/sim.h>
 
 extern void __GXHostServiceFifoBreakpoint(void);
+#if defined(__GNUC__)
+extern void __GXHostApplyCopyClear(void) __attribute__((weak));
+#else
+extern void __GXHostApplyCopyClear(void);
+#endif
 
 static BOOL hostRetraceInProgress;
 static BOOL hostCopyRetracePendingWait;
+static BOOL hostTextureCopyAwaitingDraw;
 #endif
 
 // Useful macros.
@@ -473,6 +479,7 @@ void VIInit(void)
 	SIM_VIInit();
 	hostRetraceInProgress = FALSE;
 	hostCopyRetracePendingWait = FALSE;
+	hostTextureCopyAwaitingDraw = FALSE;
 #endif
 
 	retraceCount = 0;
@@ -574,9 +581,33 @@ static void __VIHostAdvanceRetrace(void)
 	hostRetraceInProgress = FALSE;
 }
 
+void __VIHostOnCopyTex(void)
+{
+	hostTextureCopyAwaitingDraw = TRUE;
+}
+
+void __VIHostOnDraw(void)
+{
+	hostTextureCopyAwaitingDraw = FALSE;
+}
+
 void __VIHostOnCopyDisp(void)
 {
 	if (hostRetraceInProgress) {
+		return;
+	}
+
+	/*
+	 * Render-to-texture demos sometimes follow a clearing GXCopyTex with a
+	 * GXCopyDisp before issuing another draw.  The display copy is only being
+	 * used to establish the next EFB clear color; presenting it would expose
+	 * the intermediate render-to-texture pass.
+	 */
+	if (hostTextureCopyAwaitingDraw) {
+		hostTextureCopyAwaitingDraw = FALSE;
+		if (__GXHostApplyCopyClear != NULL) {
+			__GXHostApplyCopyClear();
+		}
 		return;
 	}
 
