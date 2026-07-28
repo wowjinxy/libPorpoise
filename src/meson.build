@@ -1,9 +1,13 @@
 libporpoise_libs = []
 libporpoise_prebuilt = []
 
+subdir('arc')
 subdir('ar')
 subdir('base')
 subdir('card')
+subdir('cnt')
+subdir('cx')
+subdir('darch')
 subdir('db')
 subdir('demo')
 subdir('dvd')
