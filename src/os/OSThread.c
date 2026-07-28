@@ -91,11 +91,10 @@ void OSInitThreadQueue(OSThreadQueue* threadQueue)
 OSThread* OSGetCurrentThread(void)
 {
 #ifdef LIBPORPOISE_PORT
-	if (HostCurrentThread != NULL) {
-		return HostCurrentThread;
-	}
-#endif
+	return HostCurrentThread;
+#else
 	return __OSCurrentThread;
+#endif
 }
 
 /**
@@ -397,12 +396,14 @@ BOOL OSCreateThreadDebug(OSThread* thread, OSThreadStartFunction func, void* par
 	return OSCreateThreadReal(thread, func, param, stack, stackSize, priority, attr);
 }
 
-void __OSHostThreadWillWait(OSThreadQueue* threadQueue)
+void __OSHostThreadWillBlock(OSThreadQueue* threadQueue)
 {
 	OSThread* currentThread = HostCurrentThread;
+
 	if (currentThread != NULL) {
 		currentThread->state = OS_THREAD_STATE_WAITING;
 		currentThread->queue = threadQueue;
+		AddPrio(threadQueue, currentThread, link);
 	}
 	if (__OSHostIsAlarmThread()) {
 		HostAlarmWaitQueue = threadQueue;
@@ -410,7 +411,7 @@ void __OSHostThreadWillWait(OSThreadQueue* threadQueue)
 	__OSHostInterruptWillWait();
 }
 
-void __OSHostThreadDidWait(void)
+void __OSHostThreadDidWake(void)
 {
 	OSThread* currentThread;
 
@@ -420,10 +421,57 @@ void __OSHostThreadDidWait(void)
 	}
 	currentThread = HostCurrentThread;
 	if (currentThread != NULL) {
+		if (currentThread->queue != NULL) {
+			RemoveItem(currentThread->queue, currentThread, link);
+		}
 		currentThread->queue = NULL;
-		currentThread->state = OS_THREAD_STATE_RUNNING;
+		if (currentThread->state != OS_THREAD_STATE_MORIBUND &&
+		    currentThread->state != OS_THREAD_STATE_NULL) {
+			currentThread->state = OS_THREAD_STATE_RUNNING;
+		}
 	}
 	OSCheckAlarmQueue();
+}
+
+void __OSHostThreadWillExit(void)
+{
+	OSThread* thread;
+	SDL_Thread* detachedThread = NULL;
+	BOOL enabled;
+
+	enabled = OSDisableInterrupts();
+	thread = HostCurrentThread;
+	if (thread == NULL ||
+	    thread->state == OS_THREAD_STATE_MORIBUND ||
+	    thread->state == OS_THREAD_STATE_NULL) {
+		OSRestoreInterrupts(enabled);
+		return;
+	}
+
+	if (thread->queue != NULL) {
+		RemoveItem(thread->queue, thread, link);
+		thread->queue = NULL;
+	}
+	OSClearContext(&thread->context);
+	__OSUnlockAllMutex(thread);
+
+	if (thread->attr & OS_THREAD_ATTR_DETACH) {
+		if (__OSIsThreadActive(thread)) {
+			RemoveItem(&__OSActiveThreadQueue, thread, linkActive);
+		}
+		thread->state = OS_THREAD_STATE_NULL;
+		detachedThread = thread->sdlThread;
+		thread->sdlThread = NULL;
+	} else {
+		thread->state = OS_THREAD_STATE_MORIBUND;
+	}
+
+	OSWakeupThread(&thread->queueJoin);
+	OSRestoreInterrupts(enabled);
+
+	if (detachedThread != NULL) {
+		SDL_DetachThread(detachedThread);
+	}
 }
 
 int __OSHostWaitForCondition(
@@ -442,7 +490,7 @@ int __OSHostWaitForCondition(
 		return SDL_MUTEX_TIMEDOUT;
 	}
 	timeout = __OSHostGetAlarmTimeoutMilliseconds();
-	__OSHostThreadWillWait(threadQueue);
+	__OSHostThreadWillBlock(threadQueue);
 	if (timeout == SDL_MUTEX_MAXWAIT) {
 		result = SDL_CondWait(threadQueue->hostCondition, mutex);
 	} else {
@@ -452,7 +500,7 @@ int __OSHostWaitForCondition(
 		    timeout);
 	}
 	SDL_UnlockMutex(mutex);
-	__OSHostThreadDidWait();
+	__OSHostThreadDidWake();
 	SDL_LockMutex(mutex);
 	return result;
 }
@@ -474,17 +522,21 @@ void __OSHostWakeAlarmThread(void)
 // Wrapper function to run OSThreads in SDL Threads
 static int OSRunThread(void * threadPtr) {
 	OSThread * thread = (OSThread*)threadPtr;
+	void* result;
 	BOOL enabled;
 
 	HostCurrentThread = thread;
 	enabled = OSDisableInterrupts();
 	thread->state = OS_THREAD_STATE_RUNNING;
 	OSRestoreInterrupts(enabled);
-	thread->val = thread->func(thread->param);
+	result = thread->func(thread->param);
 	enabled = OSDisableInterrupts();
-	thread->state = OS_THREAD_STATE_MORIBUND;
-	OSWakeupThread(&thread->queueJoin);
+	if (thread->state != OS_THREAD_STATE_MORIBUND &&
+	    thread->state != OS_THREAD_STATE_NULL) {
+		thread->val = result;
+	}
 	OSRestoreInterrupts(enabled);
+	__OSHostThreadWillExit();
 	HostCurrentThread = NULL;
 	return 0;
 }
@@ -514,6 +566,7 @@ BOOL OSCreateThread(OSThread* thread, OSThreadStartFunction func, void* param, v
 	thread->priority = priority;
 	thread->suspend  = 1;
 	thread->val      = (void*)-1;
+	thread->queue    = NULL;
 	thread->mutex    = NULL;
 	OSInitThreadQueue(&thread->queueJoin);
 	InitMutexQueue(&thread->queueMutex);
@@ -549,6 +602,20 @@ BOOL OSCreateThread(OSThread* thread, OSThreadStartFunction func, void* param, v
  */
 void OSExitThread(void* val)
 {
+#ifdef LIBPORPOISE_PORT
+	OSThread* thread;
+	BOOL enable;
+
+	enable = OSDisableInterrupts();
+	thread = HostCurrentThread;
+	if (thread != NULL &&
+	    thread->state != OS_THREAD_STATE_MORIBUND &&
+	    thread->state != OS_THREAD_STATE_NULL) {
+		thread->val = val;
+	}
+	OSRestoreInterrupts(enable);
+	__OSHostThreadWillExit();
+#else
 	OSThread* thread;
 	BOOL enable;
 
@@ -573,6 +640,7 @@ void OSExitThread(void* val)
 	}
 
 	OSRestoreInterrupts(enable);
+#endif
 }
 
 /**
@@ -660,6 +728,9 @@ BOOL OSJoinThread(OSThread* thread, void** val)
 	if (val != NULL) {
 		*val = thread->val;
 	}
+	if (__OSIsThreadActive(thread)) {
+		RemoveItem(&__OSActiveThreadQueue, thread, linkActive);
+	}
 	thread->state = OS_THREAD_STATE_NULL;
 	OSRestoreInterrupts(enabled);
 	return TRUE;
@@ -703,7 +774,11 @@ void OSDetachThread(OSThread* thread)
 s32 OSResumeThread(OSThread* thread)
 {
 #ifdef LIBPORPOISE_PORT
-	const s32 suspendCount = thread->suspend;
+	BOOL enabled;
+	s32 suspendCount;
+
+	enabled = OSDisableInterrupts();
+	suspendCount = thread->suspend;
 	if (thread->suspend > 0) {
 		thread->suspend--;
 	}
@@ -714,6 +789,7 @@ s32 OSResumeThread(OSThread* thread)
 			thread->state = OS_THREAD_STATE_MORIBUND;
 		}
 	}
+	OSRestoreInterrupts(enabled);
 	return suspendCount;
 #else
 	BOOL enabled;

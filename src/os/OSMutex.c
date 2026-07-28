@@ -55,14 +55,22 @@ void OSLockMutex(OSMutex* mutex)
 	#ifdef LIBPORPOISE_PORT
 	BOOL enabled = OSDisableInterrupts();
 	SDL_threadID currentThread = SDL_ThreadID();
+	OSThread* currentOSThread;
 
 	if (LockHostMutex(mutex)) {
 		if (mutex->hostOwner == currentThread) {
 			mutex->count++;
 		} else {
+			currentOSThread = OSGetCurrentThread();
 			mutex->hostOwner = currentThread;
-			mutex->thread = OSGetCurrentThread();
+			mutex->thread = currentOSThread;
 			mutex->count = 1;
+			if (currentOSThread != NULL) {
+				AddTailMutex(
+				    &currentOSThread->queueMutex,
+				    mutex,
+				    link);
+			}
 		}
 	}
 	OSRestoreInterrupts(enabled);
@@ -100,10 +108,17 @@ void OSUnlockMutex(OSMutex* mutex)
 	#ifdef LIBPORPOISE_PORT
 	BOOL enabled = OSDisableInterrupts();
 	BOOL released = FALSE;
+	OSThread* ownerThread = mutex->thread;
 
 	if (mutex->hostOwner == SDL_ThreadID() && mutex->count > 0) {
 		mutex->count--;
 		if (mutex->count == 0) {
+			if (ownerThread != NULL) {
+				RemoveItemMutex(
+				    &ownerThread->queueMutex,
+				    mutex,
+				    link);
+			}
 			mutex->hostOwner = 0;
 			mutex->thread = NULL;
 			released = TRUE;
@@ -140,7 +155,15 @@ void __OSUnlockAllMutex(OSThread* thread)
 
 	while (thread->queueMutex.head) {
 		RemoveHeadMutex(&thread->queueMutex, mutex, link);
+#ifdef LIBPORPOISE_PORT
+		while (mutex->count > 0) {
+			mutex->count--;
+			SDL_UnlockMutex(mutex->sdlMutex);
+		}
+		mutex->hostOwner = 0;
+#else
 		mutex->count  = 0;
+#endif
 		mutex->thread = NULL;
 		OSWakeupThread(&mutex->queue);
 	}
@@ -156,14 +179,22 @@ BOOL OSTryLockMutex(OSMutex* mutex)
 	BOOL enabled = OSDisableInterrupts();
 	SDL_threadID currentThread = SDL_ThreadID();
 	BOOL locked = SDL_TryLockMutex(mutex->sdlMutex) == 0;
+	OSThread* currentOSThread;
 
 	if (locked) {
 		if (mutex->hostOwner == currentThread) {
 			mutex->count++;
 		} else {
+			currentOSThread = OSGetCurrentThread();
 			mutex->hostOwner = currentThread;
-			mutex->thread = OSGetCurrentThread();
+			mutex->thread = currentOSThread;
 			mutex->count = 1;
+			if (currentOSThread != NULL) {
+				AddTailMutex(
+				    &currentOSThread->queueMutex,
+				    mutex,
+				    link);
+			}
 		}
 	}
 	OSRestoreInterrupts(enabled);
@@ -195,16 +226,24 @@ void OSWaitCond(OSCond* cond, OSMutex* mutex)
 	s32 count;
 	s32 i;
 	u64 wakeGeneration;
+	OSThread* currentThread;
 
 	if (mutex->hostOwner != SDL_ThreadID() || mutex->count <= 0) {
 		OSRestoreInterrupts(enabled);
 		return;
 	}
 
+	currentThread = mutex->thread;
 	count = mutex->count;
 	mutex->count = 0;
 	mutex->hostOwner = 0;
 	mutex->thread = NULL;
+	if (currentThread != NULL) {
+		RemoveItemMutex(
+		    &currentThread->queueMutex,
+		    mutex,
+		    link);
+	}
 	SDL_LockMutex(cond->queue.hostMutex);
 	wakeGeneration = cond->queue.hostWakeGeneration;
 	for (i = 0; i < count; ++i) {
