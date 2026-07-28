@@ -12,7 +12,14 @@ static BOOL WaitForMessageQueue(
 
 	__OSHostThreadWillWait(waitQueue);
 	result = SDL_CondWait(waitQueue->hostCondition, queue->hostMutex);
+	/*
+	 * Restore the scheduler-before-object lock order. SDL_CondWait returns
+	 * with the queue mutex held, while the scheduler lock was surrendered
+	 * for the sleep.
+	 */
+	SDL_UnlockMutex(queue->hostMutex);
 	__OSHostThreadDidWait();
+	SDL_LockMutex(queue->hostMutex);
 	return result == 0;
 }
 #endif

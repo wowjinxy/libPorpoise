@@ -679,9 +679,13 @@ void VIWaitForRetrace(void)
 		SDL_LockMutex(retraceQueue.hostMutex);
 		startCount = retraceCount;
 		while (startCount == retraceCount) {
+			__OSHostThreadWillWait(&retraceQueue);
 			SDL_CondWait(
 			    retraceQueue.hostCondition,
 			    retraceQueue.hostMutex);
+			SDL_UnlockMutex(retraceQueue.hostMutex);
+			__OSHostThreadDidWait();
+			SDL_LockMutex(retraceQueue.hostMutex);
 		}
 		SDL_UnlockMutex(retraceQueue.hostMutex);
 	}

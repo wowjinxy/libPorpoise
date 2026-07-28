@@ -2,6 +2,8 @@
 #include <dolphin/os.h>
 #include <string.h>
 #ifdef LIBPORPOISE_PORT
+#include <SDL2/SDL_atomic.h>
+#include <SDL2/SDL_mutex.h>
 #include <stdlib.h>
 #endif
 
@@ -10,6 +12,48 @@ static void ExternalInterruptHandler(__OSException exception, OSContext* context
 static __OSInterruptHandler* InterruptHandlerTable;
 #ifdef LIBPORPOISE_PORT
 static __thread BOOL HostInterruptsEnabled = TRUE;
+static __thread BOOL HostSchedulerLockSuspended = FALSE;
+static SDL_mutex* HostSchedulerMutex;
+static SDL_SpinLock HostSchedulerInitLock;
+
+/*
+ * The GameCube has one CPU, so disabling interrupts also makes SDK critical
+ * sections mutually exclusive. Host threads need an explicit lock to preserve
+ * that property. The mutex is initialized lazily because OSDisableInterrupts()
+ * is used before the rest of OSInit() has completed.
+ */
+static SDL_mutex* GetHostSchedulerMutex(void)
+{
+	SDL_mutex* mutex;
+
+	SDL_AtomicLock(&HostSchedulerInitLock);
+	if (HostSchedulerMutex == NULL) {
+		HostSchedulerMutex = SDL_CreateMutex();
+	}
+	mutex = HostSchedulerMutex;
+	SDL_AtomicUnlock(&HostSchedulerInitLock);
+
+	if (mutex == NULL) {
+		abort();
+	}
+	return mutex;
+}
+
+void __OSHostInterruptWillWait(void)
+{
+	if (!HostInterruptsEnabled && !HostSchedulerLockSuspended) {
+		HostSchedulerLockSuspended = TRUE;
+		SDL_UnlockMutex(GetHostSchedulerMutex());
+	}
+}
+
+void __OSHostInterruptDidWait(void)
+{
+	if (HostSchedulerLockSuspended) {
+		SDL_LockMutex(GetHostSchedulerMutex());
+		HostSchedulerLockSuspended = FALSE;
+	}
+}
 #endif
 
 static OSInterruptMask InterruptPrioTable[] = {
@@ -43,7 +87,10 @@ entry __RAS_OSDisableInterrupts_end
 #endif // clang-format on
 #ifdef LIBPORPOISE_PORT
 	BOOL previouslyEnabled = HostInterruptsEnabled;
-	HostInterruptsEnabled = FALSE;
+	if (previouslyEnabled) {
+		SDL_LockMutex(GetHostSchedulerMutex());
+		HostInterruptsEnabled = FALSE;
+	}
 	return previouslyEnabled;
 #endif
 }
@@ -63,7 +110,10 @@ ASM BOOL OSEnableInterrupts(void) {
 #endif // clang-format on
 #ifdef LIBPORPOISE_PORT
 	BOOL previouslyEnabled = HostInterruptsEnabled;
-	HostInterruptsEnabled = TRUE;
+	if (!previouslyEnabled) {
+		HostInterruptsEnabled = TRUE;
+		SDL_UnlockMutex(GetHostSchedulerMutex());
+	}
 	return previouslyEnabled;
 #endif
 }
@@ -89,7 +139,15 @@ _restore:
 #endif // clang-format on
 #ifdef LIBPORPOISE_PORT
 	BOOL previouslyEnabled = HostInterruptsEnabled;
-	HostInterruptsEnabled = enabled;
+	if (previouslyEnabled != enabled) {
+		if (enabled) {
+			HostInterruptsEnabled = TRUE;
+			SDL_UnlockMutex(GetHostSchedulerMutex());
+		} else {
+			SDL_LockMutex(GetHostSchedulerMutex());
+			HostInterruptsEnabled = FALSE;
+		}
+	}
 	return previouslyEnabled;
 #endif
 }
