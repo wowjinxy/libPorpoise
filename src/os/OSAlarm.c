@@ -7,6 +7,7 @@
 static OSAlarmQueue AlarmQueue;
 
 static void DecrementerExceptionHandler(__OSException exception, OSContext* context);
+static void InsertAlarm(OSAlarm* alarm, OSTime fire, OSAlarmHandler handler);
 
 /**
  * @TODO: Documentation
@@ -14,7 +15,47 @@ static void DecrementerExceptionHandler(__OSException exception, OSContext* cont
  */
 int OSCheckAlarmQueue(void)
 {
+#ifdef LIBPORPOISE_PORT
+	BOOL handled = FALSE;
+
+	for (;;) {
+		OSAlarm* alarm;
+		OSAlarmHandler handler;
+		OSTime time;
+		BOOL enabled;
+
+		enabled = OSDisableInterrupts();
+		alarm = AlarmQueue.head;
+		time = __OSGetSystemTime();
+		if (alarm == NULL || time < alarm->fire) {
+			OSRestoreInterrupts(enabled);
+			break;
+		}
+
+		AlarmQueue.head = alarm->next;
+		if (AlarmQueue.head == NULL) {
+			AlarmQueue.tail = NULL;
+		} else {
+			AlarmQueue.head->prev = NULL;
+		}
+
+		handler = alarm->handler;
+		alarm->handler = NULL;
+		if (alarm->period > 0) {
+			InsertAlarm(alarm, 0, handler);
+		}
+		OSRestoreInterrupts(enabled);
+
+		if (handler != NULL) {
+			handler(alarm, OSGetCurrentContext());
+			handled = TRUE;
+		}
+	}
+
+	return handled;
+#else
 	TRAP_UNIMPLEMENTED;
+#endif
 }
 
 /**

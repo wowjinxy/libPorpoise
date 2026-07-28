@@ -123,6 +123,38 @@ os_host_thread_queue_test = executable(
 
 test('os-host-thread-queue', os_host_thread_queue_test)
 
+os_host_message_queue_test = executable(
+    'os-host-message-queue-test',
+    sources: files('os_HostMessageQueueTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [
+        libar,
+        libbase,
+        libcard,
+        libdb,
+        libdemo,
+        libdvd,
+        libexi,
+        libgd,
+        libgx,
+        libmem,
+        libmtx,
+        libos,
+        libpad,
+        libsi,
+        libsim,
+        libvi,
+    ],
+    dependencies: sdl2_dep,
+    native: true,
+)
+
+test(
+    'os-host-message-queue',
+    os_host_message_queue_test,
+    timeout: 30,
+)
+
 arc_archive_paths_test = executable(
     'arc-archive-paths-test',
     sources: files('arc_ArchivePathTests.cpp'),
