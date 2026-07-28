@@ -14,6 +14,7 @@
 #include <dolphin/os/OSExpansion.h>
 #include <dolphin/os/OSFastCast.h>
 #include <dolphin/os/OSFont.h>
+#include <dolphin/os/OSHostAddress.h>
 #include <dolphin/os/OSInterrupt.h>
 #include <dolphin/os/OSMemory.h>
 #include <dolphin/os/OSMessage.h>
