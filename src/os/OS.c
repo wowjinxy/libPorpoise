@@ -1,4 +1,7 @@
 #include <dolphin/os.h>
+#ifdef LIBPORPOISE_PORT
+#include <dolphin/os/OSHostMemory.h>
+#endif
 #include <dolphin/base/PPCArch.h>
 #include <dolphin/db.h>
 #include <dolphin/exi.h>
@@ -10,9 +13,6 @@
 #endif
 #include <stddef.h>
 #include <string.h>
-#ifdef LIBPORPOISE_PORT
-#include <stdlib.h>
-#endif
 
 // memory locations for important stuff
 #define OS_DBINTERFACE_ADDR     0x40
@@ -160,12 +160,19 @@ void OSInit(void)
 	void* debugArenaLo;
 	u32 inputConsoleType;
 	u32 tdev;
+#ifdef LIBPORPOISE_PORT
+	const OSHostMemoryLayout* hostMemory;
+#endif
 
 	// check if we've already done all this or not
 	if (!AreWeInitialized) {     // fantastic name
 		AreWeInitialized = TRUE; // flag to make sure we don't have to do this again
 
 		// SYSTEM //
+#ifdef LIBPORPOISE_PORT
+		hostMemory = __OSHostMemoryInit(
+		    OS_HOST_MEMORY_PROFILE_GAMECUBE);
+#endif
 #if OS_BUILD_VERSION >= 20011002L
 		__OSStartTime = __OSGetSystemTime();
 #endif
@@ -178,9 +185,11 @@ void OSInit(void)
 		BootInfo     = (OSBootInfo*)OS_BASE_CACHED; // set pointer to BootInfo
 
 		#ifdef LIBPORPOISE_PORT
-		BootInfo = (OSBootInfo*)malloc(sizeof(OSBootInfo));
+		BootInfo = (OSBootInfo*)hostMemory->cachedBase;
 		memset(BootInfo, 0, sizeof(OSBootInfo));
-		BootInfo->memorySize = 0x01800000;
+		BootInfo->memorySize = hostMemory->size;
+		BootInfo->arenaLo = hostMemory->arenaLo;
+		BootInfo->arenaHi = hostMemory->arenaHi;
 		#endif
 
 		__DVDLongFileNameFlag = FALSE;
@@ -437,10 +446,6 @@ static void OSExceptionInit(void)
 
 	// initialize pointer to exception table
 	OSExceptionTable = OSPhysicalToCached(OS_EXCEPTIONTABLE_ADDR);
-
-	#ifdef LIBPORPOISE_PORT
-	OSExceptionTable = (void*)malloc(sizeof(void*) * __OS_EXCEPTION_MAX);
-	#endif
 
 	// install default exception handlers
 	for (exception = 0; exception < __OS_EXCEPTION_MAX; exception++) {
