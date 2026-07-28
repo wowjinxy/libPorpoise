@@ -55,7 +55,6 @@ Add the following to your project's meson.options:
 option('build_target', type: 'combo', choices: ['gc', 'win64', 'linux'], value: 'gc', description: 'Target build platform')
 ```
 
-
 ## Contributing
 
 Contributions are welcome! Please ensure your code:

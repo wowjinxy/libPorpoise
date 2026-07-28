@@ -11,6 +11,7 @@ libos_srcs = files(
     'OSError.c',
     'OSFont.c',
     'OSHostAddress.c',
+    'OSHostEndian.c',
     'OSHostMemory.c',
     'OSInterrupt.c',
 	'OSLink.c',

@@ -17,6 +17,11 @@ static u32 __ARQChunkSize;
 
 static volatile BOOL __ARQ_init_flag = FALSE;
 
+#ifdef LIBPORPOISE_PORT
+static ARQRequest* __ARQHostPending;
+static ARQCallback __ARQHostCallback;
+#endif
+
 static void __ARQInvokeCallback(
 	ARQCallback callback,
 	ARQRequest* request)
@@ -100,7 +105,19 @@ void __ARQCallbackHack(void)
 void __ARQInterruptServiceRoutine(void)
 {
 #ifdef LIBPORPOISE_PORT
+	ARQRequest* request;
+	ARQCallback callback;
+
 	OSCheckAlarmQueue();
+	request = __ARQHostPending;
+	callback = __ARQHostCallback;
+	__ARQHostPending = NULL;
+	__ARQHostCallback = NULL;
+	if (request != NULL && callback != NULL) {
+		__ARQInvokeCallback(callback, request);
+	}
+	OSCheckAlarmQueue();
+	return;
 #endif
 	if (__ARQCallbackHi) {
 		__ARQInvokeCallback(
@@ -161,8 +178,17 @@ void ARQInit()
 	__ARQRequestPendingLo = NULL;
 	__ARQCallbackHi       = NULL;
 	__ARQCallbackLo       = NULL;
+#ifdef LIBPORPOISE_PORT
+	__ARQHostPending      = NULL;
+	__ARQHostCallback     = NULL;
+#endif
 
 	__ARQ_init_flag = TRUE;
+}
+
+BOOL ARQCheckInit(void)
+{
+	return __ARQ_init_flag;
 }
 
 /**
@@ -171,7 +197,19 @@ void ARQInit()
  */
 void ARQReset(void)
 {
+#ifdef LIBPORPOISE_PORT
+	BOOL enabled = OSDisableInterrupts();
+	__ARQRequestQueueHi = __ARQRequestQueueLo = NULL;
+	__ARQRequestTailHi = __ARQRequestTailLo = NULL;
+	__ARQRequestPendingHi = __ARQRequestPendingLo = NULL;
+	__ARQCallbackHi = __ARQCallbackLo = NULL;
+	__ARQHostPending = NULL;
+	__ARQHostCallback = NULL;
+	__ARQChunkSize = ARQ_CHUNK_SIZE_DEFAULT;
+	OSRestoreInterrupts(enabled);
+#else
 	TRAP_UNIMPLEMENTED;
+#endif
 }
 
 /**
@@ -183,10 +221,17 @@ void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u32 sou
 
 #ifdef LIBPORPOISE_PORT
 	OSCheckAlarmQueue();
+	if (task == NULL) {
+		return;
+	}
+	if (!__ARQ_init_flag) {
+		ARQInit();
+	}
 #endif
 	task->next   = NULL;
 	task->owner  = owner;
 	task->type   = type;
+	task->priority = priority;
 	task->source = source;
 	task->dest   = dest;
 	task->length = length;
@@ -198,6 +243,24 @@ void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u32 sou
 	}
 
 	enabled = OSDisableInterrupts();
+
+#ifdef LIBPORPOISE_PORT
+	/*
+	 * Compatibility phase: requests execute immediately and synchronously.
+	 * Priority and low-priority chunking are recorded but deliberately do not
+	 * affect scheduling until ARQ is moved to a deterministic runtime queue.
+	 */
+	__ARQHostPending = task;
+	__ARQHostCallback = callback;
+	if (type == ARQ_TYPE_MRAM_TO_ARAM) {
+		ARStartDMA(type, source, dest, length);
+	} else {
+		ARStartDMA(type, dest, source, length);
+	}
+	OSRestoreInterrupts(enabled);
+	OSCheckAlarmQueue();
+	return;
+#endif
 
 	switch (priority) {
 	case ARQ_PRIORITY_LOW:
@@ -267,16 +330,28 @@ void ARQFlushQueue(void)
  * @TODO: Documentation
  * @note UNUSED Size: 000020
  */
-void ARQSetChunkSize(void)
+void ARQSetChunkSize(u32 size)
 {
+#ifdef LIBPORPOISE_PORT
+	if (size >= ARQ_DMA_ALIGNMENT &&
+	    (size & (ARQ_DMA_ALIGNMENT - 1U)) == 0) {
+		__ARQChunkSize = size;
+	}
+#else
 	TRAP_UNIMPLEMENTED;
+#endif
 }
 
 /**
  * @TODO: Documentation
  * @note UNUSED Size: 000008
  */
-void ARQGetChunkSize(void)
+u32 ARQGetChunkSize(void)
 {
+#ifdef LIBPORPOISE_PORT
+	return __ARQChunkSize;
+#else
 	TRAP_UNIMPLEMENTED;
+	return 0;
+#endif
 }

@@ -235,6 +235,44 @@ os_host_address_test = executable(
 
 test('os-host-address', os_host_address_test, timeout: 20)
 
+ar_host_compatibility_test = executable(
+    'ar-host-compatibility-test',
+    sources: files('ar_HostCompatibilityTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [
+        libar,
+        libbase,
+        libcard,
+        libdb,
+        libdemo,
+        libdvd,
+        libexi,
+        libgd,
+        libgx,
+        libmem,
+        libmtx,
+        libos,
+        libpad,
+        libsi,
+        libsim,
+        libvi,
+    ],
+    dependencies: sdl2_dep,
+    native: true,
+)
+
+test('ar-host-compatibility', ar_host_compatibility_test, timeout: 20)
+
+os_host_endian_test = executable(
+    'os-host-endian-test',
+    sources: files('os_HostEndianTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [libos],
+    native: true,
+)
+
+test('os-host-endian', os_host_endian_test)
+
 os_host_mutex_test = executable(
     'os-host-mutex-test',
     sources: files('os_HostMutexTests.cpp'),

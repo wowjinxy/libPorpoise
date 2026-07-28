@@ -1,6 +1,7 @@
 #include <dolphin/tpl.h>
 
 #include <dolphin/dvd.h>
+#include <dolphin/os/OSHostEndian.h>
 #include <dolphin/os/OSUtil.h>
 
 #include <malloc.h>
@@ -97,23 +98,6 @@ static TPLPalettePtr tpl_create_fallback_palette(void) {
     return &fallback->palette;
 }
 
-static u16 tpl_be16(const void* p) {
-    const u8* b = (const u8*)p;
-    return (u16)(((u16)b[0] << 8) | (u16)b[1]);
-}
-
-static u32 tpl_be32(const void* p) {
-    const u8* b = (const u8*)p;
-    return ((u32)b[0] << 24) | ((u32)b[1] << 16) | ((u32)b[2] << 8) | (u32)b[3];
-}
-
-static float tpl_be_f32(const void* p) {
-    u32 bits = tpl_be32(p);
-    float f;
-    memcpy(&f, &bits, sizeof(f));
-    return f;
-}
-
 static BOOL tpl_range_valid(size_t offset, size_t length, size_t total) {
     return offset <= total && length <= total - offset;
 }
@@ -127,10 +111,10 @@ static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
     u32 i;
     size_t allocationSize;
 
-    if (!raw || rawSize < 12 || tpl_be32(raw) != TPL_VERSION) return NULL;
+    if (!raw || rawSize < 12 || OSReadBigEndian32(raw) != TPL_VERSION) return NULL;
 
-    descriptorCount = tpl_be32(raw + 4);
-    descriptorOffset = tpl_be32(raw + 8);
+    descriptorCount = OSReadBigEndian32(raw + 4);
+    descriptorOffset = OSReadBigEndian32(raw + 8);
     if (descriptorCount == 0 || descriptorCount > 4096) return NULL;
     if (!tpl_range_valid(descriptorOffset, (size_t)descriptorCount * 8u, rawSize)) return NULL;
 
@@ -158,8 +142,8 @@ static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
 
     for (i = 0; i < descriptorCount; ++i) {
         const u8* descriptor = raw + descriptorOffset + (size_t)i * 8u;
-        u32 textureOffset = tpl_be32(descriptor + 0);
-        u32 clutOffset = tpl_be32(descriptor + 4);
+        u32 textureOffset = OSReadBigEndian32(descriptor + 0);
+        u32 clutOffset = OSReadBigEndian32(descriptor + 4);
 
         if (textureOffset != 0) {
             const u8* texture;
@@ -170,7 +154,7 @@ static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
                 return NULL;
             }
             texture = raw + textureOffset;
-            dataOffset = tpl_be32(texture + 8);
+            dataOffset = OSReadBigEndian32(texture + 8);
             if (dataOffset != 0 && !tpl_range_valid(dataOffset, 1, rawSize)) {
                 tpl_free_aligned(loaded);
                 return NULL;
@@ -178,15 +162,15 @@ static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
 
             header = &loaded->headers[i];
             loaded->descriptors[i].textureHeader = header;
-            header->height = tpl_be16(texture + 0);
-            header->width = tpl_be16(texture + 2);
-            header->format = tpl_be32(texture + 4);
+            header->height = OSReadBigEndian16(texture + 0);
+            header->width = OSReadBigEndian16(texture + 2);
+            header->format = OSReadBigEndian32(texture + 4);
             header->data = dataOffset ? (Ptr)(raw + dataOffset) : NULL;
-            header->wrapS = (GXTexWrapMode)tpl_be32(texture + 12);
-            header->wrapT = (GXTexWrapMode)tpl_be32(texture + 16);
-            header->minFilter = (GXTexFilter)tpl_be32(texture + 20);
-            header->magFilter = (GXTexFilter)tpl_be32(texture + 24);
-            header->LODBias = tpl_be_f32(texture + 28);
+            header->wrapS = (GXTexWrapMode)OSReadBigEndian32(texture + 12);
+            header->wrapT = (GXTexWrapMode)OSReadBigEndian32(texture + 16);
+            header->minFilter = (GXTexFilter)OSReadBigEndian32(texture + 20);
+            header->magFilter = (GXTexFilter)OSReadBigEndian32(texture + 24);
+            header->LODBias = OSReadBigEndianF32(texture + 28);
             header->edgeLODEnable = texture[32];
             header->minLOD = texture[33];
             header->maxLOD = texture[34];
@@ -202,7 +186,7 @@ static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
                 return NULL;
             }
             clut = raw + clutOffset;
-            dataOffset = tpl_be32(clut + 8);
+            dataOffset = OSReadBigEndian32(clut + 8);
             if (dataOffset != 0 && !tpl_range_valid(dataOffset, 1, rawSize)) {
                 tpl_free_aligned(loaded);
                 return NULL;
@@ -210,10 +194,10 @@ static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
 
             header = &loaded->cluts[i];
             loaded->descriptors[i].CLUTHeader = header;
-            header->numEntries = tpl_be16(clut + 0);
+            header->numEntries = OSReadBigEndian16(clut + 0);
             header->unpacked = 1;
             header->pad8 = clut[3];
-            header->format = (GXTlutFmt)tpl_be32(clut + 4);
+            header->format = (GXTlutFmt)OSReadBigEndian32(clut + 4);
             header->data = dataOffset ? (Ptr)(raw + dataOffset) : NULL;
         }
     }
@@ -269,9 +253,9 @@ void TPLBind(TPLPalettePtr pal) {
     if (sizeof(void*) > sizeof(u32)) return;
 
     base = (u8*)pal;
-    pal->versionNumber = tpl_be32(base + 0);
-    pal->numDescriptors = tpl_be32(base + 4);
-    desc_off = tpl_be32(base + 8);
+    pal->versionNumber = OSReadBigEndian32(base + 0);
+    pal->numDescriptors = OSReadBigEndian32(base + 4);
+    desc_off = OSReadBigEndian32(base + 8);
 
     if (pal->versionNumber != TPL_VERSION) return;
     if (pal->numDescriptors == 0 || pal->numDescriptors > 4096) return;
@@ -282,8 +266,8 @@ void TPLBind(TPLPalettePtr pal) {
     desc_raw = base + desc_off;
 
     for (i = 0; i < num; ++i) {
-        u32 tex_off = tpl_be32(desc_raw + (i * 8u) + 0);
-        u32 clut_off = tpl_be32(desc_raw + (i * 8u) + 4);
+        u32 tex_off = OSReadBigEndian32(desc_raw + (i * 8u) + 0);
+        u32 clut_off = OSReadBigEndian32(desc_raw + (i * 8u) + 4);
         TPLDescriptor* desc = &pal->descriptorArray[i];
 
         desc->textureHeader = tex_off ? (TPLHeaderPtr)(base + tex_off) : NULL;
@@ -292,17 +276,17 @@ void TPLBind(TPLPalettePtr pal) {
         if (desc->textureHeader) {
             TPLHeader* tex = desc->textureHeader;
             const u8* raw = base + tex_off;
-            u32 data_off = tpl_be32(raw + 8);
+            u32 data_off = OSReadBigEndian32(raw + 8);
 
-            tex->height = tpl_be16(raw + 0);
-            tex->width = tpl_be16(raw + 2);
-            tex->format = tpl_be32(raw + 4);
+            tex->height = OSReadBigEndian16(raw + 0);
+            tex->width = OSReadBigEndian16(raw + 2);
+            tex->format = OSReadBigEndian32(raw + 4);
             tex->data = data_off ? (Ptr)(base + data_off) : NULL;
-            tex->wrapS = (GXTexWrapMode)tpl_be32(raw + 12);
-            tex->wrapT = (GXTexWrapMode)tpl_be32(raw + 16);
-            tex->minFilter = (GXTexFilter)tpl_be32(raw + 20);
-            tex->magFilter = (GXTexFilter)tpl_be32(raw + 24);
-            tex->LODBias = tpl_be_f32(raw + 28);
+            tex->wrapS = (GXTexWrapMode)OSReadBigEndian32(raw + 12);
+            tex->wrapT = (GXTexWrapMode)OSReadBigEndian32(raw + 16);
+            tex->minFilter = (GXTexFilter)OSReadBigEndian32(raw + 20);
+            tex->magFilter = (GXTexFilter)OSReadBigEndian32(raw + 24);
+            tex->LODBias = OSReadBigEndianF32(raw + 28);
             tex->edgeLODEnable = raw[32];
             tex->minLOD = raw[33];
             tex->maxLOD = raw[34];
@@ -312,12 +296,12 @@ void TPLBind(TPLPalettePtr pal) {
         if (desc->CLUTHeader) {
             TPLClutHeader* clut = desc->CLUTHeader;
             const u8* raw = base + clut_off;
-            u32 data_off = tpl_be32(raw + 8);
+            u32 data_off = OSReadBigEndian32(raw + 8);
 
-            clut->numEntries = tpl_be16(raw + 0);
+            clut->numEntries = OSReadBigEndian16(raw + 0);
             clut->unpacked = 1;
             clut->pad8 = raw[3];
-            clut->format = (GXTlutFmt)tpl_be32(raw + 4);
+            clut->format = (GXTlutFmt)OSReadBigEndian32(raw + 4);
             clut->data = data_off ? (Ptr)(base + data_off) : NULL;
         }
     }
