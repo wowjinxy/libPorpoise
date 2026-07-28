@@ -207,6 +207,34 @@ os_host_memory_test = executable(
 
 test('os-host-memory', os_host_memory_test, timeout: 10)
 
+os_host_address_test = executable(
+    'os-host-address-test',
+    sources: files('os_HostAddressTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [
+        libar,
+        libbase,
+        libcard,
+        libdb,
+        libdemo,
+        libdvd,
+        libexi,
+        libgd,
+        libgx,
+        libmem,
+        libmtx,
+        libos,
+        libpad,
+        libsi,
+        libsim,
+        libvi,
+    ],
+    dependencies: sdl2_dep,
+    native: true,
+)
+
+test('os-host-address', os_host_address_test, timeout: 20)
+
 os_host_mutex_test = executable(
     'os-host-mutex-test',
     sources: files('os_HostMutexTests.cpp'),

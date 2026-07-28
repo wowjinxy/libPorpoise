@@ -1,5 +1,8 @@
 #include <dolphin/ar.h>
 #include <dolphin/os.h>
+#ifdef LIBPORPOISE_PORT
+#include <dolphin/os/OSHostAddress.h>
+#endif
 #include <stddef.h>
 
 static ARQRequest* __ARQRequestQueueHi;
@@ -13,6 +16,19 @@ static ARQCallback __ARQCallbackLo;
 static u32 __ARQChunkSize;
 
 static volatile BOOL __ARQ_init_flag = FALSE;
+
+static void __ARQInvokeCallback(
+	ARQCallback callback,
+	ARQRequest* request)
+{
+#ifdef LIBPORPOISE_PORT
+	u32 requestToken = __OSHostEncodeAddress(request);
+	(*callback)(requestToken);
+	__OSHostReleaseAddress(requestToken);
+#else
+	(*callback)((u32)request);
+#endif
+}
 
 /**
  * @TODO: Documentation
@@ -87,12 +103,16 @@ void __ARQInterruptServiceRoutine(void)
 	OSCheckAlarmQueue();
 #endif
 	if (__ARQCallbackHi) {
-		(*__ARQCallbackHi)((u32)__ARQRequestPendingHi);
+		__ARQInvokeCallback(
+		    __ARQCallbackHi,
+		    __ARQRequestPendingHi);
 		__ARQRequestPendingHi = NULL;
 		__ARQCallbackHi       = NULL;
 
 	} else if (__ARQCallbackLo) {
-		(*__ARQCallbackLo)((u32)__ARQRequestPendingLo);
+		__ARQInvokeCallback(
+		    __ARQCallbackLo,
+		    __ARQRequestPendingLo);
 		__ARQRequestPendingLo = NULL;
 		__ARQCallbackLo       = NULL;
 	}
