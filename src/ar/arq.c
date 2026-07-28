@@ -83,6 +83,9 @@ void __ARQCallbackHack(void)
  */
 void __ARQInterruptServiceRoutine(void)
 {
+#ifdef LIBPORPOISE_PORT
+	OSCheckAlarmQueue();
+#endif
 	if (__ARQCallbackHi) {
 		(*__ARQCallbackHi)((u32)__ARQRequestPendingHi);
 		__ARQRequestPendingHi = NULL;
@@ -99,6 +102,9 @@ void __ARQInterruptServiceRoutine(void)
 	if (__ARQRequestPendingHi == NULL) {
 		__ARQServiceQueueLo();
 	}
+#ifdef LIBPORPOISE_PORT
+	OSCheckAlarmQueue();
+#endif
 }
 
 /**
@@ -155,6 +161,9 @@ void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u32 sou
 {
 	BOOL enabled;
 
+#ifdef LIBPORPOISE_PORT
+	OSCheckAlarmQueue();
+#endif
 	task->next   = NULL;
 	task->owner  = owner;
 	task->type   = type;
@@ -202,6 +211,9 @@ void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u32 sou
 	}
 
 	OSRestoreInterrupts(enabled);
+#ifdef LIBPORPOISE_PORT
+	OSCheckAlarmQueue();
+#endif
 }
 
 /**

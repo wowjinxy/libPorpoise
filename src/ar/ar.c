@@ -49,6 +49,9 @@ void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length)
 {
 	BOOL enabled;
 
+#ifdef LIBPORPOISE_PORT
+	OSCheckAlarmQueue();
+#endif
 	enabled = OSDisableInterrupts();
 
 	// Set main mem address
@@ -65,6 +68,9 @@ void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length)
 	__DSPRegs[DSP_ARAM_DMA_SIZE_LO] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_LO] & ~0xffe0) | (u16)(length & 0xffff);
 
 	OSRestoreInterrupts(enabled);
+#ifdef LIBPORPOISE_PORT
+	OSCheckAlarmQueue();
+#endif
 }
 
 /**

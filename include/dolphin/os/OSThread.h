@@ -40,6 +40,7 @@ struct OSThreadQueue {
 #ifdef LIBPORPOISE_PORT
 	SDL_mutex* hostMutex;
 	SDL_cond* hostCondition;
+	u64 hostWakeGeneration;
 #endif
 };
 
@@ -116,6 +117,8 @@ BOOL OSCreateThreadDebug(OSThread* thread, OSThreadStartFunction func, void* par
 BOOL OSCreateThreadReal(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr);
 void __OSHostThreadWillWait(OSThreadQueue* queue);
 void __OSHostThreadDidWait(void);
+int __OSHostWaitForCondition(OSThreadQueue* queue, SDL_mutex* mutex);
+void __OSHostWakeAlarmThread(void);
 #else
 BOOL OSCreateThread(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr);
 #endif

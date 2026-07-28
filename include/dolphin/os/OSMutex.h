@@ -26,9 +26,6 @@ struct OSMutex {
 // Cond struct (?) (size 0x8).
 typedef struct OSCond {
 	OSThreadQueue queue; // _00
-#ifdef LIBPORPOISE_PORT
-	SDL_sem * sdlSemaphore; /* SDL Semaphore used to implement OSCond */
-#endif
 } OSCond;
 
 //////////////////////////////////

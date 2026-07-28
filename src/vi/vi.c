@@ -473,6 +473,7 @@ void __VIHostInitRuntime(void)
 
 	OSInitThreadQueue(&retraceQueue);
 	hostRetraceOwnerThread = SDL_ThreadID();
+	__OSHostRegisterAlarmThread();
 	hostRetraceRuntimeInitialized = TRUE;
 }
 #endif
@@ -679,13 +680,9 @@ void VIWaitForRetrace(void)
 		SDL_LockMutex(retraceQueue.hostMutex);
 		startCount = retraceCount;
 		while (startCount == retraceCount) {
-			__OSHostThreadWillWait(&retraceQueue);
-			SDL_CondWait(
-			    retraceQueue.hostCondition,
+			__OSHostWaitForCondition(
+			    &retraceQueue,
 			    retraceQueue.hostMutex);
-			SDL_UnlockMutex(retraceQueue.hostMutex);
-			__OSHostThreadDidWait();
-			SDL_LockMutex(retraceQueue.hostMutex);
 		}
 		SDL_UnlockMutex(retraceQueue.hostMutex);
 	}

@@ -17,6 +17,7 @@ static OSContext IdleContext;
 static void DefaultSwitchThreadCallback(OSThread* from, OSThread* to);
 #ifdef LIBPORPOISE_PORT
 static __thread OSThread* HostCurrentThread;
+static OSThreadQueue* HostAlarmWaitQueue;
 #endif
 
 // Fabricated helper inlines.
@@ -46,6 +47,7 @@ void __OSThreadInit(void)
 	__OSFPUContext = &thread->context;
 #ifdef LIBPORPOISE_PORT
 	HostCurrentThread = thread;
+	__OSHostRegisterAlarmThread();
 #endif
 
 	OSClearContext(&thread->context);
@@ -79,6 +81,7 @@ void OSInitThreadQueue(OSThreadQueue* threadQueue)
 #ifdef LIBPORPOISE_PORT
 	threadQueue->hostMutex = SDL_CreateMutex();
 	threadQueue->hostCondition = SDL_CreateCond();
+	threadQueue->hostWakeGeneration = 0;
 #endif
 }
 
@@ -378,6 +381,9 @@ void OSYieldThread(void)
 {
 	BOOL enabled;
 
+#ifdef LIBPORPOISE_PORT
+	OSCheckAlarmQueue();
+#endif
 	enabled = OSDisableInterrupts();
 	SelectThread(TRUE);
 	OSRestoreInterrupts(enabled);
@@ -398,6 +404,9 @@ void __OSHostThreadWillWait(OSThreadQueue* threadQueue)
 		currentThread->state = OS_THREAD_STATE_WAITING;
 		currentThread->queue = threadQueue;
 	}
+	if (__OSHostIsAlarmThread()) {
+		HostAlarmWaitQueue = threadQueue;
+	}
 	__OSHostInterruptWillWait();
 }
 
@@ -406,21 +415,76 @@ void __OSHostThreadDidWait(void)
 	OSThread* currentThread;
 
 	__OSHostInterruptDidWait();
+	if (__OSHostIsAlarmThread()) {
+		HostAlarmWaitQueue = NULL;
+	}
 	currentThread = HostCurrentThread;
 	if (currentThread != NULL) {
 		currentThread->queue = NULL;
 		currentThread->state = OS_THREAD_STATE_RUNNING;
 	}
+	OSCheckAlarmQueue();
+}
+
+int __OSHostWaitForCondition(
+	OSThreadQueue* threadQueue,
+	SDL_mutex* mutex)
+{
+	u32 timeout;
+	int result;
+
+	/*
+	 * Give a due alarm its deterministic service point before committing to
+	 * sleep. Return to the caller so it can recheck its queue predicate; an
+	 * alarm handler may have completed the very wait we were about to enter.
+	 */
+	if (OSCheckAlarmQueue()) {
+		return SDL_MUTEX_TIMEDOUT;
+	}
+	timeout = __OSHostGetAlarmTimeoutMilliseconds();
+	__OSHostThreadWillWait(threadQueue);
+	if (timeout == SDL_MUTEX_MAXWAIT) {
+		result = SDL_CondWait(threadQueue->hostCondition, mutex);
+	} else {
+		result = SDL_CondWaitTimeout(
+		    threadQueue->hostCondition,
+		    mutex,
+		    timeout);
+	}
+	SDL_UnlockMutex(mutex);
+	__OSHostThreadDidWait();
+	SDL_LockMutex(mutex);
+	return result;
+}
+
+void __OSHostWakeAlarmThread(void)
+{
+	OSThreadQueue* threadQueue = HostAlarmWaitQueue;
+
+	if (threadQueue == NULL ||
+	    threadQueue->hostMutex == NULL ||
+	    threadQueue->hostCondition == NULL) {
+		return;
+	}
+	SDL_LockMutex(threadQueue->hostMutex);
+	SDL_CondBroadcast(threadQueue->hostCondition);
+	SDL_UnlockMutex(threadQueue->hostMutex);
 }
 
 // Wrapper function to run OSThreads in SDL Threads
 static int OSRunThread(void * threadPtr) {
 	OSThread * thread = (OSThread*)threadPtr;
+	BOOL enabled;
+
 	HostCurrentThread = thread;
+	enabled = OSDisableInterrupts();
 	thread->state = OS_THREAD_STATE_RUNNING;
+	OSRestoreInterrupts(enabled);
 	thread->val = thread->func(thread->param);
+	enabled = OSDisableInterrupts();
 	thread->state = OS_THREAD_STATE_MORIBUND;
 	OSWakeupThread(&thread->queueJoin);
+	OSRestoreInterrupts(enabled);
 	HostCurrentThread = NULL;
 	return 0;
 }
@@ -581,9 +645,17 @@ BOOL OSJoinThread(OSThread* thread, void** val)
 	}
 
 	enabled = OSDisableInterrupts();
-	__OSHostThreadWillWait(&thread->queueJoin);
+	SDL_LockMutex(thread->queueJoin.hostMutex);
+	while (thread->state != OS_THREAD_STATE_MORIBUND) {
+		__OSHostWaitForCondition(
+		    &thread->queueJoin,
+		    thread->queueJoin.hostMutex);
+	}
+	SDL_UnlockMutex(thread->queueJoin.hostMutex);
+	OSRestoreInterrupts(enabled);
 	SDL_WaitThread(thread->sdlThread, NULL);
-	__OSHostThreadDidWait();
+
+	enabled = OSDisableInterrupts();
 	thread->sdlThread = NULL;
 	if (val != NULL) {
 		*val = thread->val;
@@ -725,6 +797,7 @@ void OSSleepThread(OSThreadQueue* threadQueue)
 {
 #ifdef LIBPORPOISE_PORT
 	BOOL enabled;
+	u64 wakeGeneration;
 
 	if (threadQueue == NULL) {
 		return;
@@ -736,10 +809,11 @@ void OSSleepThread(OSThreadQueue* threadQueue)
 
 	enabled = OSDisableInterrupts();
 	SDL_LockMutex(threadQueue->hostMutex);
-	__OSHostThreadWillWait(threadQueue);
-	SDL_CondWait(threadQueue->hostCondition, threadQueue->hostMutex);
+	wakeGeneration = threadQueue->hostWakeGeneration;
+	while (wakeGeneration == threadQueue->hostWakeGeneration) {
+		__OSHostWaitForCondition(threadQueue, threadQueue->hostMutex);
+	}
 	SDL_UnlockMutex(threadQueue->hostMutex);
-	__OSHostThreadDidWait();
 	OSRestoreInterrupts(enabled);
 #else
 	BOOL enabled;
@@ -772,6 +846,7 @@ void OSWakeupThread(OSThreadQueue* threadQueue)
 	}
 	enabled = OSDisableInterrupts();
 	SDL_LockMutex(threadQueue->hostMutex);
+	threadQueue->hostWakeGeneration++;
 	SDL_CondBroadcast(threadQueue->hostCondition);
 	SDL_UnlockMutex(threadQueue->hostMutex);
 	OSRestoreInterrupts(enabled);
