@@ -6,6 +6,7 @@
 #include <stddef.h>
 #ifdef LIBPORPOISE_PORT
 #include <simulator/sim.h>
+#include <SDL2/SDL_thread.h>
 
 extern void __GXHostServiceFifoBreakpoint(void);
 #if defined(__GNUC__)
@@ -17,6 +18,8 @@ extern void __GXHostApplyCopyClear(void);
 static BOOL hostRetraceInProgress;
 static BOOL hostCopyRetracePendingWait;
 static BOOL hostTextureCopyAwaitingDraw;
+static BOOL hostRetraceRuntimeInitialized;
+static SDL_threadID hostRetraceOwnerThread;
 #endif
 
 // Useful macros.
@@ -461,6 +464,19 @@ static void ImportAdjustingValues(void)
 	__OSUnlockSram(FALSE);
 }
 
+#ifdef LIBPORPOISE_PORT
+void __VIHostInitRuntime(void)
+{
+	if (hostRetraceRuntimeInitialized) {
+		return;
+	}
+
+	OSInitThreadQueue(&retraceQueue);
+	hostRetraceOwnerThread = SDL_ThreadID();
+	hostRetraceRuntimeInitialized = TRUE;
+}
+#endif
+
 /**
  * @TODO: Documentation
  */
@@ -477,6 +493,7 @@ void VIInit(void)
 
 #ifdef LIBPORPOISE_PORT
 	SIM_VIInit();
+	__VIHostInitRuntime();
 	hostRetraceInProgress = FALSE;
 	hostCopyRetracePendingWait = FALSE;
 	hostTextureCopyAwaitingDraw = FALSE;
@@ -533,7 +550,9 @@ void VIInit(void)
 	HorVer.xof         = 0;
 	HorVer.isBlack     = 1;
 	HorVer.is3D        = 0;
+#ifndef LIBPORPOISE_PORT
 	OSInitThreadQueue(&retraceQueue);
+#endif
 	value = __VIRegs[VI_DISP_INT_0];
 	value &= ~0x8000;
 	value        = (u16)value;
@@ -558,7 +577,14 @@ static void __VIHostAdvanceRetrace(void)
 {
 	hostRetraceInProgress = TRUE;
 	__GXHostServiceFifoBreakpoint();
+	SDL_LockMutex(retraceQueue.hostMutex);
 	retraceCount++;
+	SDL_UnlockMutex(retraceQueue.hostMutex);
+	/*
+	 * The host deliberately has no background VI/decrementer thread. Service
+	 * due alarms at this deterministic retrace boundary before user callbacks.
+	 */
+	OSCheckAlarmQueue();
 
 	if (PreCB != NULL) {
 		PreCB(retraceCount);
@@ -577,8 +603,14 @@ static void __VIHostAdvanceRetrace(void)
 		PostCB(retraceCount);
 	}
 
+	/*
+	 * Post-retrace callbacks may issue the GXCopyDisp which completes the
+	 * frame. Keep presentation after those callbacks so one-XFB applications
+	 * do not alternate between completed and stale host back buffers.
+	 */
 	SIM_Render();
 	hostRetraceInProgress = FALSE;
+	OSWakeupThread(&retraceQueue);
 }
 
 void __VIHostOnCopyTex(void)
@@ -593,7 +625,11 @@ void __VIHostOnDraw(void)
 
 void __VIHostOnCopyDisp(void)
 {
+	__VIHostInitRuntime();
 	if (hostRetraceInProgress) {
+		return;
+	}
+	if (SDL_ThreadID() != hostRetraceOwnerThread) {
 		return;
 	}
 
@@ -619,16 +655,35 @@ void __VIHostOnCopyDisp(void)
 void VIWaitForRetrace(void)
 {
 	int interrupt;
-#ifndef LIBPORPOISE_PORT
 	u32 startCount;
-#endif
 
 	interrupt = OSDisableInterrupts();
 #ifdef LIBPORPOISE_PORT
-	if (hostCopyRetracePendingWait) {
-		hostCopyRetracePendingWait = FALSE;
+	__VIHostInitRuntime();
+	if (SDL_ThreadID() == hostRetraceOwnerThread) {
+		if (hostRetraceInProgress) {
+			OSRestoreInterrupts(interrupt);
+			return;
+		}
+		if (hostCopyRetracePendingWait) {
+			hostCopyRetracePendingWait = FALSE;
+		} else {
+			__VIHostAdvanceRetrace();
+		}
 	} else {
-		__VIHostAdvanceRetrace();
+		/*
+		 * Auxiliary emulated OS threads wait for the game/render thread to
+		 * advance VI. The queue mutex closes the read-to-sleep race, so a
+		 * retrace cannot be lost between observing the count and waiting.
+		 */
+		SDL_LockMutex(retraceQueue.hostMutex);
+		startCount = retraceCount;
+		while (startCount == retraceCount) {
+			SDL_CondWait(
+			    retraceQueue.hostCondition,
+			    retraceQueue.hostMutex);
+		}
+		SDL_UnlockMutex(retraceQueue.hostMutex);
 	}
 #else
 	startCount = retraceCount;

@@ -22,6 +22,9 @@ struct OSMesgQueue_s {
 	s32 msgCount;               // _14, array limit size.
 	s32 firstIndex;             // _18, first message index in array.
 	s32 usedCount;              // _1C, actual number of used messages.
+#ifdef LIBPORPOISE_PORT
+	SDL_mutex* hostMutex;       // Protects the host circular-buffer state.
+#endif
 };
 
 // Defines for message flags for sending/receiving.

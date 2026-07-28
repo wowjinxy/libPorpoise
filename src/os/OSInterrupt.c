@@ -8,6 +8,9 @@
 static void ExternalInterruptHandler(__OSException exception, OSContext* context);
 
 static __OSInterruptHandler* InterruptHandlerTable;
+#ifdef LIBPORPOISE_PORT
+static __thread BOOL HostInterruptsEnabled = TRUE;
+#endif
 
 static OSInterruptMask InterruptPrioTable[] = {
 	OS_INTERRUPTMASK_PI_ERROR,
@@ -38,6 +41,11 @@ entry __RAS_OSDisableInterrupts_begin
 entry __RAS_OSDisableInterrupts_end
 	blr
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	BOOL previouslyEnabled = HostInterruptsEnabled;
+	HostInterruptsEnabled = FALSE;
+	return previouslyEnabled;
+#endif
 }
 
 /**
@@ -53,6 +61,11 @@ ASM BOOL OSEnableInterrupts(void) {
 	rlwinm  r3, r3, 17, 31, 31 // MSR_EE
 	blr
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	BOOL previouslyEnabled = HostInterruptsEnabled;
+	HostInterruptsEnabled = TRUE;
+	return previouslyEnabled;
+#endif
 }
 
 /**
@@ -74,6 +87,11 @@ _restore:
 	rlwinm  r4, r4, 17, 31, 31 // MSR_EE
 	blr
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	BOOL previouslyEnabled = HostInterruptsEnabled;
+	HostInterruptsEnabled = enabled;
+	return previouslyEnabled;
+#endif
 }
 
 /**

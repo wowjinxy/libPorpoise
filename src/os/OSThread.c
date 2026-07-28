@@ -391,6 +391,24 @@ BOOL OSCreateThreadDebug(OSThread* thread, OSThreadStartFunction func, void* par
 	return OSCreateThreadReal(thread, func, param, stack, stackSize, priority, attr);
 }
 
+void __OSHostThreadWillWait(OSThreadQueue* threadQueue)
+{
+	OSThread* currentThread = OSGetCurrentThread();
+	if (currentThread != NULL) {
+		currentThread->state = OS_THREAD_STATE_WAITING;
+		currentThread->queue = threadQueue;
+	}
+}
+
+void __OSHostThreadDidWait(void)
+{
+	OSThread* currentThread = OSGetCurrentThread();
+	if (currentThread != NULL) {
+		currentThread->queue = NULL;
+		currentThread->state = OS_THREAD_STATE_RUNNING;
+	}
+}
+
 // Wrapper function to run OSThreads in SDL Threads
 static int OSRunThread(void * threadPtr) {
 	OSThread * thread = (OSThread*)threadPtr;
@@ -704,18 +722,11 @@ void OSSleepThread(OSThreadQueue* threadQueue)
 		OSInitThreadQueue(threadQueue);
 	}
 
-	OSThread* currentThread = OSGetCurrentThread();
-	if (currentThread != NULL) {
-		currentThread->state = OS_THREAD_STATE_WAITING;
-		currentThread->queue = threadQueue;
-	}
+	__OSHostThreadWillWait(threadQueue);
 	SDL_LockMutex(threadQueue->hostMutex);
 	SDL_CondWait(threadQueue->hostCondition, threadQueue->hostMutex);
 	SDL_UnlockMutex(threadQueue->hostMutex);
-	if (currentThread != NULL) {
-		currentThread->queue = NULL;
-		currentThread->state = OS_THREAD_STATE_RUNNING;
-	}
+	__OSHostThreadDidWait();
 #else
 	BOOL enabled;
 	OSThread* currentThread;

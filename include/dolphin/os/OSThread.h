@@ -114,6 +114,8 @@ void OSYieldThread();
 BOOL OSCreateThreadDebug(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr, const char * name, const char * file, int lineNo);
 #define OSCreateThread(_thread,_func,_param,_stack,_stackSize,_priority,_attr) OSCreateThreadDebug(_thread,_func,_param,_stack,_stackSize,_priority,_attr,#_func,__FILE__,__LINE__)
 BOOL OSCreateThreadReal(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr);
+void __OSHostThreadWillWait(OSThreadQueue* queue);
+void __OSHostThreadDidWait(void);
 #else
 BOOL OSCreateThread(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr);
 #endif
