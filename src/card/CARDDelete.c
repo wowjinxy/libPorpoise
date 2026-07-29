@@ -98,11 +98,3 @@ s32 CARDDeleteAsync(s32 chan, const char* fileName, CARDCallback callback)
 	TRAP_UNIMPLEMENTED;
 }
 
-/**
- * @TODO: Documentation
- * @note UNUSED Size: 000048
- */
-void CARDDelete(void)
-{
-	TRAP_UNIMPLEMENTED;
-}

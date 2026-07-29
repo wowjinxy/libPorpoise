@@ -267,6 +267,8 @@ s32 CARDGetXferredBytes(s32 channel);
 // CARD delete functions.
 s32 CARDFastDeleteAsync(s32 channel, s32 fileNo, CARDCallback callback);
 s32 CARDFastDelete(s32 channel, s32 fileNo);
+s32 CARDDelete(s32 chan, const char* fileName);
+s32 CARDDeleteAsync(s32 chan, const char* fileName, CARDCallback callback);
 
 // CARD rename functions.
 s32 CARDRenameAsync(s32 channel, const char* oldName, const char* newName, CARDCallback callback);
@@ -276,6 +278,8 @@ s32 CARDRename(s32 channel, const char* oldName, const char* newName);
 s32 CARDGetStatus(s32 channel, s32 fileNo, CARDStat* state);
 s32 CARDSetStatus(s32 channel, s32 fileNo, CARDStat* state);
 s32 CARDSetStatusAsync(s32 channel, s32 fileNo, CARDStat* state, CARDCallback callback);
+s32 CARDGetAttributes(s32 chan, s32 fileNo, u8* attr);
+s32 CARDSetAttributes(s32 chan, s32 fileNo, u8 attr);
 
 // CARD serial functions.
 s32 CARDGetSerialNo(s32 channel, u64* serialNo);
