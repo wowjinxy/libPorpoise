@@ -31,6 +31,10 @@ add_project_arguments(shared_args,
 libporpoise_shared_args = [
 ]
 
+if(build_target != 'gc')
+libporpoise_shared_args += ['-g']
+endif
+
 libporpoise_c_args = [
 ]
 
