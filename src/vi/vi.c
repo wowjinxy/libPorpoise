@@ -6,6 +6,17 @@
 #include <stddef.h>
 #ifdef LIBPORPOISE_PORT
 #include <simulator/sim.h>
+
+extern void __GXHostServiceFifoBreakpoint(void);
+#if defined(__GNUC__)
+extern void __GXHostApplyCopyClear(void) __attribute__((weak));
+#else
+extern void __GXHostApplyCopyClear(void);
+#endif
+
+static BOOL hostRetraceInProgress;
+static BOOL hostCopyRetracePendingWait;
+static BOOL hostTextureCopyAwaitingDraw;
 #endif
 
 // Useful macros.
@@ -109,21 +120,22 @@ static int cntlzd(u64 bit)
 	u32 hi, lo;
 	int value;
 
+#ifdef LIBPORPOISE_PORT
+	if (bit == 0) {
+		return 64;
+	}
+	return __builtin_clzll(bit);
+#else
 	hi    = (u32)(bit >> 32);
 	lo    = (u32)(bit & 0xFFFFFFFF);
-	#ifndef LIBPORPOISE_PORT
 	value = __mwerks_cntlzw(hi);
-	#endif
 
 	if (value < 32) {
 		return value;
 	}
 
-	#ifdef LIBPORPOISE_PORT
-	return 0;
-	#else
 	return (32 + __mwerks_cntlzw(lo));
-	#endif
+#endif
 }
 
 /**
@@ -465,6 +477,9 @@ void VIInit(void)
 
 #ifdef LIBPORPOISE_PORT
 	SIM_VIInit();
+	hostRetraceInProgress = FALSE;
+	hostCopyRetracePendingWait = FALSE;
+	hostTextureCopyAwaitingDraw = FALSE;
 #endif
 
 	retraceCount = 0;
@@ -538,20 +553,89 @@ void VIInit(void)
 /**
  * @TODO: Documentation
  */
+#ifdef LIBPORPOISE_PORT
+static void __VIHostAdvanceRetrace(void)
+{
+	hostRetraceInProgress = TRUE;
+	__GXHostServiceFifoBreakpoint();
+	retraceCount++;
+
+	if (PreCB != NULL) {
+		PreCB(retraceCount);
+	}
+
+	if (flushFlag && VISetRegs()) {
+		flushFlag = 0;
+#if OS_BUILD_VERSION >= 20011217L
+		SIRefreshSamplingRate();
+#elif OS_BUILD_VERSION >= 20011002L
+		__PADRefreshSamplingRate();
+#endif
+	}
+
+	if (PostCB != NULL) {
+		PostCB(retraceCount);
+	}
+
+	SIM_Render();
+	hostRetraceInProgress = FALSE;
+}
+
+void __VIHostOnCopyTex(void)
+{
+	hostTextureCopyAwaitingDraw = TRUE;
+}
+
+void __VIHostOnDraw(void)
+{
+	hostTextureCopyAwaitingDraw = FALSE;
+}
+
+void __VIHostOnCopyDisp(void)
+{
+	if (hostRetraceInProgress) {
+		return;
+	}
+
+	/*
+	 * Render-to-texture demos sometimes follow a clearing GXCopyTex with a
+	 * GXCopyDisp before issuing another draw.  The display copy is only being
+	 * used to establish the next EFB clear color; presenting it would expose
+	 * the intermediate render-to-texture pass.
+	 */
+	if (hostTextureCopyAwaitingDraw) {
+		hostTextureCopyAwaitingDraw = FALSE;
+		if (__GXHostApplyCopyClear != NULL) {
+			__GXHostApplyCopyClear();
+		}
+		return;
+	}
+
+	__VIHostAdvanceRetrace();
+	hostCopyRetracePendingWait = TRUE;
+}
+#endif
+
 void VIWaitForRetrace(void)
 {
 	int interrupt;
+#ifndef LIBPORPOISE_PORT
 	u32 startCount;
+#endif
 
-	interrupt  = OSDisableInterrupts();
+	interrupt = OSDisableInterrupts();
+#ifdef LIBPORPOISE_PORT
+	if (hostCopyRetracePendingWait) {
+		hostCopyRetracePendingWait = FALSE;
+	} else {
+		__VIHostAdvanceRetrace();
+	}
+#else
 	startCount = retraceCount;
-	#ifdef LIBPORPOISE_PORT
-	SIM_Render();
-	#else
 	do {
 		OSSleepThread(&retraceQueue);
 	} while (startCount == retraceCount);
-	#endif
+#endif
 	OSRestoreInterrupts(interrupt);
 }
 
@@ -948,13 +1032,11 @@ void VIFlush(void)
 #endif
 	shdwChanged |= changed;
 
-	#ifndef LIBPORPOISE_PORT
 	while (changed) {
 		regIndex           = cntlzd(changed);
 		shdwRegs[regIndex] = regs[regIndex];
 		changed &= ~VI_BITMASK(regIndex);
 	}
-	#endif
 
 	flushFlag = 1;
 	OSRestoreInterrupts(enabled);
@@ -1021,6 +1103,17 @@ u32 VIGetRetraceCount(void)
  */
 static u32 getCurrentHalfLine(void)
 {
+#ifdef LIBPORPOISE_PORT
+	VITimingInfo* tm = CurrTiming != NULL ? CurrTiming : HorVer.timing;
+	u32 numHalfLines = tm != NULL ? tm->numHalfLines : 525;
+
+	/*
+	 * The host has no continuously ticking VI beam counters. Model the two
+	 * interlaced fields at retrace granularity instead of reading the static
+	 * emulated hardware registers and underflowing their zero values.
+	 */
+	return (retraceCount & 1) != 0 ? numHalfLines : 0;
+#else
 	u32 hcount;
 	u32 vcount0;
 	u32 vcount;
@@ -1043,6 +1136,7 @@ static u32 getCurrentHalfLine(void)
 #else
 	return ((vcount - 1) * 2) + ((hcount - 1) / tm->hlw);
 #endif
+#endif
 }
 
 /**
@@ -1058,7 +1152,11 @@ static u32 getCurrentFieldEvenOdd()
 	VITimingInfo* tm;
 
 #if OS_BUILD_VERSION >= 20011002L
+	#ifdef LIBPORPOISE_PORT
+	if ((retraceCount & 1) == 0) {
+	#else
 	if (getCurrentHalfLine() < CurrTiming->numHalfLines) {
+	#endif
 		return 1;
 	}
 #else
@@ -1107,7 +1205,14 @@ u32 VIGetCurrentLine(void)
 	BOOL enabled;
 
 #if OS_BUILD_VERSION >= 20011002L
+	#ifdef LIBPORPOISE_PORT
+	tm = CurrTiming != NULL ? CurrTiming : HorVer.timing;
+	if (tm == NULL) {
+		return 0;
+	}
+	#else
 	tm = CurrTiming;
+	#endif
 #else
 	// I am making up this version difference.  It might be something else.
 	tm = HorVer.timing;

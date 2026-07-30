@@ -1,6 +1,29 @@
 #include <dolphin/gx.h>
 #include <dolphin/hw_regs.h>
 
+#ifdef LIBPORPOISE_PORT
+extern void __VIHostOnCopyDisp(void);
+extern void __VIHostOnCopyTex(void);
+extern void __GXHostCopyTex(
+    void* destination,
+    u16 sourceLeft,
+    u16 sourceTop,
+    u16 sourceWidth,
+    u16 sourceHeight,
+    u16 destinationWidth,
+    u16 destinationHeight,
+    u32 destinationFormat,
+    GXBool clear);
+
+static u16 HostTexCopySourceLeft;
+static u16 HostTexCopySourceTop;
+static u16 HostTexCopySourceWidth;
+static u16 HostTexCopySourceHeight;
+static u16 HostTexCopyDestinationWidth;
+static u16 HostTexCopyDestinationHeight;
+static u32 HostTexCopyDestinationFormat;
+#endif
+
 GXRenderModeObj GXNtsc240Ds = {
 	1,
 	640,
@@ -127,6 +150,22 @@ GXRenderModeObj GXNtsc480Prog = {
 	0,
 	{ 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6 },
 	{ 0, 0, 21, 22, 21, 0, 0 },
+};
+
+GXRenderModeObj GXNtsc480ProgSoft = {
+	2,
+	640,
+	480,
+	480,
+	40,
+	0,
+	640,
+	480,
+	0,
+	0,
+	0,
+	{ 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6 },
+	{ 8, 8, 10, 12, 10, 8, 8 },
 };
 
 GXRenderModeObj GXNtsc480ProgAa = {
@@ -386,6 +425,70 @@ GXRenderModeObj GXRmHW = {
 };
 
 #if OS_BUILD_VERSION >= 20011217L
+GXRenderModeObj GXEurgb60Hz240Ds = {
+	21,
+	640,
+	240,
+	240,
+	40,
+	0,
+	640,
+	480,
+	0,
+	0,
+	0,
+	{ 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6 },
+	{ 0, 0, 21, 22, 21, 0, 0 },
+};
+
+GXRenderModeObj GXEurgb60Hz240DsAa = {
+	21,
+	640,
+	240,
+	240,
+	40,
+	0,
+	640,
+	480,
+	0,
+	0,
+	1,
+	{ 3, 2, 9, 6, 3, 10, 3, 2, 9, 6, 3, 10, 9, 2, 3, 6, 9, 10, 9, 2, 3, 6, 9, 10 },
+	{ 0, 0, 21, 22, 21, 0, 0 },
+};
+
+GXRenderModeObj GXEurgb60Hz240Int = {
+	20,
+	640,
+	240,
+	240,
+	40,
+	0,
+	640,
+	480,
+	0,
+	1,
+	0,
+	{ 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6 },
+	{ 0, 0, 21, 22, 21, 0, 0 },
+};
+
+GXRenderModeObj GXEurgb60Hz240IntAa = {
+	20,
+	640,
+	240,
+	240,
+	40,
+	0,
+	640,
+	480,
+	0,
+	1,
+	1,
+	{ 3, 2, 9, 6, 3, 10, 3, 2, 9, 6, 3, 10, 9, 2, 3, 6, 9, 10, 9, 2, 3, 6, 9, 10 },
+	{ 0, 0, 21, 22, 21, 0, 0 },
+};
+
 GXRenderModeObj GXEurgb60Hz480IntDf = {
 	20,
 	640,
@@ -400,6 +503,38 @@ GXRenderModeObj GXEurgb60Hz480IntDf = {
 	0,
 	{ 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6 },
 	{ 8, 8, 10, 12, 10, 8, 8 },
+};
+
+GXRenderModeObj GXEurgb60Hz480Int = {
+	20,
+	640,
+	480,
+	480,
+	40,
+	0,
+	640,
+	480,
+	1,
+	0,
+	0,
+	{ 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6 },
+	{ 0, 0, 21, 22, 21, 0, 0 },
+};
+
+GXRenderModeObj GXEurgb60Hz480IntAa = {
+	20,
+	640,
+	242,
+	480,
+	40,
+	0,
+	640,
+	480,
+	1,
+	0,
+	1,
+	{ 3, 2, 9, 6, 3, 10, 3, 2, 9, 6, 3, 10, 9, 2, 3, 6, 9, 10, 9, 2, 3, 6, 9, 10 },
+	{ 4, 8, 12, 16, 12, 8, 4 },
 };
 #endif
 
@@ -456,6 +591,13 @@ void GXSetTexCopySrc(u16 left, u16 top, u16 wd, u16 ht)
 {
 	CHECK_GXBEGIN(0x3D5, "GXSetTexCopySrc");
 
+#ifdef LIBPORPOISE_PORT
+	HostTexCopySourceLeft = left;
+	HostTexCopySourceTop = top;
+	HostTexCopySourceWidth = wd;
+	HostTexCopySourceHeight = ht;
+#endif
+
 	gx->cpTexSrc = 0;
 	SET_REG_FIELD(0x3D8, gx->cpTexSrc, 10, 0, left);
 	SET_REG_FIELD(0x3D9, gx->cpTexSrc, 10, 10, top);
@@ -495,6 +637,12 @@ void GXSetTexCopyDst(u16 wd, u16 ht, GXTexFmt fmt, GXBool mipmap)
 	u32 peTexFmtH;
 
 	CHECK_GXBEGIN(0x415, "GXSetTexCopyDst");
+
+#ifdef LIBPORPOISE_PORT
+	HostTexCopyDestinationWidth = wd;
+	HostTexCopyDestinationHeight = ht;
+	HostTexCopyDestinationFormat = (u32)fmt;
+#endif
 
 	gx->cpTexZ = 0;
 	peTexFmt   = fmt & 0xF;
@@ -866,6 +1014,9 @@ void GXCopyDisp(void* dest, GXBool clear)
 #else
 	gx->bpSent = GX_TRUE;
 #endif
+#ifdef LIBPORPOISE_PORT
+	__VIHostOnCopyDisp();
+#endif
 }
 
 /**
@@ -929,6 +1080,21 @@ void GXCopyTex(void* dest, GXBool clear)
 	if (changePeCtrl) {
 		GX_WRITE_RAS_REG(gx->peCtrl);
 	}
+#ifdef LIBPORPOISE_PORT
+	__GXHostCopyTex(
+	    dest,
+	    HostTexCopySourceLeft,
+	    HostTexCopySourceTop,
+	    HostTexCopySourceWidth,
+	    HostTexCopySourceHeight,
+	    HostTexCopyDestinationWidth,
+	    HostTexCopyDestinationHeight,
+	    HostTexCopyDestinationFormat,
+	    clear);
+	if (clear) {
+		__VIHostOnCopyTex();
+	}
+#endif
 #if OS_BUILD_VERSION >= 20011002L
 	gx->bpSent = GX_FALSE;
 #else

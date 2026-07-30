@@ -21,7 +21,9 @@ extern void GXClearVtxDesc();
 extern void GXSetVtxAttrFmt(GXVtxFmt format, GXAttr attr, GXCompCnt count, GXCompType type, u8 frac);
 extern void GXSetVtxAttrFmtv(GXVtxFmt format, GXVtxAttrFmtList* list);
 
+#ifndef GXSetArray
 extern void GXSetArray(GXAttr attr, void* basePtr, u8 stride);
+#endif
 extern void GXInvalidateVtxCache();
 extern void GXSetTexCoordGen2(GXTexCoordID coord, GXTexGenType genType, GXTexGenSrc srcParam, u32 mtx, GXBool doNormalise, u32 postMtx);
 extern void GXSetNumTexGens(u8 count);
@@ -54,5 +56,9 @@ extern void GXGetCullMode(GXCullMode* mode);
 ////////////////////////////////////////////
 
 END_SCOPE_EXTERN_C
+
+#ifndef LIBPORPOISE_GX_UMBRELLA_HEADER
+#include <dolphin/gx/GXHostArray.h>
+#endif
 
 #endif

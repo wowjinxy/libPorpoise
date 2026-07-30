@@ -14,6 +14,9 @@ static GXBool CPGPLinked;
 static BOOL GXOverflowSuspendInProgress;
 static GXBreakPtCallback BreakPointCB;
 static u32 __GXOverflowCount;
+#ifdef LIBPORPOISE_PORT
+static GXBool HostBreakpointPending;
+#endif
 #if DEBUG
 static int IsWGPipeRedirected;
 #endif
@@ -129,6 +132,7 @@ void GXInitFifoBase(GXFifoObj* fifo, void* base, u32 size)
 	realFifo->end        = (u8*)base + size - 4;
 	realFifo->size       = size;
 	realFifo->rwDistance = 0;
+	((struct __GXFifoObj*)fifo)->wrap = GX_FALSE;
 	GXInitFifoLimits(fifo, size - 0x4000, (size >> 1) & ~0x1F);
 	GXInitFifoPtrs(fifo, base, base);
 }
@@ -299,6 +303,7 @@ void __GXSaveCPUFifoAux(struct __GXFifoObj* realFifo)
 	realFifo->base  = OSPhysicalToCached(__piReg[PI_FIFO_START]);
 	realFifo->top   = OSPhysicalToCached(__piReg[PI_FIFO_END]);
 	realFifo->wrPtr = OSPhysicalToCached(__piReg[PI_FIFO_PTR] & 0xFBFFFFFF);
+	realFifo->wrap  = GET_REG_FIELD(__piReg[PI_FIFO_PTR], 1, 26);
 	if (CPGPLinked) {
 		SOME_MACRO1(realFifo);
 		SOME_MACRO2(realFifo);
@@ -362,11 +367,11 @@ void GXGetFifoStatus(GXFifoObj* fifo, GXBool* overhi, GXBool* underflow, u32* fi
 	}
 	if (realFifo == CPUFifo) {
 		__GXSaveCPUFifoAux(realFifo);
-		*fifowrap = (int)GET_REG_FIELD(__piReg[PI_FIFO_PTR], 1, 26);
 	}
 	*overhi    = (realFifo->count > realFifo->hiWatermark);
 	*underflow = (realFifo->count < realFifo->loWatermark);
 	*fifoCount = (realFifo->count);
+	*fifowrap  = realFifo->wrap;
 	*cpuWrite  = (CPUFifo == realFifo);
 	*gpRead    = (GPFifo == realFifo);
 }
@@ -382,6 +387,7 @@ void GXGetFifoPtrs(GXFifoObj* fifo, void** readPtr, void** writePtr)
 	OSAssertMsgLine(0x3F2, realFifo == CPUFifo || realFifo == GPFifo, "GXGetFifoPtrs: fifo is not CPU or GP fifo");
 	if (realFifo == CPUFifo) {
 		realFifo->wrPtr = OSPhysicalToCached(__piReg[PI_FIFO_PTR] & 0xFBFFFFFF);
+		realFifo->wrap  = GET_REG_FIELD(__piReg[PI_FIFO_PTR], 1, 26);
 	}
 	if (realFifo == GPFifo) {
 		SOME_MACRO1(realFifo);
@@ -400,9 +406,9 @@ void GXGetFifoPtrs(GXFifoObj* fifo, void** readPtr, void** writePtr)
  * @TODO: Documentation
  * @note UNUSED Size: 000008
  */
-void* GXGetFifoBase(GXFifoObj* fifo)
+void* GXGetFifoBase(const GXFifoObj* fifo)
 {
-	struct __GXFifoObj* realFifo = (struct __GXFifoObj*)fifo;
+	const struct __GXFifoObj* realFifo = (const struct __GXFifoObj*)fifo;
 
 	return realFifo->base;
 }
@@ -411,9 +417,9 @@ void* GXGetFifoBase(GXFifoObj* fifo)
  * @TODO: Documentation
  * @note UNUSED Size: 000008
  */
-u32 GXGetFifoSize(GXFifoObj* fifo)
+u32 GXGetFifoSize(const GXFifoObj* fifo)
 {
-	struct __GXFifoObj* realFifo = (struct __GXFifoObj*)fifo;
+	const struct __GXFifoObj* realFifo = (const struct __GXFifoObj*)fifo;
 
 	return realFifo->size;
 }
@@ -422,12 +428,26 @@ u32 GXGetFifoSize(GXFifoObj* fifo)
  * @TODO: Documentation
  * @note UNUSED Size: 000014
  */
-void GXGetFifoLimits(GXFifoObj* fifo, u32* hi, u32* lo)
+void GXGetFifoLimits(const GXFifoObj* fifo, u32* hi, u32* lo)
 {
-	struct __GXFifoObj* realFifo = (struct __GXFifoObj*)fifo;
+	const struct __GXFifoObj* realFifo = (const struct __GXFifoObj*)fifo;
 
 	*hi = realFifo->hiWatermark;
 	*lo = realFifo->loWatermark;
+}
+
+u32 GXGetFifoCount(const GXFifoObj* fifo)
+{
+	const struct __GXFifoObj* realFifo = (const struct __GXFifoObj*)fifo;
+
+	return (u32)realFifo->count;
+}
+
+GXBool GXGetFifoWrap(const GXFifoObj* fifo)
+{
+	const struct __GXFifoObj* realFifo = (const struct __GXFifoObj*)fifo;
+
+	return realFifo->wrap;
 }
 
 /**
@@ -463,6 +483,9 @@ void GXEnableBreakPt(void* break_pt)
 	gx->cpEnable           = (gx->cpEnable & 0xFFFFFFDF) | 0x20;
 	__cpReg[CP_CONTROL]    = gx->cpEnable;
 	__GXCurrentBP          = break_pt;
+#ifdef LIBPORPOISE_PORT
+	HostBreakpointPending = GX_TRUE;
+#endif
 	__GXFifoReadEnable();
 	OSRestoreInterrupts(enabled);
 }
@@ -479,8 +502,25 @@ void GXDisableBreakPt(void)
 	gx->cpEnable        = gx->cpEnable & 0xFFFFFFDF;
 	__cpReg[CP_CONTROL] = gx->cpEnable;
 	__GXCurrentBP       = NULL;
+#ifdef LIBPORPOISE_PORT
+	HostBreakpointPending = GX_FALSE;
+#endif
 	OSRestoreInterrupts(enabled);
 }
+
+#ifdef LIBPORPOISE_PORT
+void __GXHostServiceFifoBreakpoint(void)
+{
+	if (!HostBreakpointPending || BreakPointCB == NULL) {
+		return;
+	}
+
+	HostBreakpointPending = GX_FALSE;
+	gx->cpEnable &= 0xFFFFFFDF;
+	__cpReg[CP_CONTROL] = gx->cpEnable;
+	BreakPointCB();
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -491,6 +531,9 @@ void __GXFifoInit(void)
 	__OSUnmaskInterrupts(OS_INTERRUPTMASK_PI_CP);
 	__GXCurrentThread           = OSGetCurrentThread();
 	GXOverflowSuspendInProgress = FALSE;
+#ifdef LIBPORPOISE_PORT
+	HostBreakpointPending = GX_FALSE;
+#endif
 #if OS_BUILD_VERSION >= 20011002L
 	CPUFifo = NULL;
 	GPFifo  = NULL;
@@ -621,6 +664,11 @@ GXFifoObj* GXGetCPUFifo(void)
 GXFifoObj* GXGetGPFifo(void)
 {
 	return (GXFifoObj*)GPFifo;
+}
+
+GXBool GXIsCPUGPFifoLinked(void)
+{
+	return CPGPLinked;
 }
 
 /**

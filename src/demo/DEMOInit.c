@@ -22,6 +22,9 @@ static u32 allocatedFrameBufferSize = 0;
 
 static BOOL GPHangWorkaround = FALSE;
 
+MEMAllocator DemoAllocator1;
+MEMAllocator DemoAllocator2;
+
 static vu32 FrameCount;
 static u32 FrameMissThreshold;
 
@@ -135,6 +138,8 @@ static void __DEMOInitMem(void) {
 
 
   OSSetCurrentHeap(OSCreateHeap(arenaLo, arenaHi));
+  MEMInitAllocatorForOSHeap(&DemoAllocator1, __OSCurrHeap);
+  MEMInitAllocatorForOSHeap(&DemoAllocator2, __OSCurrHeap);
 
   OSSetArenaLo(arenaLo = arenaHi);
 }

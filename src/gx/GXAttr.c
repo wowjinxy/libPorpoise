@@ -8,6 +8,10 @@
 #include <simulator/sim_gx_CommandProcessor.h>
 #endif
 
+#ifdef GXSetArray
+#undef GXSetArray
+#endif
+
 #define CHECK_ATTRPTR(line, attrPtr) OSAssertMsgLine(line, (attrPtr) != NULL, "GXSetVtxDescv: attrPtr is NULL")
 #define CHECK_ATTRNAME(line, attr) \
 	OSAssertMsgLine(line, (attr) >= GX_VA_PNMTXIDX && (attr) < GX_VA_MAX_ATTR, "GXSetVtxDesc: Invalid vertex attribute name")
@@ -573,7 +577,7 @@ void GXSetVtxAttrFmtv(GXVtxFmt vtxfmt, GXVtxAttrFmtList* list)
 	while (list->attr != GX_VA_NULL) {
 		CHECK_ATTRNAME2(0x286, list->attr);
 		CHECK_FRAC(0x287, list->frac);
-		SETVAT(va, vb, vc, list->attr, list->count, list->type, list->frac);
+		SETVAT(va, vb, vc, list->attr, list->cnt, list->type, list->frac);
 		list++;
 	}
 	gx->dirtyState |= 0x10;
@@ -724,7 +728,7 @@ void GXGetVtxAttrFmtv(GXVtxFmt fmt, GXVtxAttrFmtList* vat)
 	CHECK_VTXFMT(0x332, fmt);
 	for (attr = GX_VA_POS; attr < GX_VA_MAX_ATTR; attr++) {
 		vat->attr = attr;
-		GXGetVtxAttrFmt(fmt, attr, &vat->count, &vat->type, &vat->frac);
+		GXGetVtxAttrFmt(fmt, attr, &vat->cnt, &vat->type, &vat->frac);
 		vat++;
 	}
 	vat->attr = GX_VA_NULL;
@@ -754,6 +758,13 @@ void GXSetArray(GXAttr attr, void* base_ptr, u8 stride)
 	GX_WRITE_SOME_REG3(8, cpAttr | 0xB0, stride, cpAttr - 12);
 	#endif
 }
+
+#ifdef LIBPORPOISE_PORT
+void GXSetArrayU32(GXAttr attr, void* base_ptr, u8 stride)
+{
+	SIM_GX_CommandProcessor_SetVertexArrayU32(attr, base_ptr, stride);
+}
+#endif
 
 /**
  * @TODO: Documentation

@@ -6,12 +6,17 @@
 #include <simulator/sim_gx_State.hpp>
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
-#ifdef LIBPORPOISE_BUILD_LINUX
-#include <signal.h>
-#endif
-
 static SDL_GLContext context;
 static SDL_Window * window;
+
+static void UpdateDrawableViewport() {
+    int drawableWidth = 0;
+    int drawableHeight = 0;
+    SDL_GL_GetDrawableSize(window, &drawableWidth, &drawableHeight);
+    if (drawableWidth > 0 && drawableHeight > 0) {
+        glViewport(0, 0, drawableWidth, drawableHeight);
+    }
+}
 
 extern const char * SIM_GXVertexShader;
 extern const char * SIM_GXFragmentShader;
@@ -98,7 +103,7 @@ static GLuint gxShaderProgramId;
 static GLuint gxVertexShader;
 static GLuint gxFragmentShader;
 
-void DolphinMain();
+extern "C" void DolphinMain();
 
 int main(int argc, char** argv) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK) != 0) {
@@ -110,6 +115,7 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
     int windowWidth = 640;
@@ -133,7 +139,7 @@ int main(int argc, char** argv) {
     }
     SDL_GL_SetSwapInterval(1);
 
-    glViewport(0, 0, windowWidth, windowHeight);
+    UpdateDrawableViewport();
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
 
@@ -169,22 +175,42 @@ void SIM_Render() {
 
         if (Event.type == SDL_WINDOWEVENT &&
             Event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-            glViewport(0, 0, Event.window.data1, Event.window.data2);
+            UpdateDrawableViewport();
         }
     }
 
-    //DrawTestTriangle();
+    // Present the EFB contents, then apply a requested GX copy clear to the
+    // next frame just as GXCopyDisp(..., GX_TRUE) does on the console.
     SDL_GL_SwapWindow(window);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f );
-    glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT );
-}
+    auto& gxState = SIM::GX::GetGlobalState();
+    if (gxState.ConsumeCopyClearRequest()) {
+        const auto& clearColor = gxState.GetCopyClearColor();
+        const GLboolean scissorEnabled =
+            glIsEnabled(GL_SCISSOR_TEST);
+        GLboolean colorWriteMask[4] = {};
+        GLboolean depthWriteMask = GL_FALSE;
+        glGetBooleanv(GL_COLOR_WRITEMASK, colorWriteMask);
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteMask);
 
-void SIM_DebugBreak() {
-#ifdef LIBPORPOISE_BUILD_LINUX
-    raise(SIGTRAP);
-#elif LIBPORPOISE_BUILD_WIN64
-    __debugbreak();
-#else
-    OSReport("Warning: SIM_DebugBreak called but it is not supported on this platform!\n");
-#endif
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDepthMask(GL_TRUE);
+        glClearColor(
+            clearColor[0],
+            clearColor[1],
+            clearColor[2],
+            clearColor[3]);
+        glClearDepth(gxState.GetCopyClearDepth());
+        glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+
+        glColorMask(
+            colorWriteMask[0],
+            colorWriteMask[1],
+            colorWriteMask[2],
+            colorWriteMask[3]);
+        glDepthMask(depthWriteMask);
+        if (scissorEnabled) {
+            glEnable(GL_SCISSOR_TEST);
+        }
+    }
 }

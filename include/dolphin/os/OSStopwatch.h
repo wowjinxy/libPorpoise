@@ -10,13 +10,13 @@ extern "C" {
 
 typedef struct OSStopwatch {
     char* name;
+    u32 hits;
     OSTime total;
     OSTime min;
     OSTime max;
     OSTime last;
-    OSTime start;
-    u32 hits;
     BOOL running;
+    u32 _padding;
 } OSStopwatch;
 
 void OSInitStopwatch(OSStopwatch* sw, char* name);

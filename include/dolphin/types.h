@@ -1,6 +1,8 @@
 #ifndef DOLPHIN_TYPES_H
 #define DOLPHIN_TYPES_H
 
+#include <stddef.h>
+
 // For compiling code copy-pasted from Ghidra (TODO: remove this)
 typedef unsigned int uint;
 
@@ -201,7 +203,7 @@ typedef char* Ptr;
 // Create a temporary struct to pad the stack by some number of words
 #define STACK_PAD_STRUCT(n) TERNARY_BUILD_MATCHING(if (0)(struct { int pad[n]; }) {}, (void)0)
 
-inline void padStack(void)
+static inline void padStack(void)
 {
 	int pad = 0;
 }

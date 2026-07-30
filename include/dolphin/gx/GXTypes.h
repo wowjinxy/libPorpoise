@@ -47,7 +47,7 @@ typedef struct _GXTexObjPriv {
 	u32 mode1;       // _04
 	u32 image0;      // _08
 	u32 image3;      // _0C
-	void* userData;  // _10
+	u32 userData;    // _10, target pointer value
 	GXTexFmt format; // _14
 	u32 tlutName;    // _18
 	u16 loadCount;   // _1C
@@ -117,7 +117,7 @@ typedef struct _GXVtxDescList {
 // Struct for vertex attribute formats.
 typedef struct _GXVtxAttrFmtList {
 	GXAttr attr;     // _00
-	GXCompCnt count; // _04
+	GXCompCnt cnt;   // _04
 	GXCompType type; // _08
 	u8 frac;         // _0C
 } GXVtxAttrFmtList;

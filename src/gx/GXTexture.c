@@ -1,6 +1,164 @@
 #include <dolphin/gx.h>
 #include <string.h>
 
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_gx_CommandProcessor.h>
+#include <stdint.h>
+
+#define GX_HOST_TEX_USER_DATA_SLOTS 1024
+
+typedef struct GXHostTexUserDataEntry {
+	const GXTexObj* object;
+	void* userData;
+} GXHostTexUserDataEntry;
+
+typedef struct GXHostTexImageDataEntry {
+	const GXTexObj* object;
+	void* imageData;
+} GXHostTexImageDataEntry;
+
+typedef struct GXHostTlutDataEntry {
+	const GXTlutObj* object;
+	void* data;
+} GXHostTlutDataEntry;
+
+static GXHostTexUserDataEntry gxHostTexUserData[GX_HOST_TEX_USER_DATA_SLOTS];
+static GXHostTexImageDataEntry gxHostTexImageData[GX_HOST_TEX_USER_DATA_SLOTS];
+static GXHostTlutDataEntry gxHostTlutData[GX_HOST_TEX_USER_DATA_SLOTS];
+
+static void GXHostSetTexUserData(const GXTexObj* object, void* userData)
+{
+	s32 firstFree = -1;
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTexUserData[i].object == object) {
+			if (userData == NULL) {
+				gxHostTexUserData[i].object = NULL;
+			}
+			gxHostTexUserData[i].userData = userData;
+			return;
+		}
+		if (firstFree < 0 && gxHostTexUserData[i].object == NULL) {
+			firstFree = (s32)i;
+		}
+	}
+
+	if (userData == NULL) {
+		return;
+	}
+	if (firstFree >= 0) {
+		gxHostTexUserData[firstFree].object = object;
+		gxHostTexUserData[firstFree].userData = userData;
+		return;
+	}
+
+	i = (u32)(((uintptr_t)object >> 2) % GX_HOST_TEX_USER_DATA_SLOTS);
+	gxHostTexUserData[i].object = object;
+	gxHostTexUserData[i].userData = userData;
+}
+
+static void* GXHostGetTexUserData(const GXTexObj* object)
+{
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTexUserData[i].object == object) {
+			return gxHostTexUserData[i].userData;
+		}
+	}
+	return NULL;
+}
+
+static void GXHostSetTexImageData(const GXTexObj* object, void* imageData)
+{
+	s32 firstFree = -1;
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTexImageData[i].object == object) {
+			if (imageData == NULL) {
+				gxHostTexImageData[i].object = NULL;
+			}
+			gxHostTexImageData[i].imageData = imageData;
+			return;
+		}
+		if (firstFree < 0 && gxHostTexImageData[i].object == NULL) {
+			firstFree = (s32)i;
+		}
+	}
+
+	if (imageData == NULL) {
+		return;
+	}
+	if (firstFree >= 0) {
+		gxHostTexImageData[firstFree].object = object;
+		gxHostTexImageData[firstFree].imageData = imageData;
+		return;
+	}
+
+	i = (u32)(((uintptr_t)object >> 2) % GX_HOST_TEX_USER_DATA_SLOTS);
+	gxHostTexImageData[i].object = object;
+	gxHostTexImageData[i].imageData = imageData;
+}
+
+static void* GXHostGetTexImageData(const GXTexObj* object)
+{
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTexImageData[i].object == object) {
+			return gxHostTexImageData[i].imageData;
+		}
+	}
+	return NULL;
+}
+
+static void GXHostSetTlutData(const GXTlutObj* object, void* data)
+{
+	s32 firstFree = -1;
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTlutData[i].object == object) {
+			if (data == NULL) {
+				gxHostTlutData[i].object = NULL;
+			}
+			gxHostTlutData[i].data = data;
+			return;
+		}
+		if (firstFree < 0 && gxHostTlutData[i].object == NULL) {
+			firstFree = (s32)i;
+		}
+	}
+
+	if (data == NULL) {
+		return;
+	}
+	if (firstFree >= 0) {
+		gxHostTlutData[firstFree].object = object;
+		gxHostTlutData[firstFree].data = data;
+		return;
+	}
+
+	i = (u32)(((uintptr_t)object >> 2) % GX_HOST_TEX_USER_DATA_SLOTS);
+	gxHostTlutData[i].object = object;
+	gxHostTlutData[i].data = data;
+}
+
+static void* GXHostGetTlutData(const GXTlutObj* object)
+{
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTlutData[i].object == object) {
+			return gxHostTlutData[i].data;
+		}
+	}
+	return NULL;
+}
+#endif
+
 u8 GXTexMode0Ids[8]  = { 0x80, 0x81, 0x82, 0x83, 0xA0, 0xA1, 0xA2, 0xA3 };
 u8 GXTexMode1Ids[8]  = { 0x84, 0x85, 0x86, 0x87, 0xA4, 0xA5, 0xA6, 0xA7 };
 u8 GXTexImage0Ids[8] = { 0x88, 0x89, 0x8A, 0x8B, 0xA8, 0xA9, 0xAA, 0xAB };
@@ -9,7 +167,10 @@ u8 GXTexImage2Ids[8] = { 0x90, 0x91, 0x92, 0x93, 0xB0, 0xB1, 0xB2, 0xB3 };
 u8 GXTexImage3Ids[8] = { 0x94, 0x95, 0x96, 0x97, 0xB4, 0xB5, 0xB6, 0xB7 };
 u8 GXTexTlutIds[8]   = { 0x98, 0x99, 0x9A, 0x9B, 0xB8, 0xB9, 0xBA, 0xBB };
 u8 GX2HWFiltConv[6]  = { 0x00, 0x04, 0x01, 0x05, 0x02, 0x06 };
-u8 HW2GXFiltConv[8]; // Unused
+u8 HW2GXFiltConv[8]  = {
+	GX_NEAR, GX_NEAR_MIP_NEAR, GX_NEAR_MIP_LIN, GX_NEAR,
+	GX_LINEAR, GX_LIN_MIP_NEAR, GX_LIN_MIP_LIN, GX_NEAR
+};
 
 /**
  * @TODO: Documentation
@@ -176,7 +337,17 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFm
 		OSAssertMsgLine(0x212, height == mask, "%s: height must be a power of 2", "GXInitTexObj");
 	}
 #endif
+#ifdef LIBPORPOISE_PORT
 	memset(t, 0, 0x20);
+	/*
+	 * GXTexObj is fixed at 0x20 bytes by the SDK ABI. Keep native image and
+	 * application pointers in host-side tables instead of enlarging it.
+	 */
+	GXHostSetTexImageData(obj, image_ptr);
+	GXHostSetTexUserData(obj, NULL);
+#else
+	memset(t, 0, 0x20);
+#endif
 	SET_REG_FIELD(0x220, t->mode0, 2, 0, wrap_s);
 	SET_REG_FIELD(0x221, t->mode0, 2, 2, wrap_t);
 	SET_REG_FIELD(0x222, t->mode0, 1, 4, 1);
@@ -331,6 +502,93 @@ void GXInitTexObjLOD(GXTexObj* obj, GXTexFilter min_filt, GXTexFilter mag_filt, 
 	SET_REG_FIELD(0x2E6, t->mode1, 8, 8, lmax);
 }
 
+void GXInitTexObjMaxLOD(GXTexObj* obj, f32 max_lod)
+{
+	GXTexObjPriv* texture = (GXTexObjPriv*)obj;
+
+	OSAssertMsgLine(0x2E8, obj, "Texture Object Pointer is null");
+	CHECK_GXBEGIN(0x2E9, "GXInitTexObjMaxLOD");
+	if (max_lod < 0.0f) {
+		max_lod = 0.0f;
+	} else if (max_lod > 10.0f) {
+		max_lod = 10.0f;
+	}
+	SET_REG_FIELD(0x2EA, texture->mode1, 8, 8, (u8)(max_lod * 16.0f));
+}
+
+void GXInitTexObjMinLOD(GXTexObj* obj, f32 min_lod)
+{
+	GXTexObjPriv* texture = (GXTexObjPriv*)obj;
+
+	OSAssertMsgLine(0x2EB, obj, "Texture Object Pointer is null");
+	CHECK_GXBEGIN(0x2EC, "GXInitTexObjMinLOD");
+	if (min_lod < 0.0f) {
+		min_lod = 0.0f;
+	} else if (min_lod > 10.0f) {
+		min_lod = 10.0f;
+	}
+	SET_REG_FIELD(0x2ED, texture->mode1, 8, 0, (u8)(min_lod * 16.0f));
+}
+
+void GXInitTexObjLODBias(GXTexObj* obj, f32 lod_bias)
+{
+	GXTexObjPriv* texture = (GXTexObjPriv*)obj;
+	s8 encodedBias;
+
+	OSAssertMsgLine(0x2EE, obj, "Texture Object Pointer is null");
+	CHECK_GXBEGIN(0x2EF, "GXInitTexObjLODBias");
+	if (lod_bias < -4.0f) {
+		lod_bias = -4.0f;
+	} else if (lod_bias >= 4.0f) {
+		lod_bias = 3.99f;
+	}
+	encodedBias = (s8)(lod_bias * 32.0f);
+	SET_REG_FIELD(0x2F0, texture->mode0, 8, 9, (u8)encodedBias);
+}
+
+void GXInitTexObjBiasClamp(GXTexObj* obj, GXBool bias_clamp)
+{
+	GXTexObjPriv* texture = (GXTexObjPriv*)obj;
+
+	OSAssertMsgLine(0x2F1, obj, "Texture Object Pointer is null");
+	CHECK_GXBEGIN(0x2F2, "GXInitTexObjBiasClamp");
+	SET_REG_FIELD(0x2F3, texture->mode0, 1, 21, bias_clamp != GX_FALSE);
+}
+
+void GXInitTexObjEdgeLOD(GXTexObj* obj, GXBool do_edge_lod)
+{
+	GXTexObjPriv* texture = (GXTexObjPriv*)obj;
+
+	OSAssertMsgLine(0x2F4, obj, "Texture Object Pointer is null");
+	CHECK_GXBEGIN(0x2F5, "GXInitTexObjEdgeLOD");
+	SET_REG_FIELD(0x2F6, texture->mode0, 1, 8, do_edge_lod ? 0 : 1);
+}
+
+void GXInitTexObjMaxAniso(GXTexObj* obj, GXAnisotropy max_aniso)
+{
+	GXTexObjPriv* texture = (GXTexObjPriv*)obj;
+
+	OSAssertMsgLine(0x2F7, obj, "Texture Object Pointer is null");
+	CHECK_GXBEGIN(0x2F8, "GXInitTexObjMaxAniso");
+	SET_REG_FIELD(0x2F9, texture->mode0, 2, 19, max_aniso);
+}
+
+void GXInitTexObjFilter(GXTexObj* obj, GXTexFilter min_filt,
+                        GXTexFilter mag_filt)
+{
+	GXTexObjPriv* texture = (GXTexObjPriv*)obj;
+
+	OSAssertMsgLine(0x2E9, obj, "Texture Object Pointer is null");
+	CHECK_GXBEGIN(0x2EA, "GXInitTexObjFilter");
+	OSAssertMsgLine(0x2EB, (u32)min_filt <= GX_LIN_MIP_LIN,
+	                "GXInitTexObjFilter: invalid min filter");
+	OSAssertMsgLine(0x2EC, mag_filt == GX_NEAR || mag_filt == GX_LINEAR,
+	                "GXInitTexObjFilter: invalid mag filter");
+	SET_REG_FIELD(0x2ED, texture->mode0, 1, 4,
+	              mag_filt == GX_LINEAR ? 1 : 0);
+	SET_REG_FIELD(0x2EE, texture->mode0, 3, 5, GX2HWFiltConv[min_filt]);
+}
+
 /**
  * @TODO: Documentation
  * @note UNUSED Size: 000018
@@ -345,6 +603,9 @@ void GXInitTexObjData(GXTexObj* obj, void* image_ptr)
 	OSAssertMsgLine(0x2FE, ((u32)image_ptr & 0x1F) == 0, "%s: %s pointer not aligned to 32B", "GXInitTexObjData", "image");
 	imageBase = ((u32)image_ptr >> 5) & 0x01FFFFFF;
 	SET_REG_FIELD(0x301, t->image3, 21, 0, imageBase);
+#ifdef LIBPORPOISE_PORT
+	GXHostSetTexImageData(obj, image_ptr);
+#endif
 }
 
 /**
@@ -384,7 +645,11 @@ void GXInitTexObjUserData(GXTexObj* obj, void* user_data)
 
 	OSAssertMsgLine(0x33E, obj, "Texture Object Pointer is null");
 	CHECK_GXBEGIN(0x33F, "GXInitTexObjUserData");
+#ifdef LIBPORPOISE_PORT
+	GXHostSetTexUserData(obj, user_data);
+#else
 	t->userData = user_data;
+#endif
 }
 
 /**
@@ -396,7 +661,12 @@ void* GXGetTexObjUserData(const GXTexObj* obj)
 	GXTexObjPriv* t = (GXTexObjPriv*)obj;
 
 	OSAssertMsgLine(0x345, obj, "Texture Object Pointer is null");
+#ifdef LIBPORPOISE_PORT
+	(void)t;
+	return GXHostGetTexUserData(obj);
+#else
 	return t->userData;
+#endif
 }
 
 /**
@@ -409,7 +679,11 @@ void GXGetTexObjAll(const GXTexObj* obj, void** image_ptr, u16* width, u16* heig
 	GXTexObjPriv* t = (GXTexObjPriv*)obj;
 
 	OSAssertMsgLine(0x359, obj, "Texture Object Pointer is null");
+#ifdef LIBPORPOISE_PORT
+	*image_ptr = GXHostGetTexImageData(obj);
+#else
 	*image_ptr = (void*)(GET_REG_FIELD(t->image3, 21, 0) << 5);
+#endif
 	*width     = (u32)GET_REG_FIELD(t->image0, 10, 0) + 1;
 	*height    = (u32)GET_REG_FIELD(t->image0, 10, 10) + 1;
 	*format    = t->format;
@@ -427,7 +701,11 @@ void* GXGetTexObjData(const GXTexObj* to)
 	GXTexObjPriv* t = (GXTexObjPriv*)to;
 
 	OSAssertMsgLine(0x366, to, "Texture Object Pointer is null");
+#ifdef LIBPORPOISE_PORT
+	return GXHostGetTexImageData(to);
+#else
 	return (void*)(GET_REG_FIELD(t->image3, 21, 0) << 5);
+#endif
 }
 
 /**
@@ -512,15 +790,12 @@ void GXGetTexObjLODAll(const GXTexObj* tex_obj, GXTexFilter* min_filt, GXTexFilt
 	GXTexObjPriv* t = (GXTexObjPriv*)tex_obj;
 
 	OSAssertMsgLine(0x3A0, tex_obj, "Texture Object Pointer is null");
-	// *min_filt = HW2GXFiltConv[GET_REG_FIELD(t->mode0, 3, 5)];
+	*min_filt = HW2GXFiltConv[GET_REG_FIELD(t->mode0, 3, 5)];
 	*mag_filt = GET_REG_FIELD(t->mode0, 1, 4);
 	*min_lod  = (u8)t->mode1 / 16.0f;
 	*max_lod  = (u32)GET_REG_FIELD(t->mode1, 8, 8) / 16.0f;
 	tmp       = (s32)GET_REG_FIELD(t->mode0, 8, 9);
-	if (tmp & 0x80) {
-		tmp = -(tmp & 0x7F);
-	}
-	*lod_bias    = 32.0f * tmp;
+	*lod_bias    = (f32)(s8)tmp / 32.0f;
 	*bias_clamp  = (u32)GET_REG_FIELD(t->mode0, 1, 21);
 	*do_edge_lod = !GET_REG_FIELD(t->mode0, 1, 8);
 	*max_aniso   = GET_REG_FIELD(t->mode0, 2, 19);
@@ -585,10 +860,7 @@ f32 GXGetTexObjLODBias(const GXTexObj* tex_obj)
 
 	OSAssertMsgLine(0x3CC, tex_obj, "Texture Object Pointer is null");
 	tmp = (s32)GET_REG_FIELD(t->mode0, 8, 9);
-	if (tmp & 0x80) {
-		tmp = -(tmp & 0x7F);
-	}
-	return 32.0f * tmp;
+	return (f32)(s8)tmp / 32.0f;
 }
 
 /**
@@ -678,6 +950,18 @@ void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion* region, GXTexMapID id)
 	gx->tImage0[id] = t->image0;
 	gx->tMode0[id]  = t->mode0;
 	gx->dirtyState |= 1;
+#ifdef LIBPORPOISE_PORT
+	SIM_GX_CommandProcessor_LoadTexture(
+	    id, GXHostGetTexImageData(obj),
+	    (u16)(GET_REG_FIELD(t->image0, 10, 0) + 1),
+	    (u16)(GET_REG_FIELD(t->image0, 10, 10) + 1),
+	    (u32)t->format,
+	    GET_REG_FIELD(t->mode0, 2, 0),
+	    GET_REG_FIELD(t->mode0, 2, 2),
+	    HW2GXFiltConv[GET_REG_FIELD(t->mode0, 3, 5)],
+	    GET_REG_FIELD(t->mode0, 1, 4),
+	    t->tlutName);
+#endif
 #if OS_BUILD_VERSION >= 20011002L
 	gx->bpSent = GX_FALSE;
 #else
@@ -712,6 +996,9 @@ void GXInitTlutObj(GXTlutObj* tlut_obj, void* lut, GXTlutFmt fmt, u16 n_entries)
 	CHECK_GXBEGIN(0x453, "GXInitTlutObj");
 	OSAssertMsgLine(0x456, n_entries <= 0x4000, "%s: number of entries exceeds maximum", "GXInitTlutObj");
 	OSAssertMsgLine(0x458, ((u32)lut & 0x1F) == 0, "%s: %s pointer not aligned to 32B", "GXInitTlutObj", "Tlut");
+#ifdef LIBPORPOISE_PORT
+	GXHostSetTlutData(tlut_obj, lut);
+#endif
 	t->tlut = 0;
 	SET_REG_FIELD(0x45B, t->tlut, 2, 10, fmt);
 	SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, ((u32)lut & 0x3FFFFFFF) >> 5);
@@ -728,7 +1015,11 @@ void GXGetTlutObjAll(const GXTlutObj* tlut_obj, void** data, GXTlutFmt* format, 
 	GXTlutObjPriv* t = (GXTlutObjPriv*)tlut_obj;
 
 	OSAssertMsgLine(0x472, tlut_obj, "TLut Object Pointer is null");
+#ifdef LIBPORPOISE_PORT
+	*data       = GXHostGetTlutData(tlut_obj);
+#else
 	*data       = (void*)(GET_REG_FIELD(t->loadTlut0, 21, 0) << 5);
+#endif
 	*format     = GET_REG_FIELD(t->tlut, 2, 10);
 	*numEntries = t->numEntries;
 }
@@ -742,7 +1033,11 @@ void* GXGetTlutObjData(const GXTlutObj* tlut_obj)
 	GXTlutObjPriv* t = (GXTlutObjPriv*)tlut_obj;
 
 	OSAssertMsgLine(0x47B, tlut_obj, "TLut Object Pointer is null");
+#ifdef LIBPORPOISE_PORT
+	return GXHostGetTlutData(tlut_obj);
+#else
 	return (void*)(GET_REG_FIELD(t->loadTlut0, 21, 0) << 5);
+#endif
 }
 
 /**
@@ -791,6 +1086,13 @@ void GXLoadTlut(GXTlutObj* tlut_obj, u32 tlut_name)
 	tlut_offset = r->loadTlut1 & 0x3FF;
 	SET_REG_FIELD(0x4B9, t->tlut, 10, 0, tlut_offset);
 	r->tlutObj = *t;
+#ifdef LIBPORPOISE_PORT
+	SIM_GX_CommandProcessor_LoadTlut(
+	    tlut_name,
+	    GXHostGetTlutData(tlut_obj),
+	    GET_REG_FIELD(t->tlut, 2, 10),
+	    t->numEntries);
+#endif
 }
 
 /**
@@ -999,7 +1301,7 @@ void GXGetTlutRegionAll(const GXTlutRegion* region, u32* tmem_addr, GXTlutSize* 
  * @TODO: Documentation
  * @note UNUSED Size: 00010C
  */
-void GXInvalidateTexRegion(GXTexRegion* region)
+void GXInvalidateTexRegion(const GXTexRegion* region)
 {
 	s32 wle;
 	s32 hle;
@@ -1008,7 +1310,7 @@ void GXInvalidateTexRegion(GXTexRegion* region)
 	s32 count;
 	u32 reg0;
 	u32 reg1;
-	GXTexRegionPriv* r = (GXTexRegionPriv*)region;
+	const GXTexRegionPriv* r = (const GXTexRegionPriv*)region;
 
 	OSAssertMsgLine(0x5B5, region, "TexRegion Object Pointer is null");
 	CHECK_GXBEGIN(0x5B7, "GXInvalidateTexRegion");
@@ -1102,7 +1404,7 @@ GXTlutRegionCallback GXSetTlutRegionCallback(GXTlutRegionCallback f)
  * @TODO: Documentation
  * @note UNUSED Size: 000244
  */
-void GXPreLoadEntireTexture(GXTexObj* tex_obj, GXTexRegion* region)
+void GXPreLoadEntireTexture(const GXTexObj* tex_obj, const GXTexRegion* region)
 {
 	u8 isMipMap;
 	u8 is32bit;
@@ -1128,8 +1430,8 @@ void GXPreLoadEntireTexture(GXTexObj* tex_obj, GXTexRegion* region)
 	u32 colTiles;
 	u32 cmpTiles;
 	u32 i;
-	GXTexObjPriv* t    = (GXTexObjPriv*)tex_obj;
-	GXTexRegionPriv* r = (GXTexRegionPriv*)region;
+	const GXTexObjPriv* t    = (const GXTexObjPriv*)tex_obj;
+	const GXTexRegionPriv* r = (const GXTexRegionPriv*)region;
 
 	OSAssertMsgLine(0x628, tex_obj, "Texture Object Pointer is null");
 	OSAssertMsgLine(0x628, region, "TexRegion Object Pointer is null");

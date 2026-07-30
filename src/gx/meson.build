@@ -1,7 +1,10 @@
 libgx_srcs = files(
-    'GXAttr.c',
+    'G2D.c',
+	'GXAttr.c',
 	'GXBump.c',
+	'GXData.c',
 	'GXDisplayList.c',
+	'GXDraw.c',
 	'GXFifo.c',
 	'GXFrameBuf.c',
 	'GXGeometry.c',
