@@ -19,6 +19,7 @@ BEGIN_SCOPE_EXTERN_C
 typedef f32 Mtx[3][4];
 typedef f32 Mtx23[2][3];
 typedef f32 Mtx33[3][3];
+typedef f32 Mtx34[3][4];
 typedef f32 Mtx44[4][4];
 
 typedef f32 (*MtxP)[4];
