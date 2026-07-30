@@ -98,7 +98,9 @@ static GLuint gxShaderProgramId;
 static GLuint gxVertexShader;
 static GLuint gxFragmentShader;
 
+extern "C" {
 void DolphinMain();
+}
 
 int main(int argc, char** argv) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK) != 0) {

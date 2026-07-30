@@ -1,6 +1,7 @@
 libporpoise_libs = []
 libporpoise_prebuilt = []
 
+subdir('ai')
 subdir('amcExi2')
 subdir('amcnotstub')
 subdir('ar')
@@ -8,8 +9,10 @@ subdir('base')
 subdir('card')
 subdir('db')
 subdir('demo')
+subdir('dsp')
 subdir('dvd')
 subdir('exi')
+subdir('gba')
 subdir('gx')
 subdir('mtx')
 subdir('odenotstub')

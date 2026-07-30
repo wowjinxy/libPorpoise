@@ -411,6 +411,7 @@ typedef enum _GXTexGenType {
 	GX_TG_MTX2X4 = 0,
 	GX_TG_MTX2x4 = 0,
 	GX_TG_MTX3X4 = 1,
+	GX_TG_MTX3x4 = 1,
 
 	GX_TG_BUMP0 = 2,
 	GX_TG_BUMP1 = 3,
@@ -692,9 +693,13 @@ typedef enum _GXIndTexFormat {
 // Indirect texture stage names.
 typedef enum _GXIndTexStageID {
 	GX_IND_TEX_STAGE_0 = 0,
+	GX_INDTEXSTAGE0 = GX_IND_TEX_STAGE_0,
 	GX_IND_TEX_STAGE_1 = 1,
+	GX_INDTEXSTAGE1 = GX_IND_TEX_STAGE_1,
 	GX_IND_TEX_STAGE_2 = 2,
+	GX_INDTEXSTAGE2 = GX_IND_TEX_STAGE_2,
 	GX_IND_TEX_STAGE_3 = 3,
+	GX_INDTEXSTAGE3 = GX_IND_TEX_STAGE_3,
 
 	GX_IND_MAX_TEX_STAGE_ID, // Max num stages (4).
 } GXIndTexStageID;
@@ -792,6 +797,7 @@ typedef enum _GXTevStageID {
 	GX_TEVSTAGE15 = 15, // TEV Stage 15.
 
 	GX_MAXTEVSTAGE, // Max num TEV stages (16).
+	GX_MAX_TEVSTAGE = GX_MAXTEVSTAGE,
 } GXTevStageID;
 
 // TEV register names.

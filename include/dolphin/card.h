@@ -336,6 +336,12 @@ BOOL __CARDIsOpened(CARDControl* card, s32 fileNo);
 int __CARDUnlock(int chan, u8 flashID[12]);
 s32 __CARDSeek(CARDFileInfo* fileInfo, s32 length, s32 offset, CARDControl** outCard);
 
+// CARDStatEx.c
+int __CARDGetStatusEx(int chan, int fileNo, struct CARDDir * dirent);
+int __CARDSetStatusExAsync(int chan, int fileNo, struct CARDDir * dirent, void (* callback)(long, long));
+int __CARDSetStatusEx(int chan, int fileNo, struct CARDDir * dirent);
+
+
 ////////////////////////////////////////////
 
 //////////// OTHER CARD DEFINES ////////////

@@ -21,6 +21,7 @@ typedef f32 Mtx33[3][3];
 typedef f32 Mtx34[3][4];
 typedef f32 Mtx44[4][4];
 
+typedef f32 (*MtxP)[4];
 typedef f32 (*MtxPtr)[4];
 typedef f32 (*Mtx23Ptr)[2];
 typedef f32 (*Mtx33Ptr)[3];
@@ -71,7 +72,10 @@ typedef struct Quaternion {
 #define MTX44RotRad         C_MTX44RotRad
 #define MTX44RotTrig        C_MTX44RotTrig
 #define MTX44RotAxisRad     C_MTX44RotAxisRad
-
+#define MTXMultVec          C_MTXMultVec
+#define MTXMultVecArray     C_MTXMultVecArray
+#define MTXMultVecSR        C_MTXMultVecSR
+#define MTXMultVecArraySR   C_MTXMultVecArraySR
 #else
 
 #define MTXIdentity  PSMTXIdentity
@@ -208,6 +212,18 @@ void C_MTX44RotAxisRad(Mtx44 m, const Vec* axis, f32 rad);
 void PSMTX44RotAxisRad(Mtx44 m, const Vec* axis, f32 rad);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void C_MTXMultVec(const Mtx m, const Vec *src, Vec *dst);
+void C_MTXMultVecArray(const Mtx m, const Vec *srcBase, Vec *dstBase, u32 count);
+void C_MTXMultVecSR(const Mtx m, const Vec *src, Vec *dst);
+void C_MTXMultVecArraySR(const Mtx m, const Vec *srcBase, Vec *dstBase, u32 count);
+
+void PSMTXMultVec(const Mtx m, const Vec *src, Vec *dst);
+void PSMTXMultVecArray(const Mtx m, const Vec *srcBase, Vec *dstBase, u32 count);
+void PSMTXMultVecSR(const Mtx m, const Vec *src, Vec *dst);
+void PSMTXMultVecArraySR(const Mtx m, const Vec *srcBase, Vec *dstBase, u32 count);
+
+
 
 /////////////// MATRIX INLINES ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 

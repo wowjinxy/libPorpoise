@@ -97,3 +97,5 @@ tmp_*
 # Runtime generated files
 porpoise_sram.cfg
 
+# Meson files
+.meson-subproject-wrap-hash.txt
