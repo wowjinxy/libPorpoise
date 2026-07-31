@@ -35,6 +35,12 @@ if(build_target != 'gc')
 libporpoise_shared_args += ['-g']
 endif
 
+if(get_option('address_sanitizer') == true)
+libporpoise_shared_args += [
+    '-fsanitize=address'
+]
+endif
+
 libporpoise_c_args = [
 ]
 
