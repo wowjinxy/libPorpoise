@@ -99,3 +99,4 @@ porpoise_sram.cfg
 
 # Meson files
 .meson-subproject-wrap-hash.txt
+subprojects/tracy/

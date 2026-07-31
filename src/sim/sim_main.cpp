@@ -9,6 +9,9 @@
 #ifdef LIBPORPOISE_BUILD_LINUX
 #include <signal.h>
 #endif
+#ifdef TRACY_ENABLE
+#include <tracy/Tracy.hpp>
+#endif
 
 static SDL_GLContext context;
 static SDL_Window * window;
@@ -108,6 +111,15 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    #ifdef TRACY_ENABLE
+    //Start up Tracy profiler
+    tracy::StartupProfiler();
+
+    while(!TracyIsStarted) {
+        SDL_Delay(1);
+    }
+    #endif
+
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -177,6 +189,11 @@ void SIM_Render() {
 
     //DrawTestTriangle();
     SDL_GL_SwapWindow(window);
+
+    #ifdef TRACY_ENABLE
+    FrameMark;
+    #endif
+
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f );
     glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT );
 }
