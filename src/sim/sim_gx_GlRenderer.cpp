@@ -6,6 +6,9 @@
 #include <simulator/glad/glad.h>
 #include <simulator/sim_gx_Geometry.hpp>
 #include <simulator/sim_gx_State.hpp>
+#ifdef TRACY_ENABLE
+#include <tracy/Tracy.hpp>
+#endif
 
 namespace {
 
@@ -97,6 +100,9 @@ void GlRenderer::Initialize() {
 }
 
 void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive primitive) {
+    #ifdef TRACY_ENABLE
+    ZoneScoped;
+    #endif
     if (vertices.empty()) {
         return;
     }
