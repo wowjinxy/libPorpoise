@@ -10,7 +10,7 @@
 #include <signal.h>
 #endif
 #ifdef TRACY_ENABLE
-#include <tracy/Tracy.hpp>
+#include "tracy/Tracy.hpp"
 #endif
 
 static SDL_GLContext context;
@@ -118,6 +118,7 @@ int main(int argc, char** argv) {
     while(!TracyIsStarted) {
         SDL_Delay(1);
     }
+    FrameMarkStart("GameLoop");
     #endif
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -170,6 +171,9 @@ void SIM_VIInit() {
 }
 
 void SIM_Render() {
+    #ifdef TRACY_ENABLE
+    FrameMarkEnd("GameLoop");
+    #endif
     SDL_Event Event;
 
     while( SDL_PollEvent(&Event))
@@ -191,11 +195,15 @@ void SIM_Render() {
     SDL_GL_SwapWindow(window);
 
     #ifdef TRACY_ENABLE
+    FrameMarkNamed("VBlank");
     FrameMark;
     #endif
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f );
     glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT );
+    #ifdef TRACY_ENABLE
+    FrameMarkStart("GameLoop");
+    #endif
 }
 
 void SIM_DebugBreak() {
