@@ -11,15 +11,16 @@ END_SCOPE_EXTERN_C
 
 #ifdef __cplusplus
 
-inline void GXSetArray(GXAttr attr, u32* base_ptr, u8 stride)
-{
-    GXSetArrayU32(attr, base_ptr, stride);
-}
+#define LIBPORPOISE_GX_ARRAY_IS_U32(base_ptr) \
+    (__is_same(decltype((base_ptr) + 0), u32*) || \
+     __is_same(decltype((base_ptr) + 0), const u32*) || \
+     __is_same(decltype((base_ptr) + 0), volatile u32*) || \
+     __is_same(decltype((base_ptr) + 0), const volatile u32*))
 
-inline void GXSetArray(GXAttr attr, const u32* base_ptr, u8 stride)
-{
-    GXSetArrayU32(attr, (void*)base_ptr, stride);
-}
+#define GXSetArray(attr, base_ptr, stride) \
+    (LIBPORPOISE_GX_ARRAY_IS_U32(base_ptr) \
+         ? GXSetArrayU32((attr), (void*)(base_ptr), (stride)) \
+         : GXSetArray((attr), (void*)(base_ptr), (stride)))
 
 #elif defined(__GNUC__) || defined(__clang__)
 
