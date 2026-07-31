@@ -259,7 +259,7 @@ static void __AIDHandler(__OSInterrupt interrupt, OSContext* context)
 }
 
 static 
-#ifdef GAMECUBE
+#ifndef LIBPORPOISE_PORT
 asm 
 #endif
 void __AICallbackStackSwitch(register void* cb)

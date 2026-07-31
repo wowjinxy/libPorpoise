@@ -60,7 +60,7 @@ if(build_target == 'gc')
         '-enum',
         'int',
         # Multibyte Definitions
-        '-multibyte',
+        #'-multibyte',
         '-char',
         'unsigned',
         # Gekko Specific Definitions

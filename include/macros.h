@@ -25,7 +25,9 @@
 #define ASSERTMSG2LINE(line, cond, msg, arg1, arg2) (void)0
 #define ASSERTMSGLINEV(line, cond, ...) (void)0
 #endif
-    
+
+#ifdef LIBPORPOISE_PORT
 #define ASSERT(cond) ASSERTLINE(__LINE__, cond)
+#endif
 
 #endif // _H_MACROS_

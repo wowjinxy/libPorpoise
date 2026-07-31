@@ -3,7 +3,7 @@
 
 #define qr0 0
 
-#ifdef GAMECUBE
+#ifndef LIBPORPOISE_PORT
 asm 
 #endif
 void PSMTXMultVec(const register Mtx44 m, const register Vec* src, register Vec* dst)
@@ -34,7 +34,7 @@ void PSMTXMultVec(const register Mtx44 m, const register Vec* src, register Vec*
 #endif // clang-format on
 }
 
-#ifdef GAMECUBE
+#ifndef LIBPORPOISE_PORT
 asm 
 #endif
 void PSMTXMultVecArray(const register Mtx m, const register Vec* srcBase,
@@ -82,7 +82,7 @@ loop:
 #endif // clang-format on
 }
 
-#ifdef GAMECUBE
+#ifndef LIBPORPOISE_PORT
 asm 
 #endif
 void PSMTXMultVecSR(const register Mtx44 m, const register Vec* src, register Vec* dst)
