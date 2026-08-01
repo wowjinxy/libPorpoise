@@ -2,3 +2,6 @@ option('build_target', type: 'combo', choices: ['gc', 'win64', 'linux'], value: 
 option('standalone', type: 'boolean', value: false, description: 'Build libporpoise standalone (for example, in a CI build environment)')
 option('address_sanitizer', type: 'boolean', value: false, description: 'Enable address sanitizer', yield: true)
 option('tracy_enable' , type : 'boolean' , value : false, description : 'Enable profiling', yield: true)
+# DVD Options
+option('dvd_game_id', type: 'string', value: 'PRPS', description: 'Game ID. Must be exactly four letters.')
+option('dvd_company', type: 'string', value: '01', description: 'Company ID. Must be exactly two characters. Typically this is 01.')

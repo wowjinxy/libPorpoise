@@ -1,6 +1,7 @@
 #define LIBPORPOISE_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
 #include <dolphin.h>
+#include <dolphin/dvd.h>
 #include <simulator/sim.h>
 #include <simulator/sim_gx_CommandProcessor.h>
 #include <simulator/sim_gx_State.hpp>
@@ -9,6 +10,8 @@
 #ifdef LIBPORPOISE_BUILD_LINUX
 #include <signal.h>
 #endif
+#include <format>
+#include <string>
 #ifdef TRACY_ENABLE
 #include "tracy/Tracy.hpp"
 #endif
@@ -130,7 +133,14 @@ int main(int argc, char** argv) {
     int windowWidth = 640;
     int windowHeight = 480;
 
-    window = SDL_CreateWindow( "libPorpoise Game", 100, 100, windowWidth, windowHeight, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE );
+    auto* dvdId = DVDGetCurrentDiskID();
+    char gameId[5] = {0};
+    char dvdCompany[3] = {0};
+    strncpy(gameId, dvdId->gameName, sizeof(dvdId->gameName));
+    strncpy(dvdCompany, dvdId->company, sizeof(dvdId->company));
+    std::string windowTitle = std::format("libPorpoise Application [{}{}]", gameId, dvdCompany);
+
+    window = SDL_CreateWindow( windowTitle.c_str(), 100, 100, windowWidth, windowHeight, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE );
     if (window == NULL) {
         fprintf(stderr, "SDL window creation failed: %s\n", SDL_GetError());
         return 1;

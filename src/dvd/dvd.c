@@ -64,6 +64,18 @@ static OSAlarm ResetAlarm;
 
 static BOOL DVDInitialized = FALSE;
 
+#ifdef LIBPORPOISE_PORT
+static DVDDiskID s_diskId = {
+	.gameName = LIBPORPOISE_DVD_GAME_ID,
+	.company = LIBPORPOISE_DVD_COMPANY,
+	.diskNumber = 0,
+	.gameVersion = 0,
+	.streaming = 0,
+	.streamBufSize = 0,
+	.padding = {0}
+};
+#endif
+
 /**
  * @TODO: Documentation
  */
@@ -1655,7 +1667,11 @@ void cbForCancelAllSync(void)
  */
 DVDDiskID* DVDGetCurrentDiskID()
 {
+	#ifdef LIBPORPOISE_PORT
+	return &s_diskId;
+	#else
 	return (DVDDiskID*)OSPhysicalToCached(0);
+	#endif
 }
 
 /**
