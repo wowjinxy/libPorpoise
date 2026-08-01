@@ -145,24 +145,52 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
     const u8* end = cursor + byteStream.size();
     mRenderVerts.reserve(numVertices);
 
+
+    // These cannot change during the loop
+
+    // Position
+    const auto& positionFormat = format.mAttributes[GX_VA_POS];
+    const size_t componentCount = gxState.GetNumPositionComponents(positionFormat.mComponents);
+    const size_t componentSize = ComponentSize(positionFormat.mDataType);
+    const GXAttrType positionDescriptor = gxState.GetVertexDescriptor(GX_VA_POS);
+    const auto& positionArray = gxState.GetVertexArray(GX_VA_POS);
+    if (positionArray.mArrayPtr == nullptr || positionArray.mStride < 0) {
+        OSReport("SIM::GX: position array is not configured\n");
+        return;
+    }
+
+    // Color
+    const GXAttrType colorDescriptor = gxState.GetVertexDescriptor(GX_VA_CLR0);
+    const auto& colorFormat = format.mAttributes[GX_VA_CLR0];
+    const size_t colorSize =
+        gxState.GetDescriptorSize(GX_DIRECT, colorFormat.mDataType, true);
+    const auto& colorArray = gxState.GetVertexArray(GX_VA_CLR0);
+    if (colorArray.mArrayPtr == nullptr || colorArray.mStride < 0) {
+        OSReport("SIM::GX: color array is not configured\n");
+        return;
+    }
+
+
+    if (colorSize == 0) {
+        OSReport("SIM::GX: unsupported color format\n");
+        return;
+    }
+
+    if (componentSize == 0) {
+        OSReport("SIM::GX: unsupported position component type\n");
+        return;
+    }
+
+
+
     for (size_t vertexIndex = 0; vertexIndex < numVertices; ++vertexIndex) {
         RenderVertex output = {};
-        output.color0.r = 1.0f;
-        output.color0.g = 1.0f;
-        output.color0.b = 1.0f;
-        output.color0.a = 1.0f;
+        //output.color0.r = 1.0f;
+        //output.color0.g = 1.0f;
+        //output.color0.b = 1.0f;
+        //output.color0.a = 1.0f;
 
-        const GXAttrType positionDescriptor = gxState.GetVertexDescriptor(GX_VA_POS);
         if (positionDescriptor != GX_NONE) {
-            const auto& positionFormat = format.mAttributes[GX_VA_POS];
-            const size_t componentCount =
-                gxState.GetNumPositionComponents(positionFormat.mComponents);
-            const size_t componentSize = ComponentSize(positionFormat.mDataType);
-            if (componentSize == 0) {
-                OSReport("SIM::GX: unsupported position component type\n");
-                return;
-            }
-
             const u8* positionSource = nullptr;
             if (positionDescriptor == GX_DIRECT) {
                 const size_t directSize = componentCount * componentSize;
@@ -176,13 +204,9 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
                 if (!ReadArrayIndex(cursor, end, positionDescriptor, arrayIndex)) {
                     return;
                 }
-                const auto& array = gxState.GetVertexArray(GX_VA_POS);
-                if (array.mArrayPtr == nullptr || array.mStride < 0) {
-                    OSReport("SIM::GX: position array is not configured\n");
-                    return;
-                }
-                positionSource = static_cast<const u8*>(array.mArrayPtr) +
-                                 arrayIndex * static_cast<size_t>(array.mStride);
+                
+                positionSource = static_cast<const u8*>(positionArray.mArrayPtr) +
+                                 arrayIndex * static_cast<size_t>(positionArray.mStride);
             }
 
             for (size_t component = 0; component < componentCount; ++component) {
@@ -199,16 +223,8 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
         //    OSReport("GX: Normals are not currently implemented.\n");
         //}
 
-        const GXAttrType colorDescriptor = gxState.GetVertexDescriptor(GX_VA_CLR0);
+        
         if (colorDescriptor != GX_NONE) {
-            const auto& colorFormat = format.mAttributes[GX_VA_CLR0];
-            const size_t colorSize =
-                gxState.GetDescriptorSize(GX_DIRECT, colorFormat.mDataType, true);
-            if (colorSize == 0) {
-                OSReport("SIM::GX: unsupported color format\n");
-                return;
-            }
-
             const u8* colorSource = nullptr;
             if (colorDescriptor == GX_DIRECT) {
                 if (cursor + colorSize > end) {
@@ -221,13 +237,8 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
                 if (!ReadArrayIndex(cursor, end, colorDescriptor, arrayIndex)) {
                     return;
                 }
-                const auto& array = gxState.GetVertexArray(GX_VA_CLR0);
-                if (array.mArrayPtr == nullptr || array.mStride < 0) {
-                    OSReport("SIM::GX: color array is not configured\n");
-                    return;
-                }
-                colorSource = static_cast<const u8*>(array.mArrayPtr) +
-                              arrayIndex * static_cast<size_t>(array.mStride);
+                colorSource = static_cast<const u8*>(colorArray.mArrayPtr) +
+                              arrayIndex * static_cast<size_t>(colorArray.mStride);
             }
 
             DecodeColor(
