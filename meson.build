@@ -207,3 +207,8 @@ build_tests = tests_option.enabled() or (tests_option.auto() and not meson.is_su
 if build_tests
     subdir('tests')
 endif
+
+benchmarks_option = get_option('benchmarks')
+if benchmarks_option.enabled() and build_target != 'gc'
+    subdir('benchmarks')
+endif

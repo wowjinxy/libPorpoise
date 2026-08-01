@@ -1,4 +1,5 @@
 option('build_target', type: 'combo', choices: ['gc', 'win64', 'linux'], value: 'gc', description: 'Target build platform', yield: true)
 option('standalone', type: 'boolean', value: false, description: 'Build libporpoise standalone (for example, in a CI build environment)')
 option('tests', type: 'feature', value: 'auto', description: 'Build libPorpoise tests (auto enables them only for top-level builds)')
+option('benchmarks', type: 'feature', value: 'disabled', description: 'Build opt-in host performance benchmarks')
 option('host_memory_profile', type: 'combo', choices: ['gamecube', 'gamecube_extended'], value: 'gamecube', description: 'Host console-memory profile; the extended GameCube profile provides 32 MiB for native-width runtime structures')
