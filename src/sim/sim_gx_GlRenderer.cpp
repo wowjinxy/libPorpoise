@@ -1,6 +1,7 @@
 #include <simulator/sim_gx_GlRenderer.hpp>
 
 #include <cstddef>
+#include <cstring>
 #include <vector>
 
 #include <simulator/glad/glad.h>
@@ -12,36 +13,38 @@
 
 namespace {
 
-std::vector<SIM::GX::RenderVertex> ExpandQuads(
-    const std::vector<SIM::GX::RenderVertex>& vertices) {
-    std::vector<SIM::GX::RenderVertex> triangles;
-    triangles.reserve((vertices.size() / 4) * 6);
-    for (size_t i = 0; i + 3 < vertices.size(); i += 4) {
-        triangles.push_back(vertices[i]);
-        triangles.push_back(vertices[i + 1]);
-        triangles.push_back(vertices[i + 2]);
-        triangles.push_back(vertices[i]);
-        triangles.push_back(vertices[i + 2]);
-        triangles.push_back(vertices[i + 3]);
+const SIM::GX::RenderVertex * ExpandQuads(
+    const SIM::GX::RenderVertex * vertices, size_t numVertices) {
+    SIM::GX::RenderVertex * triangles = new SIM::GX::RenderVertex[(numVertices / 4) * 6];
+    size_t trianglesIdx = 0;
+    for (size_t i = 0; i + 3 < numVertices; i += 4) {
+        triangles[trianglesIdx++] = (vertices[i]);
+        triangles[trianglesIdx++] = (vertices[i + 1]);
+        triangles[trianglesIdx++] = (vertices[i + 2]);
+        triangles[trianglesIdx++] = (vertices[i]);
+        triangles[trianglesIdx++] = (vertices[i + 2]);
+        triangles[trianglesIdx++] = (vertices[i + 3]);
     }
     return triangles;
 }
 
-std::vector<SIM::GX::RenderVertex> ExpandQuadStrip(
-    const std::vector<SIM::GX::RenderVertex>& vertices) {
-    std::vector<SIM::GX::RenderVertex> triangles;
-    if (vertices.size() < 4) {
+const SIM::GX::RenderVertex * ExpandQuadStrip(
+    const SIM::GX::RenderVertex * vertices, size_t numVertices) {
+    if (numVertices < 4) {
+        SIM::GX::RenderVertex * triangles = new SIM::GX::RenderVertex[numVertices];
+        std::memcpy(triangles, vertices, sizeof(SIM::GX::RenderVertex) * numVertices);
         return triangles;
     }
 
-    triangles.reserve(((vertices.size() - 2) / 2) * 6);
-    for (size_t i = 0; i + 3 < vertices.size(); i += 2) {
-        triangles.push_back(vertices[i]);
-        triangles.push_back(vertices[i + 1]);
-        triangles.push_back(vertices[i + 3]);
-        triangles.push_back(vertices[i]);
-        triangles.push_back(vertices[i + 3]);
-        triangles.push_back(vertices[i + 2]);
+    SIM::GX::RenderVertex * triangles = new SIM::GX::RenderVertex[((numVertices - 2) / 2) * 6];
+    size_t trianglesIdx = 0;
+    for (size_t i = 0; i + 3 < numVertices; i += 2) {
+        triangles[trianglesIdx++] = (vertices[i]);
+        triangles[trianglesIdx++] = (vertices[i + 1]);
+        triangles[trianglesIdx++] = (vertices[i + 2]);
+        triangles[trianglesIdx++] = (vertices[i]);
+        triangles[trianglesIdx++] = (vertices[i + 2]);
+        triangles[trianglesIdx++] = (vertices[i + 3]);
     }
     return triangles;
 }
@@ -99,27 +102,30 @@ void GlRenderer::Initialize() {
         reinterpret_cast<void*>(offsetof(RenderVertex, color0)));
 }
 
-void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive primitive) {
+void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimitive primitive) {
     #ifdef TRACY_ENABLE
     ZoneScoped;
     #endif
-    if (vertices.empty()) {
+    if (numVertices == 0) {
         return;
     }
 
     Initialize();
 
-    std::vector<RenderVertex> expandedVertices;
-    const std::vector<RenderVertex>* drawVertices = &vertices;
+    const RenderVertex * expandedVertices;
+    const RenderVertex* drawVertices = vertices;
+    size_t numDrawVertices = numVertices;
     if (primitive == GX_QUADS) {
-        expandedVertices = ExpandQuads(vertices);
-        drawVertices = &expandedVertices;
+        expandedVertices = ExpandQuads(vertices, numVertices);
+        drawVertices = expandedVertices;
+        numDrawVertices = (numVertices / 4) * 6;
     } else if (primitive == GX_QUADSTRIP) {
-        expandedVertices = ExpandQuadStrip(vertices);
-        drawVertices = &expandedVertices;
+        expandedVertices = ExpandQuadStrip(vertices, numVertices);
+        drawVertices = expandedVertices;
+        numDrawVertices = ((numVertices - 2) / 2) * 6;
     }
 
-    if (drawVertices->empty()) {
+    if (numDrawVertices == 0) {
         return;
     }
 
@@ -153,13 +159,17 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
     glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);
     glBufferData(
         GL_ARRAY_BUFFER,
-        static_cast<GLsizeiptr>(drawVertices->size() * sizeof(RenderVertex)),
-        drawVertices->data(),
+        static_cast<GLsizeiptr>(numDrawVertices * sizeof(RenderVertex)),
+        drawVertices,
         GL_STREAM_DRAW);
     glDrawArrays(
         ToGlPrimitive(primitive),
         0,
-        static_cast<GLsizei>(drawVertices->size()));
+        static_cast<GLsizei>(numDrawVertices));
+
+    if (primitive == GX_QUADS || primitive == GX_QUADSTRIP) {
+        delete drawVertices;
+    }
 }
 
 GlRenderer& GetGlRenderer() {

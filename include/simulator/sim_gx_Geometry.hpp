@@ -37,7 +37,9 @@ class GeometryProcessor {
 
   void ProcessByteStream(std::vector<u8>& byteStream);
  private:
-  std::vector<RenderVertex> mRenderVerts;
+  //std::vector<RenderVertex> mRenderVerts;
+  RenderVertex * mRenderVerts = nullptr;
+  size_t mRenderVertsSize = 0;
 };
 
 }

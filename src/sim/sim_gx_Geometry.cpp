@@ -11,13 +11,13 @@
 namespace {
 
 template <typename T>
-T ReadUnaligned(const u8* source) {
+static inline T ReadUnaligned(const u8* source) {
     T value;
     std::memcpy(&value, source, sizeof(value));
     return value;
 }
 
-size_t ComponentSize(GXCompType type) {
+static inline size_t ComponentSize(GXCompType type) {
     switch (type) {
         case GX_U8:
         case GX_S8:
@@ -49,7 +49,7 @@ float DecodePositionComponent(const u8* source, GXCompType type, u8 fraction) {
     }
 }
 
-void DecodeColor(const u8* source, GXCompCnt componentCount, GXCompType type,
+static inline void DecodeColor(const u8* source, GXCompCnt componentCount, GXCompType type,
                  float (&output)[4]) {
     u8 rgba[4] = {255, 255, 255, 255};
 
@@ -101,26 +101,26 @@ void DecodeColor(const u8* source, GXCompCnt componentCount, GXCompType type,
     }
 }
 
-bool ReadArrayIndex(const u8*& cursor, const u8* end, GXAttrType descriptor,
+static inline bool ReadArrayIndex(const u8*& cursor, const u8* end, GXAttrType descriptor,
                     size_t& index) {
-    if (descriptor == GX_INDEX8) {
-        if (cursor + sizeof(u8) > end) {
-            return false;
-        }
-        index = *cursor++;
-        return true;
-    }
 
-    if (descriptor == GX_INDEX16) {
-        if (cursor + sizeof(u16) > end) {
+    switch(descriptor) {
+        case GX_INDEX8:
+            if (cursor + sizeof(u8) > end) {
+                return false;
+            }
+            index = *cursor++;
+            return true;
+        case GX_INDEX16:
+            if (cursor + sizeof(u16) > end) {
+                return false;
+            }
+            index = ReadUnaligned<u16>(cursor);
+            cursor += sizeof(u16);
+            return true;
+        default:
             return false;
-        }
-        index = ReadUnaligned<u16>(cursor);
-        cursor += sizeof(u16);
-        return true;
     }
-
-    return false;
 }
 
 }
@@ -131,7 +131,7 @@ GeometryProcessor::GeometryProcessor() {}
 
 void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
     auto& gxState = GetGlobalState();
-    mRenderVerts.clear();
+    //mRenderVerts.clear();
 
     const size_t bytesPerVertex = gxState.GetNumBytesPerVertex();
     if (bytesPerVertex == 0 || byteStream.empty() ||
@@ -143,8 +143,14 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
     const auto& format = gxState.GetCurrentVertexFormat();
     const u8* cursor = byteStream.data();
     const u8* end = cursor + byteStream.size();
-    mRenderVerts.reserve(numVertices);
-
+    if(numVertices > mRenderVertsSize) {
+        // Reallocate mRenderVerts
+        if(mRenderVerts) {
+            delete mRenderVerts;
+        }
+        mRenderVerts = new RenderVertex[numVertices];
+        mRenderVertsSize = numVertices;
+    }
 
     // These cannot change during the loop
 
@@ -184,7 +190,7 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
 
 
     for (size_t vertexIndex = 0; vertexIndex < numVertices; ++vertexIndex) {
-        RenderVertex output = {};
+        RenderVertex& output = mRenderVerts[vertexIndex];
         //output.color0.r = 1.0f;
         //output.color0.g = 1.0f;
         //output.color0.b = 1.0f;
@@ -247,10 +253,8 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
                 colorFormat.mDataType,
                 output.color0.values);
         }
-
-        mRenderVerts.push_back(output);
     }
 
-    GetGlRenderer().Draw(mRenderVerts, gxState.GetCurrentPrimitive());
+    GetGlRenderer().Draw(mRenderVerts, numVertices, gxState.GetCurrentPrimitive());
 }
 }

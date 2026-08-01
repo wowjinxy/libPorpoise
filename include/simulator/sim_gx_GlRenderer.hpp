@@ -12,7 +12,7 @@ struct RenderVertex;
 
 class GlRenderer {
  public:
-  void Draw(const std::vector<RenderVertex>& vertices, GXPrimitive primitive);
+  void Draw(const RenderVertex * vertices, size_t numVertices, GXPrimitive primitive);
 
  private:
   void Initialize();
