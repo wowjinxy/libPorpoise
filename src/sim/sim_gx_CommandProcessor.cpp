@@ -63,7 +63,7 @@ void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
                 }
 
                 if(mRemainingGeometryBytes <= 0) {
-                    //mGeometryProcessor.ProcessByteStream(mGeometryVec);
+                    mGeometryProcessor.ProcessByteStream(mGeometryVec);
                     mGeometryVec.clear();
                     mCurrentState = CommandProcessor::State::ReadOpcode;
                 }
