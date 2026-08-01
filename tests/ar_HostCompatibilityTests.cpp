@@ -10,20 +10,24 @@ namespace {
 
 int DirectCompletionCount = 0;
 u32 DirectCompletionStatus = ~0U;
+ARDMAResult DirectCompletionResult = AR_DMA_RESULT_NOT_STARTED;
 
 int QueueCompletionCount = 0;
 u32 QueueCompletionStatus = ~0U;
+ARDMAResult QueueCompletionResult = AR_DMA_RESULT_NOT_STARTED;
 u32 QueueCallbackToken = 0;
 ARQRequest* QueueCallbackRequest = nullptr;
 
 void DirectCompletion() {
     ++DirectCompletionCount;
     DirectCompletionStatus = ARGetDMAStatus();
+    DirectCompletionResult = ARGetLastDMAResult();
 }
 
 void QueueCompletion(u32 requestAddress) {
     ++QueueCompletionCount;
     QueueCompletionStatus = ARGetDMAStatus();
+    QueueCompletionResult = ARGetLastDMAResult();
     QueueCallbackToken = requestAddress;
     QueueCallbackRequest = static_cast<ARQRequest*>(
         __OSHostDecodeAddress(requestAddress));
@@ -60,7 +64,8 @@ int main() {
     if (ARInit(stackEntries, 4) != __AR_ARAM_USR_BASE_ADDR ||
         !ARCheckInit() ||
         ARGetSize() != 0x01000000U ||
-        ARGetDMAStatus() != 0) {
+        ARGetDMAStatus() != 0 ||
+        ARGetLastDMAResult() != AR_DMA_RESULT_NOT_STARTED) {
         return 2;
     }
 
@@ -70,16 +75,52 @@ int main() {
     FillPattern(expected.data(), 0x21, TransferLength);
     std::memcpy(strictBuffer, expected.data(), TransferLength);
 
+    /* Preflight is exact and has no completion/status side effects. */
     ARRegisterDMACallback(DirectCompletion);
-    ARStartDMA(
+    if (ARValidateDMA(
+            2,
+            StrictAddress,
+            AramAddress,
+            TransferLength) != AR_DMA_RESULT_INVALID_DIRECTION ||
+        ARValidateDMA(
+            ARAM_DIR_MRAM_TO_ARAM,
+            StrictAddress,
+            AramAddress + 1U,
+            TransferLength) != AR_DMA_RESULT_INVALID_ALIGNMENT ||
+        ARValidateDMA(
+            ARAM_DIR_MRAM_TO_ARAM,
+            StrictAddress + 1U,
+            AramAddress,
+            TransferLength) != AR_DMA_RESULT_INVALID_ALIGNMENT ||
+        ARValidateDMA(
+            ARAM_DIR_MRAM_TO_ARAM,
+            StrictAddress,
+            0x00FFFFE0U,
+            TransferLength) != AR_DMA_RESULT_INVALID_ARAM_RANGE ||
+        ARValidateDMA(
+            ARAM_DIR_MRAM_TO_ARAM,
+            0x817FFFE0U,
+            AramAddress,
+            TransferLength) != AR_DMA_RESULT_INVALID_MAIN_MEMORY_RANGE ||
+        DirectCompletionCount != 0 ||
+        ARGetDMAStatus() != 0 ||
+        ARGetLastDMAResult() != AR_DMA_RESULT_NOT_STARTED) {
+        return 3;
+    }
+
+    if (ARStartDMAEx(
         ARAM_DIR_MRAM_TO_ARAM,
         StrictAddress,
         AramAddress,
-        TransferLength);
+        TransferLength) != AR_DMA_RESULT_SUCCESS) {
+        return 4;
+    }
     if (DirectCompletionCount != 1 ||
         DirectCompletionStatus != 0 ||
+        DirectCompletionResult != AR_DMA_RESULT_SUCCESS ||
+        ARGetLastDMAResult() != AR_DMA_RESULT_SUCCESS ||
         ARGetDMAStatus() != 0) {
-        return 3;
+        return 5;
     }
 
     std::memset(strictBuffer, 0, TransferLength);
@@ -89,36 +130,66 @@ int main() {
         AramAddress,
         TransferLength);
     if (DirectCompletionCount != 2 ||
+        DirectCompletionResult != AR_DMA_RESULT_SUCCESS ||
         std::memcmp(strictBuffer, expected.data(), TransferLength) != 0) {
-        return 4;
+        return 6;
     }
 
     /*
-     * Invalid operations are rejected but still complete, preventing callers
-     * from hanging while making the validation failure visible on stderr.
+     * Invalid operations still complete so callback-driven callers cannot
+     * hang, and both the return value and callback-visible result are exact.
      */
-    ARStartDMA(
-        ARAM_DIR_MRAM_TO_ARAM,
-        StrictAddress,
-        AramAddress + 1U,
-        TransferLength);
-    ARStartDMA(
-        ARAM_DIR_MRAM_TO_ARAM,
-        StrictAddress,
-        0x00FFFFE0U,
-        TransferLength);
-    ARStartDMA(
-        ARAM_DIR_MRAM_TO_ARAM,
-        0x817FFFE0U,
-        AramAddress,
-        TransferLength);
-    ARStartDMA(
-        ARAM_DIR_MRAM_TO_ARAM,
-        StrictAddress,
-        AramAddress,
-        TransferLength - 1U);
-    if (DirectCompletionCount != 6 || ARGetDMAStatus() != 0) {
-        return 5;
+    if (ARStartDMAEx(
+            2,
+            StrictAddress,
+            AramAddress,
+            TransferLength) != AR_DMA_RESULT_INVALID_DIRECTION ||
+        DirectCompletionCount != 3 ||
+        DirectCompletionStatus != 0 ||
+        DirectCompletionResult != AR_DMA_RESULT_INVALID_DIRECTION ||
+        ARGetLastDMAResult() != AR_DMA_RESULT_INVALID_DIRECTION) {
+        return 7;
+    }
+    if (ARStartDMAEx(
+            ARAM_DIR_MRAM_TO_ARAM,
+            StrictAddress,
+            AramAddress + 1U,
+            TransferLength) != AR_DMA_RESULT_INVALID_ALIGNMENT ||
+        DirectCompletionCount != 4 ||
+        DirectCompletionStatus != 0 ||
+        DirectCompletionResult != AR_DMA_RESULT_INVALID_ALIGNMENT) {
+        return 8;
+    }
+    if (ARStartDMAEx(
+            ARAM_DIR_MRAM_TO_ARAM,
+            StrictAddress,
+            0x00FFFFE0U,
+            TransferLength) != AR_DMA_RESULT_INVALID_ARAM_RANGE ||
+        DirectCompletionCount != 5 ||
+        DirectCompletionStatus != 0 ||
+        DirectCompletionResult != AR_DMA_RESULT_INVALID_ARAM_RANGE) {
+        return 9;
+    }
+    if (ARStartDMAEx(
+            ARAM_DIR_MRAM_TO_ARAM,
+            0x817FFFE0U,
+            AramAddress,
+            TransferLength) != AR_DMA_RESULT_INVALID_MAIN_MEMORY_RANGE ||
+        DirectCompletionCount != 6 ||
+        DirectCompletionStatus != 0 ||
+        DirectCompletionResult != AR_DMA_RESULT_INVALID_MAIN_MEMORY_RANGE) {
+        return 10;
+    }
+    if (ARStartDMAEx(
+            ARAM_DIR_MRAM_TO_ARAM,
+            StrictAddress,
+            AramAddress,
+            TransferLength - 1U) != AR_DMA_RESULT_INVALID_ALIGNMENT ||
+        DirectCompletionCount != 7 ||
+        DirectCompletionStatus != 0 ||
+        DirectCompletionResult != AR_DMA_RESULT_INVALID_ALIGNMENT ||
+        ARGetDMAStatus() != 0) {
+        return 11;
     }
 
     alignas(32) std::array<u8, TransferLength> hostBuffer = {};
@@ -153,6 +224,7 @@ int main() {
         QueueCompletion);
     if (QueueCompletionCount != 1 ||
         QueueCompletionStatus != 0 ||
+        QueueCompletionResult != AR_DMA_RESULT_SUCCESS ||
         QueueCallbackRequest != &writeRequest ||
         QueueCallbackToken == 0 ||
         __OSHostDecodeAddress(QueueCallbackToken) != nullptr ||
@@ -174,6 +246,7 @@ int main() {
         TransferLength,
         QueueCompletion);
     if (QueueCompletionCount != 2 ||
+        QueueCompletionResult != AR_DMA_RESULT_SUCCESS ||
         QueueCallbackRequest != &readRequest ||
         readRequest.priority != ARQ_PRIORITY_LOW ||
         hostBuffer != expected) {
@@ -193,9 +266,18 @@ int main() {
         TransferLength,
         QueueCompletion);
     if (QueueCompletionCount != 3 ||
+        QueueCompletionStatus != 0 ||
+        QueueCompletionResult != AR_DMA_RESULT_INVALID_MAIN_MEMORY_RANGE ||
+        ARGetLastDMAResult() != AR_DMA_RESULT_INVALID_MAIN_MEMORY_RANGE ||
         QueueCallbackRequest != &staleRequest ||
         __OSHostDecodeAddress(hostToken) != nullptr) {
         return 11;
+    }
+
+    ARReset();
+    if (ARCheckInit() || ARGetDMAStatus() != 0 ||
+        ARGetLastDMAResult() != AR_DMA_RESULT_NOT_STARTED) {
+        return 12;
     }
 
     return 0;

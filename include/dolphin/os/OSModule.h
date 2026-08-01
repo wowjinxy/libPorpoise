@@ -6,6 +6,8 @@
 
 BEGIN_SCOPE_EXTERN_C
 
+#define OS_MODULE_VERSION 2
+
 ////////// MODULE TYPES //////////
 // Forward declarations.
 typedef struct OSModuleQueue OSModuleQueue;
@@ -52,13 +54,12 @@ struct OSModuleHeader {
 	u8 prologSection;     // _30, prolog section #
 	u8 epilogSection;     // _31, epilog section #
 	u8 unresolvedSection; // _32, unresolved section #
+	u8 bssSection;        // _33, BSS section # (set at run time)
 	u32 prolog;           // _34, prolog offset
-	u32 epilog;           // 38, epilog offset
+	u32 epilog;           // _38, epilog offset
 	u32 unresolved;       // _3C, unresolved offset
-
-	// may have 0x8 more here? check if needed for P2.
-	// u32 align;    // _40
-	// u32 bssAlign; // _44
+	u32 align;            // _40, module alignment constraint
+	u32 bssAlign;         // _44, BSS alignment constraint
 };
 
 // Section information struct.
@@ -85,9 +86,11 @@ struct OSRel {
 
 //////// MODULE FUNCTIONS ////////
 // Unused/inlined in P2.
-void OSSetStringTable(void* stringTable);
+void OSSetStringTable(const void* stringTable);
 BOOL OSLink(OSModuleInfo* newModule, void* bss);
+BOOL OSLinkFixed(OSModuleInfo* newModule, void* bss);
 BOOL OSUnlink(OSModuleInfo* oldModule);
+void __OSModuleInit(void);
 
 OSModuleInfo* OSSearchModule(void* ptr, u32* section, u32* offset);
 
@@ -100,6 +103,7 @@ OSModuleInfo* OSSearchModule(void* ptr, u32* section, u32* offset);
 #define R_DOLPHIN_NOP     201
 #define R_DOLPHIN_SECTION 202
 #define R_DOLPHIN_END     203
+#define R_DOLPHIN_MRKREF  204
 
 //////////////////////////////////
 

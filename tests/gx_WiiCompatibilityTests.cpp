@@ -9,7 +9,11 @@
 
 #include <array>
 #include <cmath>
+#include <cstring>
+#include <string_view>
 #include <vector>
+
+extern const char* SIM_GXFragmentShader;
 
 extern "C" u32 VIGetCurrentLine(void) {
     return 0;
@@ -21,6 +25,8 @@ extern "C" u32 VIGetTvFormat(void) {
 
 extern "C" void __GXHostRecordPrimitive(
     u32 primitive, u32 vertexCount, u32 textureStages);
+extern "C" void __PADHostMergeKeyboardState(
+    PADStatus* status, const PADStatus* keyboard);
 
 namespace {
 
@@ -30,6 +36,12 @@ static_assert(sizeof(GXTlutObj) == 0x0c);
 
 bool NearlyEqual(float left, float right, float tolerance = 0.0001f) {
     return std::fabs(left - right) <= tolerance;
+}
+
+GXTlutRegion TestTlutRegion = {};
+
+GXTlutRegion* GetTestTlutRegion(u32) {
+    return &TestTlutRegion;
 }
 
 bool TestTextureCopyIntensityConversion() {
@@ -187,7 +199,7 @@ bool TestTextureObjectAbiBounds() {
         std::array<u8, 16> guard;
     } guardedTlut = {};
     alignas(32) std::array<u8, 32> image = {};
-    alignas(32) std::array<u16, 16> palette = {};
+    alignas(32) std::array<u16, 17> palette = {};
 
     guardedTexture.guard.fill(0xa5);
     guardedTlut.guard.fill(0x5a);
@@ -215,7 +227,7 @@ bool TestTextureObjectAbiBounds() {
         &guardedTlut.tlut,
         palette.data(),
         GX_TL_IA8,
-        static_cast<u16>(palette.size()));
+        16);
 
     for (u8 value : guardedTexture.guard) {
         if (value != 0xa5) {
@@ -227,7 +239,28 @@ bool TestTextureObjectAbiBounds() {
             return false;
         }
     }
-    return GXGetTlutObjData(&guardedTlut.tlut) == palette.data();
+    if (GXGetTlutObjData(&guardedTlut.tlut) != palette.data()) {
+        return false;
+    }
+
+#ifdef LIBPORPOISE_PORT
+    // Native host palettes are copied synchronously at GXLoadTlut and do not
+    // inherit the hardware DMA source's 32-byte alignment requirement.
+    GXInitTlutObjHostNativeU16(
+        &guardedTlut.tlut,
+        palette.data() + 1,
+        GX_TL_RGB5A3,
+        16);
+    if (GXGetTlutObjData(&guardedTlut.tlut) != palette.data() + 1) {
+        return false;
+    }
+#endif
+    for (u8 value : guardedTlut.guard) {
+        if (value != 0x5a) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool TestFifoQueries() {
@@ -280,6 +313,46 @@ bool TestHostPadKeyboardFallback() {
     }
     PADRead(pads.data());
     return pads[0].err == PAD_ERR_NONE;
+}
+
+bool TestHostPadKeyboardMerge() {
+    PADStatus controller = {};
+    controller.button = PAD_BUTTON_A | PAD_BUTTON_X;
+    controller.stickX = 17;
+    controller.stickY = -31;
+    controller.substickX = 11;
+    controller.substickY = -9;
+    controller.triggerLeft = 100;
+    controller.triggerRight = 200;
+    controller.analogA = 64;
+    controller.analogB = 220;
+    controller.err = PAD_ERR_TRANSFER;
+
+    PADStatus keyboard = {};
+    keyboard.button = PAD_BUTTON_B | PAD_BUTTON_START | PAD_TRIGGER_L;
+    keyboard.stickY = 100;
+    keyboard.substickX = -100;
+    keyboard.triggerLeft = 255;
+    keyboard.triggerRight = 10;
+    keyboard.analogA = 255;
+    keyboard.analogB = 50;
+    keyboard.err = PAD_ERR_NONE;
+
+    __PADHostMergeKeyboardState(&controller, &keyboard);
+
+    return
+        controller.button ==
+            (PAD_BUTTON_A | PAD_BUTTON_B | PAD_BUTTON_X |
+             PAD_BUTTON_START | PAD_TRIGGER_L) &&
+        controller.stickX == 17 &&
+        controller.stickY == 100 &&
+        controller.substickX == -100 &&
+        controller.substickY == -9 &&
+        controller.triggerLeft == 255 &&
+        controller.triggerRight == 200 &&
+        controller.analogA == 255 &&
+        controller.analogB == 220 &&
+        controller.err == PAD_ERR_TRANSFER;
 }
 
 bool TestZScaleOffsetCommands() {
@@ -683,6 +756,82 @@ bool TestBpRenderStateCommands() {
         firstStage.colorMode == SIM::GX::TevColorMode::Modulate;
 }
 
+bool TestZeroRasterChannelContract() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+    // GXInit normally seeds TREF0's BP address before GXSetTevOrder updates
+    // its fields. This focused test does not initialize a hardware FIFO.
+    gx->tref[0] = 0x28000000u;
+
+    GXSetTevOrder(
+        GX_TEVSTAGE0,
+        GX_TEXCOORD_NULL,
+        GX_TEXMAP_NULL,
+        GX_COLOR_ZERO);
+    if (SIM::GX::GetGlobalState().GetTevStageState(0).rasterChannel != 7u) {
+        return false;
+    }
+
+    GXSetTevOrder(
+        GX_TEVSTAGE0,
+        GX_TEXCOORD_NULL,
+        GX_TEXMAP_NULL,
+        GX_COLOR_NULL);
+    if (SIM::GX::GetGlobalState().GetTevStageState(0).rasterChannel != 7u) {
+        return false;
+    }
+
+    // Keep the GLSL interpretation of the hardware selector tied to the SDK
+    // contract: RAS1_CC_Z supplies zero for every raster-color component.
+    return std::string_view(SIM_GXFragmentShader).find(
+               "if (channel == 7) return vec4(0.0);") !=
+           std::string_view::npos;
+}
+
+bool TestBigEndianBpWriteMaskCommands() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    // These are literal GameCube display-list bytes. Seed PE_CMODE0 with all
+    // framebuffer updates enabled, install a mask which excludes those bits,
+    // then change only the blend fields in a separate display-list call.
+    const std::array<u8, 10> seedAndMask = {
+        0x61, 0x41, 0x00, 0x00, 0x1c,
+        0x61, 0xfe, 0x00, 0xff, 0xe3,
+    };
+    const std::array<u8, 5> maskedBlend = {
+        0x61, 0x41, 0x00, 0x00, 0x01,
+    };
+    SIM_GX_CommandProcessor_CallDisplayList(
+        seedAndMask.data(), static_cast<u32>(seedAndMask.size()));
+    SIM_GX_CommandProcessor_CallDisplayList(
+        maskedBlend.data(), static_cast<u32>(maskedBlend.size()));
+
+    const auto& maskedState = SIM::GX::GetGlobalState();
+    const auto& maskedBlendState = maskedState.GetBlendState();
+    if (maskedBlendState.mode != GX_BM_BLEND ||
+        !maskedBlendState.ditherEnabled ||
+        !maskedBlendState.colorUpdateEnabled ||
+        !maskedBlendState.alphaUpdateEnabled) {
+        return false;
+    }
+
+    // The mask is one-shot. The following unmasked write must clear all of
+    // those fields instead of accidentally retaining the prior mask.
+    const std::array<u8, 5> unmaskedBlend = {
+        0x61, 0x41, 0x00, 0x00, 0x00,
+    };
+    SIM_GX_CommandProcessor_CallDisplayList(
+        unmaskedBlend.data(), static_cast<u32>(unmaskedBlend.size()));
+    const auto& unmaskedBlendState =
+        SIM::GX::GetGlobalState().GetBlendState();
+    return
+        unmaskedBlendState.mode == GX_BM_NONE &&
+        !unmaskedBlendState.ditherEnabled &&
+        !unmaskedBlendState.colorUpdateEnabled &&
+        !unmaskedBlendState.alphaUpdateEnabled;
+}
+
 bool TestBpTevCompareCommands() {
     SIM::GX::InitGlobalState();
     SIM_GX_CommandProcessor_Init();
@@ -868,9 +1017,258 @@ bool TestBpTextureAndScissorCommands() {
         texture.minFilter == GX_NEAR &&
         texture.magFilter == GX_LINEAR &&
         texture.tlutName == 5 &&
-        tlut.data == palette.data() &&
+        tlut.CanonicalData() != palette.data() &&
+        std::memcmp(
+            tlut.CanonicalData(),
+            palette.data(),
+            palette.size() * sizeof(palette[0])) == 0 &&
         tlut.format == GX_TL_RGB565 &&
         tlut.entries == palette.size();
+}
+
+bool TestTlutDmaSnapshotAndNativeEncoding() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    alignas(32) std::array<u8, 32> image = {};
+    alignas(32) std::array<u16, 4> nativePalette = {
+        0xfc00u,
+        0x801fu,
+        0x83e0u,
+        0xffffu,
+    };
+    SIM_GX_CommandProcessor_LoadTexture(
+        0,
+        image.data(),
+        8,
+        8,
+        GX_TF_C4,
+        GX_CLAMP,
+        GX_CLAMP,
+        GX_NEAR,
+        GX_NEAR,
+        3);
+    const u64 initialTextureRevision =
+        SIM::GX::GetGlobalState().GetTextureState(0).revision;
+
+    GXInitTlutRegion(&TestTlutRegion, 0x80000u, GX_TLUT_256);
+    const GXTlutRegionCallback previousTlutCallback =
+        GXSetTlutRegionCallback(GetTestTlutRegion);
+    GXTlutObj nativeTlutObject = {};
+    GXInitTlutObjHostNativeU16(
+        &nativeTlutObject,
+        nativePalette.data(),
+        GX_TL_RGB5A3,
+        static_cast<u16>(nativePalette.size()));
+    GXLoadTlut(&nativeTlutObject, 3);
+    GXSetTlutRegionCallback(previousTlutCallback);
+    const auto& firstLoad = SIM::GX::GetGlobalState().GetTlutState(3);
+    const std::array<u8, 8> expectedFirst = {
+        0xfcu, 0x00u,
+        0x80u, 0x1fu,
+        0x83u, 0xe0u,
+        0xffu, 0xffu,
+    };
+    if (firstLoad.CanonicalData() == nativePalette.data() ||
+        firstLoad.canonicalBytes !=
+            std::vector<u8>(expectedFirst.begin(), expectedFirst.end()) ||
+        firstLoad.revision == 0u ||
+        SIM::GX::GetGlobalState().GetTextureState(0).revision !=
+            initialTextureRevision) {
+        return false;
+    }
+
+    // A GXLoadTlut command snapshots source memory. Mutation after the load
+    // is invisible until another load, even when the source pointer is reused.
+    const u64 firstTlutRevision = firstLoad.revision;
+    const u64 firstTextureRevision =
+        SIM::GX::GetGlobalState().GetTextureState(0).revision;
+    nativePalette[1] = 0x7c0fu;
+    if (static_cast<const u8*>(firstLoad.CanonicalData())[2] != 0x80u ||
+        static_cast<const u8*>(firstLoad.CanonicalData())[3] != 0x1fu) {
+        return false;
+    }
+
+    SIM_GX_CommandProcessor_LoadTlutNativeU16(
+        3,
+        nativePalette.data(),
+        GX_TL_RGB5A3,
+        static_cast<u16>(nativePalette.size()));
+    const auto& changedLoad = SIM::GX::GetGlobalState().GetTlutState(3);
+    if (static_cast<const u8*>(changedLoad.CanonicalData())[2] != 0x7cu ||
+        static_cast<const u8*>(changedLoad.CanonicalData())[3] != 0x0fu ||
+        changedLoad.revision <= firstTlutRevision ||
+        SIM::GX::GetGlobalState().GetTextureState(0).revision !=
+            firstTextureRevision) {
+        return false;
+    }
+
+    const u64 changedTlutRevision = changedLoad.revision;
+    const u64 changedTextureRevision =
+        SIM::GX::GetGlobalState().GetTextureState(0).revision;
+    SIM_GX_CommandProcessor_LoadTlutNativeU16(
+        3,
+        nativePalette.data(),
+        GX_TL_RGB5A3,
+        static_cast<u16>(nativePalette.size()));
+    if (SIM::GX::GetGlobalState().GetTlutState(3).revision !=
+            changedTlutRevision ||
+        SIM::GX::GetGlobalState().GetTextureState(0).revision !=
+            changedTextureRevision) {
+        return false;
+    }
+
+    // Standard GX TLUT input is already serialized in GameCube byte order.
+    // It receives the same DMA snapshot semantics without a host byte swap.
+    alignas(32) std::array<u8, 4> canonicalPalette = {
+        0xfcu, 0x00u, 0x80u, 0x1fu,
+    };
+    SIM_GX_CommandProcessor_LoadTlut(
+        4,
+        canonicalPalette.data(),
+        GX_TL_RGB5A3,
+        2);
+    const auto copiedState =
+        SIM::GX::GetGlobalState().GetTlutState(4);
+    const u64 canonicalRevision = copiedState.revision;
+    canonicalPalette[2] = 0x7cu;
+    canonicalPalette[3] = 0x0fu;
+    if (static_cast<const u8*>(
+            SIM::GX::GetGlobalState().GetTlutState(4).CanonicalData())[2] !=
+            0x80u ||
+        static_cast<const u8*>(copiedState.CanonicalData())[2] != 0x80u) {
+        return false;
+    }
+    SIM_GX_CommandProcessor_LoadTlut(
+        4,
+        canonicalPalette.data(),
+        GX_TL_RGB5A3,
+        2);
+    const auto& canonicalReload =
+        SIM::GX::GetGlobalState().GetTlutState(4);
+    if (canonicalReload.revision <= canonicalRevision ||
+        static_cast<const u8*>(canonicalReload.CanonicalData())[2] != 0x7cu) {
+        return false;
+    }
+
+    const u64 contentRevision = canonicalReload.revision;
+    SIM_GX_CommandProcessor_LoadTlut(
+        4,
+        canonicalPalette.data(),
+        GX_TL_RGB565,
+        2);
+    return
+        SIM::GX::GetGlobalState().GetTlutState(4).revision >
+            contentRevision;
+}
+
+bool TestSemanticRenderStateCache() {
+    using namespace SIM::GX;
+    using namespace SIM::GX::Detail;
+
+    ViewportState viewport = {};
+    ScissorState scissor = {};
+    DepthState depth = {};
+    RasterState raster = {};
+    BlendState blend = {};
+    RenderStateCache cache;
+
+    if (cache.Update(
+            viewport,
+            scissor,
+            depth,
+            raster,
+            blend,
+            640,
+            480) != RenderStateAll ||
+        cache.Update(
+            viewport,
+            scissor,
+            depth,
+            raster,
+            blend,
+            640,
+            480) != 0u) {
+        return false;
+    }
+
+    depth.updateEnabled = false;
+    if (cache.Update(
+            viewport,
+            scissor,
+            depth,
+            raster,
+            blend,
+            640,
+            480) != RenderStateDepth) {
+        return false;
+    }
+    blend.colorUpdateEnabled = false;
+    if (cache.Update(
+            viewport,
+            scissor,
+            depth,
+            raster,
+            blend,
+            640,
+            480) != RenderStateBlend) {
+        return false;
+    }
+    scissor.left = 12u;
+    if (cache.Update(
+            viewport,
+            scissor,
+            depth,
+            raster,
+            blend,
+            640,
+            480) != RenderStateScissor) {
+        return false;
+    }
+    viewport.referenceWidth = 608.0f;
+    if (cache.Update(
+            viewport,
+            scissor,
+            depth,
+            raster,
+            blend,
+            640,
+            480) !=
+        (RenderStateViewport | RenderStateScissor)) {
+        return false;
+    }
+    if (cache.Update(
+            viewport,
+            scissor,
+            depth,
+            raster,
+            blend,
+            1280,
+            960) !=
+        (RenderStateViewport | RenderStateScissor)) {
+        return false;
+    }
+
+    raster.cullMode = GX_CULL_BACK;
+    if (cache.Update(
+            viewport,
+            scissor,
+            depth,
+            raster,
+            blend,
+            1280,
+            960) != RenderStateRaster) {
+        return false;
+    }
+    cache.Invalidate();
+    return cache.Update(
+               viewport,
+               scissor,
+               depth,
+               raster,
+               blend,
+               1280,
+               960) == RenderStateAll;
 }
 
 }
@@ -906,6 +1304,9 @@ int main() {
     if (!TestHostPadKeyboardFallback()) {
         return 5;
     }
+    if (!TestHostPadKeyboardMerge()) {
+        return 26;
+    }
     if (!TestZScaleOffsetCommands()) {
         return 6;
     }
@@ -918,6 +1319,12 @@ int main() {
     if (!TestBpRenderStateCommands()) {
         return 9;
     }
+    if (!TestZeroRasterChannelContract()) {
+        return 27;
+    }
+    if (!TestBigEndianBpWriteMaskCommands()) {
+        return 25;
+    }
     if (!TestBpCopyClearCommands()) {
         return 10;
     }
@@ -926,6 +1333,12 @@ int main() {
     }
     if (!TestBpTextureAndScissorCommands()) {
         return 12;
+    }
+    if (!TestTlutDmaSnapshotAndNativeEncoding()) {
+        return 28;
+    }
+    if (!TestSemanticRenderStateCache()) {
+        return 29;
     }
     if (!TestTextureObjectAbiBounds()) {
         return 13;

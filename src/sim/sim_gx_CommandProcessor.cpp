@@ -66,49 +66,74 @@ void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
             } else {
                 mCurrentState = CommandProcessor::State::ReadArguments;
                 mRemainingArgBytes = numArgs;
+                mArgumentBytesWritten = 0;
+                mArgsVec.resize(static_cast<size_t>(numArgs));
             }
         } else if(mCurrentState == CommandProcessor::State::ReadArguments) {
             size_t argsLen = std::min<size_t>(mRemainingArgBytes, len);
-            for(auto i = 0; i < argsLen; i++) {
-                mArgsVec.push_back(*data);
-                data++;
-                len--;
-                mRemainingArgBytes--;
-            }
+            std::memcpy(
+                mArgsVec.data() + mArgumentBytesWritten,
+                data,
+                argsLen);
+            mArgumentBytesWritten += argsLen;
+            data += argsLen;
+            len -= argsLen;
+            mRemainingArgBytes -= static_cast<int>(argsLen);
             if(mRemainingArgBytes <= 0) {
                 ProcessOpcode();
             }
         } else if(mCurrentState == CommandProcessor::State::ReadGeometry) {
-            if(mRemainingGeometryBytes <= 0 ) {
+            const bool invalidGeometryCursor =
+                mRemainingGeometryBytes <= 0 ||
+                mGeometryBytesWritten > mGeometryVec.size() ||
+                static_cast<size_t>(mRemainingGeometryBytes) !=
+                    mGeometryVec.size() - mGeometryBytesWritten;
+            if(invalidGeometryCursor) {
                 OSReport("GPU: Geometry error.\n");
+                mGeometryVec.clear();
+                mGeometryBytesWritten = 0;
+                mRemainingGeometryBytes = 0;
+                mCurrentState = State::ReadOpcode;
+                continue;
             }
 
             size_t geometryLen = std::min<size_t>(mRemainingGeometryBytes, len);
-            for(auto i = 0; i < geometryLen; i++) {
-                mGeometryVec.push_back(*data);
-                data++;
-                len--;
-                mRemainingGeometryBytes--;
-            }
+            std::memcpy(
+                mGeometryVec.data() + mGeometryBytesWritten,
+                data,
+                geometryLen);
+            mGeometryBytesWritten += geometryLen;
+            data += geometryLen;
+            len -= geometryLen;
+            mRemainingGeometryBytes -= static_cast<int>(geometryLen);
 
             if(mRemainingGeometryBytes <= 0) {
-                mGeometryProcessor.ProcessByteStream(
-                    mGeometryVec, mInputBigEndian);
-                mGeometryVec.clear();
-                mCurrentState = CommandProcessor::State::ReadOpcode;
+                CompleteGeometry();
             }
         } else if(mCurrentState == State::ReadXfRegData) {
-            if(mRemainingXfRegData <= 0 ) {
+            const bool invalidXfCursor =
+                mRemainingXfRegData <= 0 ||
+                mXfRegDataBytesWritten > mXfRegDataVec.size() ||
+                static_cast<size_t>(mRemainingXfRegData) !=
+                    mXfRegDataVec.size() - mXfRegDataBytesWritten;
+            if(invalidXfCursor) {
                 OSReport("GPU: XfRegData error.\n");
+                mXfRegDataVec.clear();
+                mXfRegDataBytesWritten = 0;
+                mRemainingXfRegData = 0;
+                mCurrentState = State::ReadOpcode;
+                continue;
             }
 
             size_t xfRegDataLen = std::min<size_t>(mRemainingXfRegData, len);
-            for(auto i = 0; i < xfRegDataLen; i++) {
-                mXfRegDataVec.push_back(*data);
-                data++;
-                len--;
-                mRemainingXfRegData--;
-            }
+            std::memcpy(
+                mXfRegDataVec.data() + mXfRegDataBytesWritten,
+                data,
+                xfRegDataLen);
+            mXfRegDataBytesWritten += xfRegDataLen;
+            data += xfRegDataLen;
+            len -= xfRegDataLen;
+            mRemainingXfRegData -= static_cast<int>(xfRegDataLen);
 
             if(mRemainingXfRegData <= 0 ) {
                 if (mInputBigEndian) {
@@ -137,6 +162,48 @@ void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
                 mXfRegDataVec.clear();
             }
         }
+    }
+}
+
+void CommandProcessor::ProcessFifoScalar(
+    const void* data, size_t size) {
+    if (data == nullptr || size == 0u) {
+        return;
+    }
+
+    // Immediate vertex attributes arrive as scalar FIFO writes. Once a
+    // primitive is active, copy each complete scalar directly into its
+    // pre-sized stream instead of re-entering the opcode parser per value.
+    if (mCurrentState != State::ReadGeometry) {
+        ProcessFifoData(
+            static_cast<u8*>(const_cast<void*>(data)),
+            size);
+        return;
+    }
+
+    const bool invalidGeometryCursor =
+        mRemainingGeometryBytes <= 0 ||
+        mGeometryBytesWritten > mGeometryVec.size() ||
+        static_cast<size_t>(mRemainingGeometryBytes) !=
+            mGeometryVec.size() - mGeometryBytesWritten ||
+        size > static_cast<size_t>(mRemainingGeometryBytes);
+    if (invalidGeometryCursor) {
+        OSReport("GPU: Geometry error.\n");
+        mGeometryVec.clear();
+        mGeometryBytesWritten = 0;
+        mRemainingGeometryBytes = 0;
+        mCurrentState = State::ReadOpcode;
+        return;
+    }
+
+    std::memcpy(
+        mGeometryVec.data() + mGeometryBytesWritten,
+        data,
+        size);
+    mGeometryBytesWritten += size;
+    mRemainingGeometryBytes -= static_cast<int>(size);
+    if (mRemainingGeometryBytes == 0) {
+        CompleteGeometry();
     }
 }
 
@@ -209,7 +276,10 @@ void CommandProcessor::HandleBeginPrimitive(GXPrimitive primitive, size_t numVer
     const size_t bytesPerVertex = gxState.GetNumBytesPerVertex();
     mRemainingGeometryBytes = static_cast<int>(numVerts * bytesPerVertex);
     mTotalGeometryBytes = mRemainingGeometryBytes;
+    mGeometryBytesWritten = 0;
+    mGeometryVec.resize(static_cast<size_t>(mTotalGeometryBytes));
     if (mRemainingGeometryBytes == 0) {
+        mGeometryVec.clear();
         mCurrentState = State::ReadOpcode;
     } else {
         mCurrentState = State::ReadGeometry;
@@ -234,6 +304,9 @@ void CommandProcessor::ProcessOpcode() {
                 u32 xfRegDataCount = ((xfRegArgs >> 16) & 0xFFFF) + 1;
                 mXfRegAddr = (xfRegArgs & 0xFFFF);
                 mRemainingXfRegData = xfRegDataCount * 4;
+                mXfRegDataBytesWritten = 0;
+                mXfRegDataVec.resize(
+                    static_cast<size_t>(mRemainingXfRegData));
                 
                 mCurrentState = State::ReadXfRegData;
             }
@@ -335,19 +408,27 @@ void CommandProcessor::ProcessOpcode() {
             break;
     }
     mArgsVec.clear();
+    mArgumentBytesWritten = 0;
 }
 
 void CommandProcessor::ProcessBpReg(u32 value) {
-    const u8 address = static_cast<u8>(value >> 24);
+    const u32 appliedValue = GetGlobalState().SetBpRegister(value);
+    const u8 address = static_cast<u8>(appliedValue >> 24);
     if (address == 0x47u || address == 0x48u) {
         __GXHostCompleteDrawSync(
-            static_cast<u16>(value),
+            static_cast<u16>(appliedValue),
             address == 0x48u ? GX_TRUE : GX_FALSE);
     } else if (address == 0x57u &&
-               (value & 0x00ffffffu) == 0x00000aaau) {
+               (appliedValue & 0x00ffffffu) == 0x00000aaau) {
         __GXHostQueuePixelMetricReset();
     }
-    GetGlobalState().SetBpRegister(value);
+}
+
+void CommandProcessor::CompleteGeometry() {
+    mGeometryProcessor.ProcessByteStream(mGeometryVec, mInputBigEndian);
+    mGeometryVec.clear();
+    mGeometryBytesWritten = 0;
+    mCurrentState = State::ReadOpcode;
 }
 
 void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
@@ -498,27 +579,51 @@ void SIM_GX_CommandProcessor_Init() {
 
 // C APIs for GX CommandProcessor
 void SIM_GX_CommandProcessor_SendU8(u8 data) {
-    SendCommandProcessorData(&data, sizeof(data));
+    if (sDisplayListRecording) {
+        SendCommandProcessorData(&data, sizeof(data));
+    } else {
+        sCommandProcessor->ProcessFifoScalar(&data, sizeof(data));
+    }
 }
 
 void SIM_GX_CommandProcessor_SendU16(u16 data) {
-    SendCommandProcessorData(&data, sizeof(data));
+    if (sDisplayListRecording) {
+        SendCommandProcessorData(&data, sizeof(data));
+    } else {
+        sCommandProcessor->ProcessFifoScalar(&data, sizeof(data));
+    }
 }
 
 void SIM_GX_CommandProcessor_SendS16(s16 data) {
-    SendCommandProcessorData(&data, sizeof(data));
+    if (sDisplayListRecording) {
+        SendCommandProcessorData(&data, sizeof(data));
+    } else {
+        sCommandProcessor->ProcessFifoScalar(&data, sizeof(data));
+    }
 }
 
 void SIM_GX_CommandProcessor_SendU32(u32 data) {
-    SendCommandProcessorData(&data, sizeof(data));
+    if (sDisplayListRecording) {
+        SendCommandProcessorData(&data, sizeof(data));
+    } else {
+        sCommandProcessor->ProcessFifoScalar(&data, sizeof(data));
+    }
 }
 
 void SIM_GX_CommandProcessor_SendF32(f32 data) {
-    SendCommandProcessorData(&data, sizeof(data));
+    if (sDisplayListRecording) {
+        SendCommandProcessorData(&data, sizeof(data));
+    } else {
+        sCommandProcessor->ProcessFifoScalar(&data, sizeof(data));
+    }
 }
 
 void SIM_GX_CommandProcessor_SendU64(u64 data) {
-    SendCommandProcessorData(&data, sizeof(data));
+    if (sDisplayListRecording) {
+        SendCommandProcessorData(&data, sizeof(data));
+    } else {
+        sCommandProcessor->ProcessFifoScalar(&data, sizeof(data));
+    }
 }
 
 GXBool SIM_GX_CommandProcessor_BeginDisplayList(void* list, u32 size) {
@@ -590,6 +695,17 @@ void SIM_GX_CommandProcessor_LoadTlut(
     tlut.data = data;
     tlut.format = static_cast<GXTlutFmt>(format);
     tlut.entries = entries;
+    SIM::GX::GetGlobalState().LoadTlut(id, tlut);
+}
+
+void SIM_GX_CommandProcessor_LoadTlutNativeU16(
+    u32 id, const u16* data, u32 format, u16 entries) {
+    SIM::GX::TlutState tlut;
+    tlut.data = data;
+    tlut.format = static_cast<GXTlutFmt>(format);
+    tlut.entries = entries;
+    tlut.sourceEncoding =
+        SIM::GX::TlutState::SourceEncoding::NativeU16;
     SIM::GX::GetGlobalState().LoadTlut(id, tlut);
 }
 

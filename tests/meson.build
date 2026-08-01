@@ -1,8 +1,58 @@
+source_compat_python = import('python').find_installation()
+test(
+    'codewarrior-source-compat',
+    source_compat_python,
+    args: [meson.current_source_dir() / 'codewarrior_SourceCompatTests.py'],
+)
+
+test(
+    'pe-static-u32-fixups',
+    source_compat_python,
+    args: [meson.current_source_dir() / 'pe_StaticU32FixupTests.py'],
+)
+
+if build_target == 'win64'
+    pe_static_u32_unfixed_fixture = executable(
+        'pe-static-u32-unfixed-fixture',
+        sources: files('pe_StaticU32Fixture.c'),
+        include_directories: libporpoise_includes,
+        link_args: [
+            '-Wl,--image-base,0x10000000',
+            '-Wl,--disable-dynamicbase',
+            '-Wl,--disable-high-entropy-va',
+        ],
+        native: true,
+    )
+
+    pe_static_u32_fixed_fixture = custom_target(
+        'pe-static-u32-fixed-fixture',
+        input: pe_static_u32_unfixed_fixture,
+        output: 'pe-static-u32-fixture.exe',
+        command: [
+            pe_static_u32_fixups,
+            '--input', '@INPUT@',
+            '--output', '@OUTPUT@',
+            '--image-base', '0x10000000',
+        ],
+    )
+
+    test(
+        'pe-static-u32-linked-fixture',
+        source_compat_python,
+        args: [
+            meson.current_source_dir() / 'pe_RunStaticU32Fixture.py',
+            pe_static_u32_fixed_fixture,
+        ],
+    )
+endif
+
 sim_gx_vertex_decoder_test = executable(
     'sim-gx-vertex-decoder-test',
     sources: files(
         'sim_gx_VertexDecoderTests.cpp',
         '../src/sim/sim_gx_State.cpp',
+        '../src/sim/sim_gx_TexGen.cpp',
+        '../src/sim/sim_gx_TextureCache.cpp',
         '../src/sim/sim_gx_VertexDecoder.cpp',
     ),
     include_directories: libporpoise_includes,
@@ -10,6 +60,38 @@ sim_gx_vertex_decoder_test = executable(
 )
 
 test('sim-gx-vertex-decoder', sim_gx_vertex_decoder_test)
+
+sim_gx_color_channel_test = executable(
+    'sim-gx-color-channel-test',
+    sources: files(
+        'sim_gx_ColorChannelTests.cpp',
+        '../src/sim/sim_gx_ColorChannel.cpp',
+        '../src/sim/sim_gx_State.cpp',
+    ),
+    include_directories: libporpoise_includes,
+    native: true,
+)
+
+test('sim-gx-color-channel', sim_gx_color_channel_test)
+
+gx_fifo_color_endian_test = executable(
+    'gx-fifo-color-endian-test',
+    sources: files('gx_FifoColorEndianTests.cpp'),
+    include_directories: libporpoise_includes,
+    native: true,
+)
+
+test('gx-fifo-color-endian', gx_fifo_color_endian_test)
+
+mtx_host_compatibility_test = executable(
+    'mtx-host-compatibility-test',
+    sources: files('mtx_HostCompatibilityTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [libmtx],
+    native: true,
+)
+
+test('mtx-host-compatibility', mtx_host_compatibility_test)
 
 gx_wii_compatibility_test = executable(
     'gx-wii-compatibility-test',
@@ -94,6 +176,62 @@ vi_host_retrace_test = executable(
 )
 
 test('vi-host-retrace', vi_host_retrace_test)
+
+vi_host_handoff_test = executable(
+    'vi-host-handoff-test',
+    sources: files('vi_HostHandoffTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [
+        libar,
+        libbase,
+        libcard,
+        libdb,
+        libdemo,
+        libdvd,
+        libexi,
+        libgd,
+        libgx,
+        libmem,
+        libmtx,
+        libos,
+        libpad,
+        libsi,
+        libsim,
+        libvi,
+    ],
+    dependencies: sdl2_dep,
+    native: true,
+)
+
+test('vi-host-handoff', vi_host_handoff_test)
+
+vi_host_owner_exit_test = executable(
+    'vi-host-owner-exit-test',
+    sources: files('vi_HostOwnerExitTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [
+        libar,
+        libbase,
+        libcard,
+        libdb,
+        libdemo,
+        libdvd,
+        libexi,
+        libgd,
+        libgx,
+        libmem,
+        libmtx,
+        libos,
+        libpad,
+        libsi,
+        libsim,
+        libvi,
+    ],
+    dependencies: sdl2_dep,
+    native: true,
+)
+
+test('vi-host-owner-exit', vi_host_owner_exit_test, timeout: 10)
 
 os_host_thread_queue_test = executable(
     'os-host-thread-queue-test',
@@ -207,6 +345,34 @@ os_host_memory_test = executable(
 
 test('os-host-memory', os_host_memory_test, timeout: 10)
 
+os_host_memory_extended_test = executable(
+    'os-host-memory-extended-test',
+    sources: files('os_HostMemoryExtendedTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [
+        libar,
+        libbase,
+        libcard,
+        libdb,
+        libdemo,
+        libdvd,
+        libexi,
+        libgd,
+        libgx,
+        libmem,
+        libmtx,
+        libos,
+        libpad,
+        libsi,
+        libsim,
+        libvi,
+    ],
+    dependencies: sdl2_dep,
+    native: true,
+)
+
+test('os-host-memory-extended', os_host_memory_extended_test, timeout: 10)
+
 os_host_address_test = executable(
     'os-host-address-test',
     sources: files('os_HostAddressTests.cpp'),
@@ -262,6 +428,107 @@ ar_host_compatibility_test = executable(
 )
 
 test('ar-host-compatibility', ar_host_compatibility_test, timeout: 20)
+
+if build_target != 'gc'
+ar_allocator_test = executable(
+    'ar-allocator-test',
+    sources: files('ar_AllocatorTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [
+        libar,
+        libbase,
+        libcard,
+        libdb,
+        libdemo,
+        libdvd,
+        libexi,
+        libgd,
+        libgx,
+        libmem,
+        libmtx,
+        libos,
+        libpad,
+        libsi,
+        libsim,
+        libvi,
+    ],
+    dependencies: sdl2_dep,
+    native: true,
+)
+
+test('ar-allocator', ar_allocator_test, timeout: 20)
+
+ai_host_stub_test = executable(
+    'ai-host-stub-test',
+    sources: files('ai_HostStubTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [libai, libdsp],
+    native: true,
+)
+
+test('ai-host-stub', ai_host_stub_test, timeout: 10)
+
+dsp_override_test = executable(
+    'dsp-override-test',
+    sources: files('dsp_OverrideTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [libdsp],
+    native: true,
+)
+
+test('dsp-override', dsp_override_test, timeout: 10)
+
+dsp_host_stub_test = executable(
+    'dsp-host-stub-test',
+    sources: files('dsp_HostStubTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [libdsp],
+    native: true,
+)
+
+test('dsp-host-stub', dsp_host_stub_test, timeout: 10)
+
+card_api_completion_test = executable(
+    'card-api-completion-test',
+    sources: files('card_ApiCompletionTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [libcard],
+    native: true,
+)
+
+test('card-api-completion', card_api_completion_test, timeout: 10)
+
+native_module_fixture = shared_module(
+    'porpoise-native-module-fixture',
+    sources: files('os_NativeModuleFixture.c'),
+    include_directories: libporpoise_includes,
+    name_prefix: '',
+    native: true,
+)
+
+native_module_invalid_abi_fixture = shared_module(
+    'porpoise-native-module-invalid-abi-fixture',
+    sources: files('os_NativeModuleInvalidAbiFixture.c'),
+    include_directories: libporpoise_includes,
+    name_prefix: '',
+    native: true,
+)
+
+native_module_test = executable(
+    'os-native-module-test',
+    sources: files('os_NativeModuleTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [libos],
+    dependencies: libporpoise_platform_dependencies,
+    native: true,
+)
+
+test(
+    'os-native-module',
+    native_module_test,
+    depends: [native_module_fixture, native_module_invalid_abi_fixture],
+)
+endif
 
 os_host_endian_test = executable(
     'os-host-endian-test',

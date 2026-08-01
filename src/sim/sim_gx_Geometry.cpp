@@ -14,6 +14,9 @@ void GeometryProcessor::ProcessByteStream(
     if (!DecodeVertexStream(state, byteStream, bigEndian, mRenderVerts)) {
         return;
     }
+    // DecodeVertexStream clears and completely rebuilds this owned buffer on
+    // every primitive, so renderer-side host transforms can safely run in
+    // place without preserving the decoded values for a later draw.
     GetGlRenderer().Draw(mRenderVerts, state.GetCurrentPrimitive());
 }
 

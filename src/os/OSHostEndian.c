@@ -47,6 +47,23 @@ f32 OSReadBigEndianF32(const void* address)
 	return value;
 }
 
+void OSReadBigEndian16Array(
+    u16* destination,
+    const void* source,
+    u32 elementCount)
+{
+	const u8* sourceBytes = (const u8*)source;
+	u32 index;
+
+	if (destination == NULL || source == NULL) {
+		return;
+	}
+
+	for (index = 0; index < elementCount; ++index) {
+		destination[index] = OSReadBigEndian16(sourceBytes + index * 2U);
+	}
+}
+
 void OSWriteBigEndian16(void* address, u16 value)
 {
 	u8* bytes = (u8*)address;

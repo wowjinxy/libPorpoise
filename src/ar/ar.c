@@ -19,6 +19,10 @@ static u32 __AR_ExpansionSize;
 static u32 __AR_StackPointer;
 static u32 __AR_FreeBlocks;
 static u32* __AR_BlockLength;
+#ifdef LIBPORPOISE_PORT
+static u32* __AR_BlockLengthBase;
+static u32 __AR_AllocatedBlocks;
+#endif
 
 static volatile BOOL __AR_init_flag = FALSE;
 
@@ -30,8 +34,10 @@ static void __ARChecksize(void);
 
 static u8 __ARHostMemory[HOST_ARAM_SIZE];
 static volatile BOOL __ARHostDMABusy = FALSE;
+static volatile ARDMAResult __ARHostLastDMAResult =
+	AR_DMA_RESULT_NOT_STARTED;
 
-static BOOL __ARHostMainMemoryRangeIsValid(
+static ARDMAResult __ARHostValidateMainMemoryRange(
 	u32 address,
 	u32 length,
 	void** pointer)
@@ -44,10 +50,10 @@ static BOOL __ARHostMainMemoryRangeIsValid(
 
 	*pointer = __OSHostDecodeAddress(address);
 	if (*pointer == NULL) {
-		return FALSE;
+		return AR_DMA_RESULT_INVALID_MAIN_MEMORY_RANGE;
 	}
 	if (((uintptr_t)*pointer & (ARQ_DMA_ALIGNMENT - 1U)) != 0) {
-		return FALSE;
+		return AR_DMA_RESULT_INVALID_ALIGNMENT;
 	}
 
 	/*
@@ -57,12 +63,12 @@ static BOOL __ARHostMainMemoryRangeIsValid(
 	 * bounds-checked completely.
 	 */
 	if (__OSHostIsAddressToken(address)) {
-		return TRUE;
+		return AR_DMA_RESULT_SUCCESS;
 	}
 
 	layout = __OSHostMemoryGetLayout();
 	if (layout == NULL) {
-		return FALSE;
+		return AR_DMA_RESULT_INVALID_MAIN_MEMORY_RANGE;
 	}
 
 	decodedAddress = (uintptr_t)*pointer;
@@ -75,49 +81,72 @@ static BOOL __ARHostMainMemoryRangeIsValid(
 	           decodedAddress - uncachedBase < layout->size) {
 		offset = (u32)(decodedAddress - uncachedBase);
 	} else {
-		return FALSE;
+		return AR_DMA_RESULT_INVALID_MAIN_MEMORY_RANGE;
 	}
-	return length <= layout->size - offset;
+	return length <= layout->size - offset
+	           ? AR_DMA_RESULT_SUCCESS
+	           : AR_DMA_RESULT_INVALID_MAIN_MEMORY_RANGE;
 }
 
-static BOOL __ARHostValidateDMA(
+static ARDMAResult __ARHostValidateDMA(
 	u32 type,
 	u32 mainmem_addr,
 	u32 aram_addr,
 	u32 length,
 	void** mainMemory)
 {
-	const char* reason = NULL;
-
 	if (type != ARAM_DIR_MRAM_TO_ARAM &&
 	    type != ARAM_DIR_ARAM_TO_MRAM) {
-		reason = "invalid transfer direction";
-	} else if ((aram_addr & (ARQ_DMA_ALIGNMENT - 1U)) != 0 ||
-	           (length & (ARQ_DMA_ALIGNMENT - 1U)) != 0) {
-		reason = "ARAM address or length is not 32-byte aligned";
-	} else if (aram_addr > HOST_ARAM_SIZE ||
-	           length > HOST_ARAM_SIZE - aram_addr) {
-		reason = "ARAM transfer is outside the 16 MiB backing store";
-	} else if (!__ARHostMainMemoryRangeIsValid(
-	               mainmem_addr,
-	               length,
-	               mainMemory)) {
-		reason = "main-memory address is invalid, stale, misaligned, or out of bounds";
+		return AR_DMA_RESULT_INVALID_DIRECTION;
 	}
+	if ((aram_addr & (ARQ_DMA_ALIGNMENT - 1U)) != 0 ||
+	    (length & (ARQ_DMA_ALIGNMENT - 1U)) != 0) {
+		return AR_DMA_RESULT_INVALID_ALIGNMENT;
+	}
+	if (aram_addr > HOST_ARAM_SIZE ||
+	    length > HOST_ARAM_SIZE - aram_addr) {
+		return AR_DMA_RESULT_INVALID_ARAM_RANGE;
+	}
+	return __ARHostValidateMainMemoryRange(
+	    mainmem_addr,
+	    length,
+	    mainMemory);
+}
 
-	if (reason != NULL) {
-		fprintf(
-		    stderr,
-		    "libPorpoise AR: rejected DMA "
-		    "(type=%u, mram=0x%08x, aram=0x%08x, length=%u): %s.\n",
-		    type,
-		    mainmem_addr,
-		    aram_addr,
-		    length,
-		    reason);
-		return FALSE;
+static const char* __ARHostDMAResultReason(ARDMAResult result)
+{
+	switch (result) {
+	case AR_DMA_RESULT_BUSY:
+		return "another transfer is already in progress";
+	case AR_DMA_RESULT_INVALID_DIRECTION:
+		return "invalid transfer direction";
+	case AR_DMA_RESULT_INVALID_ALIGNMENT:
+		return "main-memory pointer, ARAM address, or length is not 32-byte aligned";
+	case AR_DMA_RESULT_INVALID_ARAM_RANGE:
+		return "ARAM transfer is outside the 16 MiB backing store";
+	case AR_DMA_RESULT_INVALID_MAIN_MEMORY_RANGE:
+		return "main-memory address is invalid, stale, or out of bounds";
+	default:
+		return "unknown failure";
 	}
-	return TRUE;
+}
+
+static void __ARHostReportDMAFailure(
+	ARDMAResult result,
+	u32 type,
+	u32 mainmem_addr,
+	u32 aram_addr,
+	u32 length)
+{
+	fprintf(
+	    stderr,
+	    "libPorpoise AR: rejected DMA "
+	    "(type=%u, mram=0x%08x, aram=0x%08x, length=%u): %s.\n",
+	    type,
+	    mainmem_addr,
+	    aram_addr,
+	    length,
+	    __ARHostDMAResultReason(result));
 }
 #endif
 
@@ -148,32 +177,119 @@ u32 ARGetDMAStatus(void)
 #endif
 }
 
+#ifdef LIBPORPOISE_PORT
+ARDMAResult ARValidateDMA(
+	u32 type,
+	u32 mainmem_addr,
+	u32 aram_addr,
+	u32 length)
+{
+	void* mainMemory = NULL;
+
+	return __ARHostValidateDMA(
+	    type,
+	    mainmem_addr,
+	    aram_addr,
+	    length,
+	    &mainMemory);
+}
+
+ARDMAResult ARGetLastDMAResult(void)
+{
+	return __ARHostLastDMAResult;
+}
+
+ARDMAResult ARStartDMAEx(
+	u32 type,
+	u32 mainmem_addr,
+	u32 aram_addr,
+	u32 length)
+{
+	ARDMAResult result;
+	BOOL enabled;
+	void* mainMemory = NULL;
+
+	OSCheckAlarmQueue();
+	enabled = OSDisableInterrupts();
+
+	if (__ARHostDMABusy) {
+		result = AR_DMA_RESULT_BUSY;
+		__ARHostLastDMAResult = result;
+		__ARHostReportDMAFailure(
+		    result,
+		    type,
+		    mainmem_addr,
+		    aram_addr,
+		    length);
+		OSRestoreInterrupts(enabled);
+		OSCheckAlarmQueue();
+		return result;
+	}
+
+	result = __ARHostValidateDMA(
+	    type,
+	    mainmem_addr,
+	    aram_addr,
+	    length,
+	    &mainMemory);
+	if (result == AR_DMA_RESULT_SUCCESS) {
+		__ARHostDMABusy = TRUE;
+		__DSPRegs[DSP_CONTROL_STATUS] |= 0x0200U;
+
+		// Set main mem address
+		__DSPRegs[DSP_ARAM_DMA_MM_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_MM_HI] & ~0x3ff) | (u16)(mainmem_addr >> 16);
+		__DSPRegs[DSP_ARAM_DMA_MM_LO] = (u16)(__DSPRegs[DSP_ARAM_DMA_MM_LO] & ~0xffe0) | (u16)(mainmem_addr & 0xffff);
+
+		// Set ARAM address
+		__DSPRegs[DSP_ARAM_DMA_ARAM_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_ARAM_HI] & ~0x3ff) | (u16)(aram_addr >> 16);
+		__DSPRegs[DSP_ARAM_DMA_ARAM_LO] = (u16)(__DSPRegs[DSP_ARAM_DMA_ARAM_LO] & ~0xffe0) | (u16)(aram_addr & 0xffff);
+
+		// Set DMA buffer size
+		__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)((__DSPRegs[DSP_ARAM_DMA_SIZE_HI] & ~0x8000) | (type << 15));
+		__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_HI] & ~0x3ff) | (u16)(length >> 16);
+		__DSPRegs[DSP_ARAM_DMA_SIZE_LO] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_LO] & ~0xffe0) | (u16)(length & 0xffff);
+
+		if (length != 0) {
+			if (type == ARAM_DIR_MRAM_TO_ARAM) {
+				memcpy(&__ARHostMemory[aram_addr], mainMemory, length);
+			} else {
+				memcpy(mainMemory, &__ARHostMemory[aram_addr], length);
+			}
+		}
+
+		__ARHostDMABusy = FALSE;
+		__DSPRegs[DSP_CONTROL_STATUS] &= (u16)~0x0200U;
+	} else {
+		__ARHostReportDMAFailure(
+		    result,
+		    type,
+		    mainmem_addr,
+		    aram_addr,
+		    length);
+	}
+
+	/* Publish completion before invoking the synchronous host callback. */
+	__ARHostLastDMAResult = result;
+	if (__AR_Callback != NULL) {
+		(*__AR_Callback)();
+	}
+
+	OSRestoreInterrupts(enabled);
+	OSCheckAlarmQueue();
+	return result;
+}
+#endif
+
 /**
  * @TODO: Documentation
  */
 void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length)
 {
+#ifdef LIBPORPOISE_PORT
+	(void)ARStartDMAEx(type, mainmem_addr, aram_addr, length);
+#else
 	BOOL enabled;
-
-#ifdef LIBPORPOISE_PORT
-	void* mainMemory = NULL;
-	BOOL valid;
-
-	OSCheckAlarmQueue();
-#endif
 	enabled = OSDisableInterrupts();
-
-#ifdef LIBPORPOISE_PORT
-	if (__ARHostDMABusy) {
-		fprintf(
-		    stderr,
-		    "libPorpoise AR: rejected DMA because another transfer "
-		    "is already in progress.\n");
-		OSRestoreInterrupts(enabled);
-		OSCheckAlarmQueue();
-		return;
-	}
-#endif
 
 	// Set main mem address
 	__DSPRegs[DSP_ARAM_DMA_MM_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_MM_HI] & ~0x3ff) | (u16)(mainmem_addr >> 16);
@@ -187,40 +303,7 @@ void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length)
 	__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)((__DSPRegs[DSP_ARAM_DMA_SIZE_HI] & ~0x8000) | (type << 15));
 	__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_HI] & ~0x3ff) | (u16)(length >> 16);
 	__DSPRegs[DSP_ARAM_DMA_SIZE_LO] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_LO] & ~0xffe0) | (u16)(length & 0xffff);
-
-#ifdef LIBPORPOISE_PORT
-	/*
-	 * Host compatibility backend: the DMA is completed synchronously on the
-	 * calling thread. Busy state is real for the duration of the copy, then
-	 * the registered completion callback is invoked deterministically before
-	 * ARStartDMA() returns.
-	 */
-	__ARHostDMABusy = TRUE;
-	__DSPRegs[DSP_CONTROL_STATUS] |= 0x0200U;
-	valid = __ARHostValidateDMA(
-	    type,
-	    mainmem_addr,
-	    aram_addr,
-	    length,
-	    &mainMemory);
-	if (valid && length != 0) {
-		if (type == ARAM_DIR_MRAM_TO_ARAM) {
-			memcpy(&__ARHostMemory[aram_addr], mainMemory, length);
-		} else {
-			memcpy(mainMemory, &__ARHostMemory[aram_addr], length);
-		}
-	}
-	__ARHostDMABusy = FALSE;
-	__DSPRegs[DSP_CONTROL_STATUS] &= (u16)~0x0200U;
-
-	if (__AR_Callback != NULL) {
-		(*__AR_Callback)();
-	}
-#endif
-
 	OSRestoreInterrupts(enabled);
-#ifdef LIBPORPOISE_PORT
-	OSCheckAlarmQueue();
 #endif
 }
 
@@ -228,18 +311,105 @@ void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length)
  * @TODO: Documentation
  * @note UNUSED Size: 000068
  */
-void ARAlloc(void)
+u32 ARAlloc(u32 length)
 {
-	TRAP_UNIMPLEMENTED;
+	u32 address;
+	BOOL old;
+
+	old = OSDisableInterrupts();
+
+#ifdef LIBPORPOISE_PORT
+	/*
+	 * The SDK allocator is a stack whose index table is supplied to ARInit().
+	 * Host builds reject invalid requests instead of relying on SDK assertions,
+	 * which are normally compiled out in this configuration.
+	 */
+	if (!__AR_init_flag ||
+	    (length & (ARQ_DMA_ALIGNMENT - 1U)) != 0 ||
+	    __AR_FreeBlocks == 0 ||
+	    __AR_BlockLength == NULL ||
+	    __AR_BlockLengthBase == NULL ||
+	    __AR_StackPointer < __AR_ARAM_USR_BASE_ADDR ||
+	    __AR_StackPointer > __AR_Size ||
+	    length > __AR_Size - __AR_StackPointer) {
+		OSRestoreInterrupts(old);
+		return 0;
+	}
+#else
+	ASSERTMSG((length % ARQ_DMA_ALIGNMENT) == 0,
+	          "ARAlloc(): length is not multiple of 32bytes!");
+	ASSERTMSG(length <= __AR_Size - __AR_StackPointer,
+	          "ARAlloc(): Out of ARAM!");
+	ASSERTMSG(__AR_FreeBlocks, "ARAlloc(): No more free blocks!");
+#endif
+
+	address = __AR_StackPointer;
+	__AR_StackPointer += length;
+	*__AR_BlockLength = length;
+	__AR_BlockLength++;
+	__AR_FreeBlocks--;
+#ifdef LIBPORPOISE_PORT
+	__AR_AllocatedBlocks++;
+#endif
+
+	OSRestoreInterrupts(old);
+	return address;
 }
 
 /**
  * @TODO: Documentation
  * @note UNUSED Size: 000074
  */
-void ARFree(void)
+u32 ARFree(u32* length)
 {
-	TRAP_UNIMPLEMENTED;
+	u32 blockLength;
+	BOOL old;
+
+	old = OSDisableInterrupts();
+
+#ifdef LIBPORPOISE_PORT
+	if (!__AR_init_flag ||
+	    __AR_AllocatedBlocks == 0 ||
+	    __AR_BlockLength == NULL ||
+	    __AR_BlockLengthBase == NULL ||
+	    __AR_BlockLength <= __AR_BlockLengthBase) {
+		if (length != NULL) {
+			*length = 0;
+		}
+		OSRestoreInterrupts(old);
+		return 0;
+	}
+
+	blockLength = __AR_BlockLength[-1];
+	if ((blockLength & (ARQ_DMA_ALIGNMENT - 1U)) != 0 ||
+	    __AR_StackPointer < __AR_ARAM_USR_BASE_ADDR ||
+	    blockLength > __AR_StackPointer - __AR_ARAM_USR_BASE_ADDR) {
+		if (length != NULL) {
+			*length = 0;
+		}
+		OSRestoreInterrupts(old);
+		return 0;
+	}
+#else
+	__AR_BlockLength--;
+	blockLength = *__AR_BlockLength;
+#endif
+
+#ifdef LIBPORPOISE_PORT
+	__AR_BlockLength--;
+#endif
+	__AR_StackPointer -= blockLength;
+	__AR_FreeBlocks++;
+#ifdef LIBPORPOISE_PORT
+	__AR_AllocatedBlocks--;
+#endif
+
+	if (length != NULL) {
+		*length = blockLength;
+	}
+
+	OSRestoreInterrupts(old);
+	return __AR_StackPointer;
 }
 
 /**
@@ -279,12 +449,15 @@ u32 ARInit(u32* stack_index_addr, u32 num_entries)
 	__AR_StackPointer = __AR_ARAM_USR_BASE_ADDR;
 	__AR_FreeBlocks = num_entries;
 	__AR_BlockLength = stack_index_addr;
+	__AR_BlockLengthBase = stack_index_addr;
+	__AR_AllocatedBlocks = 0;
 	__AR_Size = HOST_ARAM_SIZE;
 #if OS_BUILD_VERSION >= 20011217L
 	__AR_InternalSize = HOST_ARAM_SIZE;
 	__AR_ExpansionSize = 0;
 #endif
 	__ARHostDMABusy = FALSE;
+	__ARHostLastDMAResult = AR_DMA_RESULT_NOT_STARTED;
 	memset(__ARHostMemory, 0, sizeof(__ARHostMemory));
 	__AR_init_flag = TRUE;
 	OSRestoreInterrupts(old);
@@ -322,7 +495,24 @@ u32 ARInit(u32* stack_index_addr, u32 num_entries)
  */
 void ARReset(void)
 {
-	TRAP_UNIMPLEMENTED;
+#ifdef LIBPORPOISE_PORT
+	BOOL old = OSDisableInterrupts();
+
+	__AR_init_flag = FALSE;
+	__AR_Callback = NULL;
+	__AR_StackPointer = __AR_ARAM_USR_BASE_ADDR;
+	__AR_FreeBlocks = 0;
+	__AR_BlockLength = NULL;
+	__AR_BlockLengthBase = NULL;
+	__AR_AllocatedBlocks = 0;
+	__ARHostDMABusy = FALSE;
+	__ARHostLastDMAResult = AR_DMA_RESULT_NOT_STARTED;
+	memset(__ARHostMemory, 0, sizeof(__ARHostMemory));
+
+	OSRestoreInterrupts(old);
+#else
+	__AR_init_flag = FALSE;
+#endif
 }
 
 /**

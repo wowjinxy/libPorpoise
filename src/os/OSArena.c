@@ -1,4 +1,7 @@
 #include <dolphin/os/OSArena.h>
+#ifdef LIBPORPOISE_PORT
+#include <dolphin/os/OSHostMemory.h>
+#endif
 
 static void* __OSArenaHi = (void*)0x00000000;
 static void* __OSArenaLo = (void*)0xffffffff;
@@ -24,6 +27,9 @@ void* OSGetArenaLo(void)
  */
 void OSSetArenaHi(void* arena_hi)
 {
+#ifdef LIBPORPOISE_PORT
+	arena_hi = __OSHostMemoryResolveArenaHi(__OSArenaHi, arena_hi);
+#endif
 	__OSArenaHi = arena_hi;
 	return;
 }

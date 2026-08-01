@@ -8,10 +8,46 @@ project('libporpoise', 'c', 'cpp',
 )
 
 fs = import('fs')
+codewarrior_source_compat = find_program(
+    'tools/codewarrior_source_compat.py',
+    native: true,
+)
+pe_static_u32_fixups = find_program(
+    'tools/pe_static_u32_fixups.py',
+    native: true,
+)
 
 buildtype = get_option('buildtype')
 cc = meson.get_compiler('c')
 build_target = get_option('build_target')
+host_memory_profile = get_option('host_memory_profile')
+libporpoise_platform_dependencies = []
+
+# Win64 consumers need the DLLs which back libPorpoise's SDL and MinGW
+# dependencies beside their executable.  Export both the File objects and
+# their destination names so each consumer can stage them in its own output
+# directory without duplicating toolchain-specific knowledge.
+libporpoise_win64_runtime_files = []
+libporpoise_win64_runtime_basenames = []
+
+if build_target == 'win64'
+    libporpoise_win64_runtime_basenames = [
+        'SDL2.dll',
+        'libgcc_s_seh-1.dll',
+        'libstdc++-6.dll',
+        'libwinpthread-1.dll',
+    ]
+
+    foreach runtime_basename : libporpoise_win64_runtime_basenames
+        libporpoise_win64_runtime_files += files(
+            'msys2/ucrt64/bin' / runtime_basename,
+        )
+    endforeach
+endif
+
+if build_target == 'linux'
+    libporpoise_platform_dependencies += cc.find_library('dl', required: false)
+endif
 
 ############################################################
 ###                    COMPILER FLAGS                    ###
@@ -82,6 +118,12 @@ if (build_target == 'linux')
     ]
 endif
 
+if build_target != 'gc' and host_memory_profile == 'gamecube_extended'
+    libporpoise_shared_args += [
+        '-DLIBPORPOISE_HOST_MEMORY_PROFILE=OS_HOST_MEMORY_PROFILE_GAMECUBE_EXTENDED',
+    ]
+endif
+
 libporpoise_c_args += libporpoise_shared_args
 libporpoise_cpp_args += libporpoise_shared_args
 
@@ -131,6 +173,8 @@ else
     libporpoise_dependencies += sdl2_dep
 endif
 
+libporpoise_dependencies += libporpoise_platform_dependencies
+
 
 ############################################################
 ###                      LIBRARIES                       ###
@@ -157,4 +201,9 @@ if(standalone)
     subdir('standalone')
 endif
 
-subdir('tests')
+tests_option = get_option('tests')
+build_tests = tests_option.enabled() or (tests_option.auto() and not meson.is_subproject())
+
+if build_tests
+    subdir('tests')
+endif

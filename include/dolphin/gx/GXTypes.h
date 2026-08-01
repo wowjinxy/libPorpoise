@@ -22,8 +22,31 @@ typedef struct _GXColor {
 	u8 r, g, b, a; // _00, _01, _02, _03
 } GXColor;
 
+static inline u32 GXColorToRGBA8(GXColor color)
+{
+	return ((u32)color.r << 24) | ((u32)color.g << 16)
+	     | ((u32)color.b << 8) | (u32)color.a;
+}
+
+static inline GXColor GXColorFromRGBA8(u32 rgba)
+{
+	GXColor color;
+	color.r = (u8)(rgba >> 24);
+	color.g = (u8)(rgba >> 16);
+	color.b = (u8)(rgba >> 8);
+	color.a = (u8)rgba;
+	return color;
+}
+
+#ifdef LIBPORPOISE_PORT
+#define GXCOLOR_AS_U32(color) GXColorToRGBA8(color)
+#define RGBA_TO_U32(r, g, b, a) \
+	(((u32)(u8)(r) << 24) | ((u32)(u8)(g) << 16) | \
+	 ((u32)(u8)(b) << 8) | (u32)(u8)(a))
+#else
 #define GXCOLOR_AS_U32(color)   (*((u32*)&(color)))
 #define RGBA_TO_U32(r, g, b, a) (((u8)(r) << 24) | ((u8)(g) << 16) | ((u8)(b) << 8) | ((u8)(a)))
+#endif
 
 // Signed 10-bit-component colors for TEV const (konst) colors.
 typedef struct _GXColorS10 {

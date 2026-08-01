@@ -24,6 +24,15 @@ s64 OSReadBigEndianS64(const void* address);
 f32 OSReadBigEndianF32(const void* address);
 f64 OSReadBigEndianF64(const void* address);
 
+/* Decode serialized big-endian elements into native scalar storage. Source
+ * and destination may refer to the same buffer. This is intentionally typed:
+ * raw file and DVD reads must remain byte-for-byte copies until a format-aware
+ * consumer identifies the scalar fields. */
+void OSReadBigEndian16Array(
+    u16* destination,
+    const void* source,
+    u32 elementCount);
+
 void OSWriteBigEndian16(void* address, u16 value);
 void OSWriteBigEndian32(void* address, u32 value);
 void OSWriteBigEndian64(void* address, u64 value);

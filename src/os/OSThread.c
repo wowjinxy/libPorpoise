@@ -16,8 +16,14 @@ static OSThread DefaultThread;
 static OSContext IdleContext;
 static void DefaultSwitchThreadCallback(OSThread* from, OSThread* to);
 #ifdef LIBPORPOISE_PORT
+#define OS_HOST_THREAD_EXIT_CALLBACK_CAPACITY 8
+
 static __thread OSThread* HostCurrentThread;
+static __thread BOOL HostBlockingWaitSafePoint;
+static __thread BOOL HostThreadExitNotified;
 static OSThreadQueue* HostAlarmWaitQueue;
+static OSHostThreadExitCallback
+	HostThreadExitCallbacks[OS_HOST_THREAD_EXIT_CALLBACK_CAPACITY];
 #endif
 
 // Fabricated helper inlines.
@@ -438,6 +444,32 @@ void __OSHostThreadWillExit(void)
 	OSThread* thread;
 	SDL_Thread* detachedThread = NULL;
 	BOOL enabled;
+	OSHostThreadExitCallback callbacks[
+		OS_HOST_THREAD_EXIT_CALLBACK_CAPACITY];
+	int callbackCount = 0;
+	int i;
+
+	/*
+	 * Notify host subsystems while this thread still owns its native resources.
+	 * Snapshot under the scheduler lock, then invoke without it: observers may
+	 * need to wake OS queues and must not create scheduler -> queue inversions.
+	 */
+	if (HostCurrentThread != NULL && !HostThreadExitNotified) {
+		HostThreadExitNotified = TRUE;
+		enabled = OSDisableInterrupts();
+		for (i = 0;
+		     i < OS_HOST_THREAD_EXIT_CALLBACK_CAPACITY;
+		     ++i) {
+			if (HostThreadExitCallbacks[i] != NULL) {
+				callbacks[callbackCount++] =
+					HostThreadExitCallbacks[i];
+			}
+		}
+		OSRestoreInterrupts(enabled);
+		for (i = 0; i < callbackCount; ++i) {
+			callbacks[i](SDL_ThreadID());
+		}
+	}
 
 	enabled = OSDisableInterrupts();
 	thread = HostCurrentThread;
@@ -474,6 +506,36 @@ void __OSHostThreadWillExit(void)
 	}
 }
 
+BOOL __OSHostRegisterThreadExitCallback(
+	OSHostThreadExitCallback callback)
+{
+	BOOL enabled;
+	BOOL registered = FALSE;
+	int emptyIndex = -1;
+	int i;
+
+	if (callback == NULL) {
+		return FALSE;
+	}
+
+	enabled = OSDisableInterrupts();
+	for (i = 0; i < OS_HOST_THREAD_EXIT_CALLBACK_CAPACITY; ++i) {
+		if (HostThreadExitCallbacks[i] == callback) {
+			registered = TRUE;
+			break;
+		}
+		if (emptyIndex < 0 && HostThreadExitCallbacks[i] == NULL) {
+			emptyIndex = i;
+		}
+	}
+	if (!registered && emptyIndex >= 0) {
+		HostThreadExitCallbacks[emptyIndex] = callback;
+		registered = TRUE;
+	}
+	OSRestoreInterrupts(enabled);
+	return registered;
+}
+
 int __OSHostWaitForCondition(
 	OSThreadQueue* threadQueue,
 	SDL_mutex* mutex)
@@ -486,7 +548,9 @@ int __OSHostWaitForCondition(
 	 * sleep. Return to the caller so it can recheck its queue predicate; an
 	 * alarm handler may have completed the very wait we were about to enter.
 	 */
+	HostBlockingWaitSafePoint = TRUE;
 	if (OSCheckAlarmQueue()) {
+		HostBlockingWaitSafePoint = FALSE;
 		return SDL_MUTEX_TIMEDOUT;
 	}
 	timeout = __OSHostGetAlarmTimeoutMilliseconds();
@@ -502,7 +566,13 @@ int __OSHostWaitForCondition(
 	SDL_UnlockMutex(mutex);
 	__OSHostThreadDidWake();
 	SDL_LockMutex(mutex);
+	HostBlockingWaitSafePoint = FALSE;
 	return result;
+}
+
+BOOL __OSHostIsBlockingWaitSafePoint(void)
+{
+	return HostBlockingWaitSafePoint;
 }
 
 void __OSHostWakeAlarmThread(void)
@@ -519,6 +589,14 @@ void __OSHostWakeAlarmThread(void)
 	SDL_UnlockMutex(threadQueue->hostMutex);
 }
 
+void __OSHostClearAlarmWaitQueue(void)
+{
+	BOOL enabled = OSDisableInterrupts();
+
+	HostAlarmWaitQueue = NULL;
+	OSRestoreInterrupts(enabled);
+}
+
 // Wrapper function to run OSThreads in SDL Threads
 static int OSRunThread(void * threadPtr) {
 	OSThread * thread = (OSThread*)threadPtr;
@@ -526,6 +604,7 @@ static int OSRunThread(void * threadPtr) {
 	BOOL enabled;
 
 	HostCurrentThread = thread;
+	HostThreadExitNotified = FALSE;
 	enabled = OSDisableInterrupts();
 	thread->state = OS_THREAD_STATE_RUNNING;
 	OSRestoreInterrupts(enabled);

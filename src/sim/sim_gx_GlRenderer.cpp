@@ -16,9 +16,10 @@ extern "C" void __VIHostOnDraw(void) __attribute__((weak));
 
 namespace {
 
-std::vector<SIM::GX::RenderVertex> ExpandQuads(
-    const std::vector<SIM::GX::RenderVertex>& vertices) {
-    std::vector<SIM::GX::RenderVertex> triangles;
+void ExpandQuads(
+    const std::vector<SIM::GX::RenderVertex>& vertices,
+    std::vector<SIM::GX::RenderVertex>& triangles) {
+    triangles.clear();
     triangles.reserve((vertices.size() / 4) * 6);
     for (size_t i = 0; i + 3 < vertices.size(); i += 4) {
         triangles.push_back(vertices[i]);
@@ -28,14 +29,14 @@ std::vector<SIM::GX::RenderVertex> ExpandQuads(
         triangles.push_back(vertices[i + 2]);
         triangles.push_back(vertices[i + 3]);
     }
-    return triangles;
 }
 
-std::vector<SIM::GX::RenderVertex> ExpandQuadStrip(
-    const std::vector<SIM::GX::RenderVertex>& vertices) {
-    std::vector<SIM::GX::RenderVertex> triangles;
+void ExpandQuadStrip(
+    const std::vector<SIM::GX::RenderVertex>& vertices,
+    std::vector<SIM::GX::RenderVertex>& triangles) {
+    triangles.clear();
     if (vertices.size() < 4) {
-        return triangles;
+        return;
     }
 
     triangles.reserve(((vertices.size() - 2) / 2) * 6);
@@ -47,7 +48,6 @@ std::vector<SIM::GX::RenderVertex> ExpandQuadStrip(
         triangles.push_back(vertices[i + 3]);
         triangles.push_back(vertices[i + 2]);
     }
-    return triangles;
 }
 
 GLenum ToGlPrimitive(GXPrimitive primitive) {
@@ -231,182 +231,49 @@ SIM::GX::RenderVector3 Normalize(
     };
 }
 
-SIM::GX::RenderColor ArrayToColor(const std::array<float, 4>& color) {
-    return {color[0], color[1], color[2], color[3]};
-}
-
-SIM::GX::RenderColor EvaluateChannelLighting(
-    const SIM::GX::GlobalState& state,
-    const SIM::GX::ChannelState& channel,
-    const SIM::GX::RenderColor& vertexColor,
-    const SIM::GX::RenderVector3& viewPosition,
-    const SIM::GX::RenderVector3& viewNormal) {
-    const auto evaluateComponent = [&](
-        size_t component,
-        const SIM::GX::ChannelControlState& control) {
-        const SIM::GX::RenderColor materialRegister =
-            ArrayToColor(channel.materialColor);
-        const SIM::GX::RenderColor ambientRegister =
-            ArrayToColor(channel.ambientColor);
-        const float* vertexComponents = vertexColor.Data();
-        const float* materialComponents = materialRegister.Data();
-        const float* ambientComponents = ambientRegister.Data();
-        const float material =
-            control.materialSource == GX_SRC_VTX
-                ? vertexComponents[component]
-                : materialComponents[component];
-        if (!control.lightingEnabled) {
-            return ClampUnit(material);
-        }
-
-        float lightAccumulation =
-            control.ambientSource == GX_SRC_VTX
-                ? vertexComponents[component]
-                : ambientComponents[component];
-
-        for (size_t lightIndex = 0; lightIndex < 8; ++lightIndex) {
-            if ((control.lightMask & (1u << lightIndex)) == 0u) {
-                continue;
-            }
-            const auto& light = state.GetLightState(lightIndex);
-            if (!light.valid) {
-                continue;
-            }
-
-            const SIM::GX::RenderVector3 lightDelta = {
-                light.position[0] - viewPosition.x,
-                light.position[1] - viewPosition.y,
-                light.position[2] - viewPosition.z,
-            };
-            const float distance = Length(lightDelta);
-            const auto vertexToLight = Normalize(lightDelta);
-            const float normalDotLight = Dot(viewNormal, vertexToLight);
-
-            float diffuse = 1.0f;
-            switch (control.diffuseFunction) {
-                case GX_DF_SIGN:
-                    diffuse = normalDotLight;
-                    break;
-                case GX_DF_CLAMP:
-                    diffuse = std::max(0.0f, normalDotLight);
-                    break;
-                case GX_DF_NONE:
-                default:
-                    break;
-            }
-
-            float attenuation = 1.0f;
-            if (control.attenuationFunction == GX_AF_SPOT) {
-                const auto hardwareDirection = Normalize({
-                    light.direction[0],
-                    light.direction[1],
-                    light.direction[2],
-                });
-                const float cosine =
-                    std::max(0.0f, Dot(vertexToLight, hardwareDirection));
-                const float cosineAttenuation = std::max(
-                    0.0f,
-                    light.cosineAttenuation[0] +
-                        light.cosineAttenuation[1] * cosine +
-                        light.cosineAttenuation[2] * cosine * cosine);
-                const float distanceAttenuation =
-                    light.distanceAttenuation[0] +
-                    light.distanceAttenuation[1] * distance +
-                    light.distanceAttenuation[2] * distance * distance;
-                if (distanceAttenuation > 0.000001f) {
-                    attenuation =
-                        cosineAttenuation / distanceAttenuation;
-                } else {
-                    attenuation = 0.0f;
-                }
-            } else if (control.attenuationFunction == GX_AF_SPEC) {
-                const auto halfAngle = Normalize({
-                    light.direction[0],
-                    light.direction[1],
-                    light.direction[2],
-                });
-                const float cosine =
-                    std::max(0.0f, Dot(viewNormal, halfAngle));
-                attenuation = std::max(
-                    0.0f,
-                    light.distanceAttenuation[0] +
-                        light.distanceAttenuation[1] * cosine +
-                        light.distanceAttenuation[2] * cosine * cosine);
-            }
-
-            lightAccumulation +=
-                light.color[component] * diffuse * attenuation;
-        }
-
-        return ClampUnit(material * ClampUnit(lightAccumulation));
-    };
-
-    SIM::GX::RenderColor output;
-    output.r = evaluateComponent(0, channel.colorControl);
-    output.g = evaluateComponent(1, channel.colorControl);
-    output.b = evaluateComponent(2, channel.colorControl);
-    output.a = evaluateComponent(3, channel.alphaControl);
-    return output;
-}
-
-void ApplyColorChannels(
-    const SIM::GX::GlobalState& state,
-    std::vector<SIM::GX::RenderVertex>& vertices) {
-    for (auto& vertex : vertices) {
-        const bool indexedMatrix =
-            state.GetVertexDescriptor(GX_VA_PNMTXIDX) != GX_NONE;
-        const size_t matrixIndex = indexedMatrix
-            ? static_cast<size_t>(vertex.positionMatrixIndex / 3u)
-            : 0u;
-        const auto& modelView = indexedMatrix
-            ? state.GetPositionMatrix(matrixIndex)
-            : state.GetPositionMatrix();
-        const auto& normalMatrix = indexedMatrix
-            ? state.GetNormalMatrix(matrixIndex)
-            : state.GetNormalMatrix();
-        const auto viewPosition =
-            TransformPoint(modelView, vertex.position);
-        const auto viewNormal =
-            Normalize(TransformDirection(normalMatrix, vertex.normal));
-        vertex.color0 = EvaluateChannelLighting(
-            state,
-            state.GetChannelState(0),
-            vertex.color0,
-            viewPosition,
-            viewNormal);
-        vertex.color1 = EvaluateChannelLighting(
-            state,
-            state.GetChannelState(1),
-            vertex.color1,
-            viewPosition,
-            viewNormal);
-    }
-}
-
 void ApplyTexCoordGenerators(
     const SIM::GX::GlobalState& state,
     std::vector<SIM::GX::RenderVertex>& vertices) {
+    const size_t generatorCount =
+        std::min<size_t>(state.GetNumTexGens(), 8u);
+    if (generatorCount == 0u) {
+        return;
+    }
+
+    bool needsBumpVectors = false;
+    for (size_t index = 0; index < generatorCount; ++index) {
+        const auto function =
+            state.GetTexCoordGenState(index).function;
+        if (function >= GX_TG_BUMP0 && function <= GX_TG_BUMP7) {
+            needsBumpVectors = true;
+            break;
+        }
+    }
+
     for (auto& vertex : vertices) {
-        const auto& modelView =
-            state.GetVertexDescriptor(GX_VA_PNMTXIDX) != GX_NONE
-                ? state.GetPositionMatrix(
-                    static_cast<size_t>(
-                        vertex.positionMatrixIndex / 3u))
-                : state.GetPositionMatrix();
         const auto sourceTexCoords = vertex.texCoords;
-        std::array<SIM::GX::RenderTexCoord, 8> generated = {};
-        for (auto& coordinate : generated) {
-            coordinate.q = 1.0f;
+        // Inactive generator slots retain their decoded source coordinates;
+        // RenderTexCoord's default q=1 also remains intact for absent inputs.
+        auto generated = sourceTexCoords;
+
+        SIM::GX::RenderVector3 viewPosition = {};
+        SIM::GX::RenderVector3 viewBinormal = {};
+        SIM::GX::RenderVector3 viewTangent = {};
+        if (needsBumpVectors) {
+            const auto& modelView =
+                state.GetVertexDescriptor(GX_VA_PNMTXIDX) != GX_NONE
+                    ? state.GetPositionMatrix(
+                        static_cast<size_t>(
+                            vertex.positionMatrixIndex / 3u))
+                    : state.GetPositionMatrix();
+            viewPosition = TransformPoint(modelView, vertex.position);
+            viewBinormal = Normalize(
+                TransformDirection(modelView, vertex.binormal));
+            viewTangent = Normalize(
+                TransformDirection(modelView, vertex.tangent));
         }
 
-        const auto viewPosition =
-            TransformPoint(modelView, vertex.position);
-        const auto viewBinormal =
-            Normalize(TransformDirection(modelView, vertex.binormal));
-        const auto viewTangent =
-            Normalize(TransformDirection(modelView, vertex.tangent));
-
-        for (size_t index = 0; index < generated.size(); ++index) {
+        for (size_t index = 0; index < generatorCount; ++index) {
             const auto& texGen = state.GetTexCoordGenState(index);
             if (texGen.function >= GX_TG_BUMP0 &&
                 texGen.function <= GX_TG_BUMP7) {
@@ -581,13 +448,19 @@ void ApplyTexCoordGenerators(
 void ApplyPositionMatrices(
     const SIM::GX::GlobalState& state,
     std::vector<SIM::GX::RenderVertex>& vertices) {
+    const bool indexedMatrix =
+        state.GetVertexDescriptor(GX_VA_PNMTXIDX) != GX_NONE;
+    if (!indexedMatrix) {
+        const auto& modelView = state.GetPositionMatrix();
+        for (auto& vertex : vertices) {
+            vertex.position = TransformPoint(modelView, vertex.position);
+        }
+        return;
+    }
+
     for (auto& vertex : vertices) {
-        const auto& modelView =
-            state.GetVertexDescriptor(GX_VA_PNMTXIDX) != GX_NONE
-                ? state.GetPositionMatrix(
-                    static_cast<size_t>(
-                        vertex.positionMatrixIndex / 3u))
-                : state.GetPositionMatrix();
+        const auto& modelView = state.GetPositionMatrix(
+            static_cast<size_t>(vertex.positionMatrixIndex / 3u));
         vertex.position = TransformPoint(modelView, vertex.position);
     }
 }
@@ -595,115 +468,129 @@ void ApplyPositionMatrices(
 void ApplyRenderState(
     const SIM::GX::GlobalState& state,
     int drawableWidth,
-    int drawableHeight) {
+    int drawableHeight,
+    u32 dirty) {
+    using namespace SIM::GX::Detail;
     const auto& viewport = state.GetViewportState();
-    if (viewport.valid &&
-        viewport.referenceWidth > 0.0f &&
-        viewport.referenceHeight > 0.0f) {
-        const float scaleX =
-            static_cast<float>(drawableWidth) / viewport.referenceWidth;
-        const float scaleY =
-            static_cast<float>(drawableHeight) / viewport.referenceHeight;
-        glViewport(
-            static_cast<GLint>(viewport.left * scaleX),
-            static_cast<GLint>(
-                (viewport.referenceHeight - viewport.top - viewport.height) *
-                scaleY),
-            std::max(1, static_cast<GLint>(viewport.width * scaleX)),
-            std::max(1, static_cast<GLint>(viewport.height * scaleY)));
+    if ((dirty & RenderStateViewport) != 0u) {
+        if (viewport.valid &&
+            viewport.referenceWidth > 0.0f &&
+            viewport.referenceHeight > 0.0f) {
+            const float scaleX =
+                static_cast<float>(drawableWidth) / viewport.referenceWidth;
+            const float scaleY =
+                static_cast<float>(drawableHeight) / viewport.referenceHeight;
+            glViewport(
+                static_cast<GLint>(viewport.left * scaleX),
+                static_cast<GLint>(
+                    (viewport.referenceHeight - viewport.top - viewport.height) *
+                    scaleY),
+                std::max(1, static_cast<GLint>(viewport.width * scaleX)),
+                std::max(1, static_cast<GLint>(viewport.height * scaleY)));
+        } else {
+            glViewport(0, 0, drawableWidth, drawableHeight);
+        }
     }
 
     const auto& scissor = state.GetScissorState();
-    if (scissor.valid &&
-        viewport.referenceWidth > 0.0f &&
-        viewport.referenceHeight > 0.0f) {
-        const float scaleX =
-            static_cast<float>(drawableWidth) / viewport.referenceWidth;
-        const float scaleY =
-            static_cast<float>(drawableHeight) / viewport.referenceHeight;
-        glEnable(GL_SCISSOR_TEST);
-        glScissor(
-            static_cast<GLint>(scissor.left * scaleX),
-            static_cast<GLint>(
-                (viewport.referenceHeight - scissor.top - scissor.height) *
-                scaleY),
-            std::max(1, static_cast<GLint>(scissor.width * scaleX)),
-            std::max(1, static_cast<GLint>(scissor.height * scaleY)));
-    } else {
-        glDisable(GL_SCISSOR_TEST);
+    if ((dirty & RenderStateScissor) != 0u) {
+        if (scissor.valid &&
+            viewport.referenceWidth > 0.0f &&
+            viewport.referenceHeight > 0.0f) {
+            const float scaleX =
+                static_cast<float>(drawableWidth) / viewport.referenceWidth;
+            const float scaleY =
+                static_cast<float>(drawableHeight) / viewport.referenceHeight;
+            glEnable(GL_SCISSOR_TEST);
+            glScissor(
+                static_cast<GLint>(scissor.left * scaleX),
+                static_cast<GLint>(
+                    (viewport.referenceHeight - scissor.top - scissor.height) *
+                    scaleY),
+                std::max(1, static_cast<GLint>(scissor.width * scaleX)),
+                std::max(1, static_cast<GLint>(scissor.height * scaleY)));
+        } else {
+            glDisable(GL_SCISSOR_TEST);
+        }
     }
 
     const auto& depth = state.GetDepthState();
-    if (depth.compareEnabled) {
-        glEnable(GL_DEPTH_TEST);
-        glDepthFunc(ToGlCompare(depth.function));
-        glDepthMask(depth.updateEnabled ? GL_TRUE : GL_FALSE);
-    } else {
-        glDisable(GL_DEPTH_TEST);
-        glDepthMask(GL_FALSE);
+    if ((dirty & RenderStateDepth) != 0u) {
+        if (depth.compareEnabled) {
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(ToGlCompare(depth.function));
+            glDepthMask(depth.updateEnabled ? GL_TRUE : GL_FALSE);
+        } else {
+            glDisable(GL_DEPTH_TEST);
+            glDepthMask(GL_FALSE);
+        }
     }
 
     const auto& raster = state.GetRasterState();
-    // GX defines clockwise window-space polygons as front-facing.
-    glFrontFace(GL_CW);
-    switch (raster.cullMode) {
-        case GX_CULL_FRONT:
-            glEnable(GL_CULL_FACE);
-            glCullFace(GL_FRONT);
-            break;
-        case GX_CULL_BACK:
-            glEnable(GL_CULL_FACE);
-            glCullFace(GL_BACK);
-            break;
-        case GX_CULL_ALL:
-            glEnable(GL_CULL_FACE);
-            glCullFace(GL_FRONT_AND_BACK);
-            break;
-        case GX_CULL_NONE:
-        default:
-            glDisable(GL_CULL_FACE);
-            break;
+    if ((dirty & RenderStateRaster) != 0u) {
+        // GX defines clockwise window-space polygons as front-facing.
+        glFrontFace(GL_CW);
+        switch (raster.cullMode) {
+            case GX_CULL_FRONT:
+                glEnable(GL_CULL_FACE);
+                glCullFace(GL_FRONT);
+                break;
+            case GX_CULL_BACK:
+                glEnable(GL_CULL_FACE);
+                glCullFace(GL_BACK);
+                break;
+            case GX_CULL_ALL:
+                glEnable(GL_CULL_FACE);
+                glCullFace(GL_FRONT_AND_BACK);
+                break;
+            case GX_CULL_NONE:
+            default:
+                glDisable(GL_CULL_FACE);
+                break;
+        }
+        glLineWidth(raster.lineWidth);
+        glPointSize(raster.pointSize);
     }
-    glLineWidth(raster.lineWidth);
-    glPointSize(raster.pointSize);
 
     const auto& blend = state.GetBlendState();
-    glColorMask(
-        blend.colorUpdateEnabled ? GL_TRUE : GL_FALSE,
-        blend.colorUpdateEnabled ? GL_TRUE : GL_FALSE,
-        blend.colorUpdateEnabled ? GL_TRUE : GL_FALSE,
-        blend.alphaUpdateEnabled ? GL_TRUE : GL_FALSE);
-    if (blend.ditherEnabled) {
-        glEnable(GL_DITHER);
-    } else {
-        glDisable(GL_DITHER);
-    }
+    if ((dirty & RenderStateBlend) != 0u) {
+        glColorMask(
+            blend.colorUpdateEnabled ? GL_TRUE : GL_FALSE,
+            blend.colorUpdateEnabled ? GL_TRUE : GL_FALSE,
+            blend.colorUpdateEnabled ? GL_TRUE : GL_FALSE,
+            blend.alphaUpdateEnabled ? GL_TRUE : GL_FALSE);
+        if (blend.ditherEnabled) {
+            glEnable(GL_DITHER);
+        } else {
+            glDisable(GL_DITHER);
+        }
 
-    glDisable(GL_COLOR_LOGIC_OP);
-    switch (blend.mode) {
-        case GX_BM_BLEND:
-            glEnable(GL_BLEND);
-            glBlendEquation(GL_FUNC_ADD);
-            glBlendFunc(
-                ToGlSourceBlendFactor(blend.sourceFactor),
-                ToGlDestinationBlendFactor(blend.destinationFactor));
-            break;
-        case GX_BM_SUBTRACT:
-            glEnable(GL_BLEND);
-            glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
-            glBlendFunc(GL_ONE, GL_ONE);
-            break;
-        case GX_BM_LOGIC:
-            glDisable(GL_BLEND);
-            glBlendEquation(GL_FUNC_ADD);
-            glEnable(GL_COLOR_LOGIC_OP);
-            glLogicOp(ToGlLogicOperation(blend.logicOperation));
-            break;
-        case GX_BM_NONE:
-        default:
-            glDisable(GL_BLEND);
-            glBlendEquation(GL_FUNC_ADD);
-            break;
+        glDisable(GL_COLOR_LOGIC_OP);
+        switch (blend.mode) {
+            case GX_BM_BLEND:
+                glEnable(GL_BLEND);
+                glBlendEquation(GL_FUNC_ADD);
+                glBlendFunc(
+                    ToGlSourceBlendFactor(blend.sourceFactor),
+                    ToGlDestinationBlendFactor(blend.destinationFactor));
+                break;
+            case GX_BM_SUBTRACT:
+                glEnable(GL_BLEND);
+                glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+                glBlendFunc(GL_ONE, GL_ONE);
+                break;
+            case GX_BM_LOGIC:
+                glDisable(GL_BLEND);
+                glBlendEquation(GL_FUNC_ADD);
+                glEnable(GL_COLOR_LOGIC_OP);
+                glLogicOp(ToGlLogicOperation(blend.logicOperation));
+                break;
+            case GX_BM_NONE:
+            default:
+                glDisable(GL_BLEND);
+                glBlendEquation(GL_FUNC_ADD);
+                break;
+        }
     }
 }
 
@@ -1099,54 +986,22 @@ std::vector<u8> DecodeTlut(const SIM::GX::TlutState& tlut) {
     std::vector<u8> palette(
         static_cast<size_t>(tlut.entries) * 4u,
         0);
-    if (tlut.data == nullptr) {
+    if (tlut.CanonicalData() == nullptr) {
         return palette;
     }
 
-    const u8* source = static_cast<const u8*>(tlut.data);
+    const u8* source =
+        static_cast<const u8*>(tlut.CanonicalData());
     for (size_t index = 0; index < tlut.entries; ++index) {
-        const u16 packed =
-            static_cast<u16>(
-                (static_cast<u16>(source[0]) << 8u) |
-                static_cast<u16>(source[1]));
+        const SIM::GX::DecodedTlutColor color =
+            SIM::GX::DecodeTlutEntry(tlut.format, source);
         source += 2u;
         const size_t destination = index * 4u;
 
-        if (tlut.format == GX_TL_RGB565) {
-            palette[destination] = static_cast<u8>(
-                ((packed >> 11u) & 0x1fu) * 255u / 31u);
-            palette[destination + 1u] = static_cast<u8>(
-                ((packed >> 5u) & 0x3fu) * 255u / 63u);
-            palette[destination + 2u] = static_cast<u8>(
-                (packed & 0x1fu) * 255u / 31u);
-            palette[destination + 3u] = 255u;
-        } else if (tlut.format == GX_TL_RGB5A3) {
-            if ((packed & 0x8000u) != 0u) {
-                palette[destination] = static_cast<u8>(
-                    ((packed >> 10u) & 0x1fu) * 255u / 31u);
-                palette[destination + 1u] = static_cast<u8>(
-                    ((packed >> 5u) & 0x1fu) * 255u / 31u);
-                palette[destination + 2u] = static_cast<u8>(
-                    (packed & 0x1fu) * 255u / 31u);
-                palette[destination + 3u] = 255u;
-            } else {
-                palette[destination] = static_cast<u8>(
-                    ((packed >> 8u) & 0x0fu) * 17u);
-                palette[destination + 1u] = static_cast<u8>(
-                    ((packed >> 4u) & 0x0fu) * 17u);
-                palette[destination + 2u] = static_cast<u8>(
-                    (packed & 0x0fu) * 17u);
-                palette[destination + 3u] = static_cast<u8>(
-                    ((packed >> 12u) & 0x07u) * 255u / 7u);
-            }
-        } else {
-            const u8 intensity = static_cast<u8>(packed >> 8u);
-            palette[destination] = intensity;
-            palette[destination + 1u] = intensity;
-            palette[destination + 2u] = intensity;
-            palette[destination + 3u] =
-                static_cast<u8>(packed & 0xffu);
-        }
+        palette[destination] = color.red;
+        palette[destination + 1u] = color.green;
+        palette[destination + 2u] = color.blue;
+        palette[destination + 3u] = color.alpha;
     }
     return palette;
 }
@@ -1286,6 +1141,110 @@ void DecodeC14X2(
 
 namespace SIM::GX {
 
+namespace Detail {
+
+namespace {
+
+bool SameViewport(
+    const ViewportState& left,
+    const ViewportState& right) {
+    return
+        left.left == right.left &&
+        left.top == right.top &&
+        left.width == right.width &&
+        left.height == right.height &&
+        left.referenceWidth == right.referenceWidth &&
+        left.referenceHeight == right.referenceHeight &&
+        left.valid == right.valid;
+}
+
+bool SameScissor(
+    const ScissorState& left,
+    const ScissorState& right) {
+    return
+        left.left == right.left &&
+        left.top == right.top &&
+        left.width == right.width &&
+        left.height == right.height &&
+        left.valid == right.valid;
+}
+
+bool SameDepth(
+    const DepthState& left,
+    const DepthState& right) {
+    return
+        left.compareEnabled == right.compareEnabled &&
+        left.function == right.function &&
+        left.updateEnabled == right.updateEnabled;
+}
+
+bool SameRaster(
+    const RasterState& left,
+    const RasterState& right) {
+    return
+        left.cullMode == right.cullMode &&
+        left.lineWidth == right.lineWidth &&
+        left.pointSize == right.pointSize;
+}
+
+bool SameBlend(
+    const BlendState& left,
+    const BlendState& right) {
+    return
+        left.mode == right.mode &&
+        left.sourceFactor == right.sourceFactor &&
+        left.destinationFactor == right.destinationFactor &&
+        left.logicOperation == right.logicOperation &&
+        left.colorUpdateEnabled == right.colorUpdateEnabled &&
+        left.alphaUpdateEnabled == right.alphaUpdateEnabled &&
+        left.ditherEnabled == right.ditherEnabled;
+}
+
+}
+
+u32 RenderStateCache::Update(
+    const ViewportState& viewport,
+    const ScissorState& scissor,
+    const DepthState& depth,
+    const RasterState& raster,
+    const BlendState& blend,
+    int drawableWidth,
+    int drawableHeight) {
+    u32 dirty = 0u;
+    if (!mValid) {
+        dirty = RenderStateAll;
+    } else {
+        if (mDrawableWidth != drawableWidth ||
+            mDrawableHeight != drawableHeight ||
+            !SameViewport(mViewport, viewport)) {
+            dirty |= RenderStateViewport | RenderStateScissor;
+        } else if (!SameScissor(mScissor, scissor)) {
+            dirty |= RenderStateScissor;
+        }
+        if (!SameDepth(mDepth, depth)) {
+            dirty |= RenderStateDepth;
+        }
+        if (!SameRaster(mRaster, raster)) {
+            dirty |= RenderStateRaster;
+        }
+        if (!SameBlend(mBlend, blend)) {
+            dirty |= RenderStateBlend;
+        }
+    }
+
+    mViewport = viewport;
+    mScissor = scissor;
+    mDepth = depth;
+    mRaster = raster;
+    mBlend = blend;
+    mDrawableWidth = drawableWidth;
+    mDrawableHeight = drawableHeight;
+    mValid = true;
+    return dirty;
+}
+
+}
+
 u8 ConvertRgbToCopyIntensity(u8 red, u8 green, u8 blue) {
     const int y =
         (257 * static_cast<int>(red) +
@@ -1406,12 +1365,6 @@ void EncodeDepthTextureCopy(
     }
 }
 
-void ApplyTextureCoordinateGeneration(
-    const GlobalState& state,
-    std::vector<RenderVertex>& vertices) {
-    ApplyTexCoordGenerators(state, vertices);
-}
-
 void GlRenderer::Initialize() {
     if (mVertexArray != 0) {
         return;
@@ -1491,7 +1444,32 @@ void GlRenderer::Initialize() {
     }
 }
 
-void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive primitive) {
+void GlRenderer::SetDrawableSize(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+    mDrawableWidth = width;
+    mDrawableHeight = height;
+    // The owner also applies a raw full-window glViewport during context
+    // acquisition, so force the semantic GX viewport/scissor back afterward
+    // even when the drawable dimensions did not change.
+    mRenderStateCache.Invalidate();
+}
+
+void GlRenderer::SetShaderProgram(unsigned int program) {
+    if (mShaderProgram == program) {
+        return;
+    }
+    mShaderProgram = program;
+    mUniformLocations.Invalidate();
+    mRenderStateCache.Invalidate();
+}
+
+void GlRenderer::InvalidateRenderStateCache() {
+    mRenderStateCache.Invalidate();
+}
+
+void GlRenderer::Draw(std::vector<RenderVertex>& vertices, GXPrimitive primitive) {
     if (vertices.empty()) {
         return;
     }
@@ -1502,168 +1480,118 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
     Initialize();
 
     const auto& gxState = GetGlobalState();
-    std::vector<RenderVertex> shadedVertices(vertices);
-    ApplyColorChannels(gxState, shadedVertices);
-    ApplyTextureCoordinateGeneration(gxState, shadedVertices);
-    ApplyPositionMatrices(gxState, shadedVertices);
+    ApplyColorChannels(gxState, vertices);
+    ApplyTextureCoordinateGeneration(gxState, vertices);
+    ApplyPositionMatrices(gxState, vertices);
 
-    std::vector<RenderVertex> expandedVertices;
-    const std::vector<RenderVertex>* drawVertices = &shadedVertices;
+    const std::vector<RenderVertex>* drawVertices = &vertices;
     if (primitive == GX_QUADS) {
-        expandedVertices = ExpandQuads(shadedVertices);
-        drawVertices = &expandedVertices;
+        ExpandQuads(vertices, mExpandedVertices);
+        drawVertices = &mExpandedVertices;
     } else if (primitive == GX_QUADSTRIP) {
-        expandedVertices = ExpandQuadStrip(shadedVertices);
-        drawVertices = &expandedVertices;
+        ExpandQuadStrip(vertices, mExpandedVertices);
+        drawVertices = &mExpandedVertices;
     }
 
     if (drawVertices->empty()) {
         return;
     }
 
-    GLint shaderProgram = 0;
-    glGetIntegerv(GL_CURRENT_PROGRAM, &shaderProgram);
-    if (shaderProgram == 0) {
+    if (mShaderProgram == 0u) {
         return;
     }
 
-    ApplyRenderState(gxState, mDrawableWidth, mDrawableHeight);
+    const u32 renderStateDirty = mRenderStateCache.Update(
+        gxState.GetViewportState(),
+        gxState.GetScissorState(),
+        gxState.GetDepthState(),
+        gxState.GetRasterState(),
+        gxState.GetBlendState(),
+        mDrawableWidth,
+        mDrawableHeight);
+    if (renderStateDirty != 0u) {
+        ApplyRenderState(
+            gxState,
+            mDrawableWidth,
+            mDrawableHeight,
+            renderStateDirty);
+    }
+    using Detail::ShaderUniform;
+    const auto& uniformLocations = mUniformLocations.Resolve(
+        static_cast<GLuint>(mShaderProgram),
+        [](unsigned int program, const char* name) {
+            return glGetUniformLocation(static_cast<GLuint>(program), name);
+        });
     const GLint projectionLocation =
-        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_projection");
+        uniformLocations[ShaderUniform::Projection];
     const GLint modelViewLocation =
-        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_modelview");
+        uniformLocations[ShaderUniform::ModelView];
     const GLint numTevStagesLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_num_tev_stages");
+        uniformLocations[ShaderUniform::NumTevStages];
     const GLint useTexturesLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_use_texture[0]");
+        uniformLocations[ShaderUniform::UseTextures];
     const GLint stageTexturesLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_stage_texture[0]");
+        uniformLocations[ShaderUniform::StageTextures];
     const GLint stageTexCoordsLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_stage_texcoord[0]");
+        uniformLocations[ShaderUniform::StageTexCoords];
     const GLint stageRasterChannelsLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_stage_raster_channel[0]");
+        uniformLocations[ShaderUniform::StageRasterChannels];
     const GLint tevColorInputsLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_tev_color_inputs[0]");
+        uniformLocations[ShaderUniform::TevColorInputs];
     const GLint tevAlphaInputsLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_tev_alpha_inputs[0]");
+        uniformLocations[ShaderUniform::TevAlphaInputs];
     const GLint tevColorOperationsLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_tev_color_operation[0]");
+        uniformLocations[ShaderUniform::TevColorOperations];
     const GLint tevAlphaOperationsLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_tev_alpha_operation[0]");
+        uniformLocations[ShaderUniform::TevAlphaOperations];
     const GLint tevOutputRegistersLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_tev_output_registers[0]");
+        uniformLocations[ShaderUniform::TevOutputRegisters];
     const GLint tevSwapSelectorsLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_tev_swap_selectors[0]");
+        uniformLocations[ShaderUniform::TevSwapSelectors];
     const GLint tevSwapTablesLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_tev_swap_tables[0]");
+        uniformLocations[ShaderUniform::TevSwapTables];
     const GLint tevRegistersLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_tev_registers[0]");
+        uniformLocations[ShaderUniform::TevRegisters];
     const GLint tevKonstColorsLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_tev_konst_color[0]");
+        uniformLocations[ShaderUniform::TevKonstColors];
     const GLint tevKonstAlphasLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_tev_konst_alpha[0]");
+        uniformLocations[ShaderUniform::TevKonstAlphas];
     const GLint alphaComparison0Location =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_alpha_comparison0");
+        uniformLocations[ShaderUniform::AlphaComparison0];
     const GLint alphaReference0Location =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_alpha_reference0");
+        uniformLocations[ShaderUniform::AlphaReference0];
     const GLint alphaOperationLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_alpha_operation");
+        uniformLocations[ShaderUniform::AlphaOperation];
     const GLint alphaComparison1Location =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_alpha_comparison1");
+        uniformLocations[ShaderUniform::AlphaComparison1];
     const GLint alphaReference1Location =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_alpha_reference1");
+        uniformLocations[ShaderUniform::AlphaReference1];
     const GLint fogTypeLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_fog_type");
+        uniformLocations[ShaderUniform::FogType];
     const GLint fogOrthographicLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_fog_orthographic");
+        uniformLocations[ShaderUniform::FogOrthographic];
     const GLint fogALocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_fog_a");
+        uniformLocations[ShaderUniform::FogA];
     const GLint fogBLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_fog_b");
+        uniformLocations[ShaderUniform::FogB];
     const GLint fogCLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_fog_c");
+        uniformLocations[ShaderUniform::FogC];
     const GLint fogColorLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_fog_color");
+        uniformLocations[ShaderUniform::FogColor];
     const GLint fogRangeEnabledLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_fog_range_adjustment_enabled");
+        uniformLocations[ShaderUniform::FogRangeEnabled];
     const GLint fogRangeCenterLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_fog_range_adjustment_center");
+        uniformLocations[ShaderUniform::FogRangeCenter];
     const GLint fogRangeTableLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_fog_range_adjustment[0]");
+        uniformLocations[ShaderUniform::FogRangeTable];
     const GLint fogXScaleLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_fog_x_scale");
+        uniformLocations[ShaderUniform::FogXScale];
     const GLint zTextureOperationLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_ztexture_operation");
+        uniformLocations[ShaderUniform::ZTextureOperation];
     const GLint zTextureFormatLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_ztexture_format");
+        uniformLocations[ShaderUniform::ZTextureFormat];
     const GLint zTextureBiasLocation =
-        glGetUniformLocation(
-            static_cast<GLuint>(shaderProgram),
-            "u_ztexture_bias");
+        uniformLocations[ShaderUniform::ZTextureBias];
     if (projectionLocation >= 0) {
         glUniformMatrix4fv(
             projectionLocation,
@@ -1779,11 +1707,14 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         if (texture.data == nullptr ||
             texture.width == 0 ||
             texture.height == 0 ||
+            GetTextureSourceByteSize(texture) == 0u ||
             !supported) {
             continue;
         }
 
-        if (mTextures[textureIndex] == 0u) {
+        const bool textureObjectCreated =
+            mTextures[textureIndex] == 0u;
+        if (textureObjectCreated) {
             glGenTextures(1, &mTextures[textureIndex]);
         }
         glActiveTexture(
@@ -1791,14 +1722,38 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
         glBindTexture(
             GL_TEXTURE_2D,
             mTextures[textureIndex]);
-        if (mTextureRevisions[textureIndex] != texture.revision) {
+        const bool textureStateChanged =
+            mTextureRevisions[textureIndex] != texture.revision;
+        const u64 invalidationRevision =
+            gxState.GetTextureInvalidationRevision();
+        const bool usesTlut =
+            texture.format == GX_TF_C4 ||
+            texture.format == GX_TF_C8 ||
+            texture.format == GX_TF_C14X2;
+        const TlutState* tlut =
+            usesTlut
+                ? &gxState.GetTlutState(texture.tlutName)
+                : nullptr;
+        const u64 tlutRevision =
+            tlut != nullptr ? tlut->revision : 0u;
+        const bool validateTexture =
+            Detail::ShouldValidateTexture(
+                textureObjectCreated,
+                usesTlut,
+                mTextureRevisions[textureIndex],
+                texture.revision,
+                mTextureInvalidationRevisions[textureIndex],
+                invalidationRevision,
+                mTextureTlutRevisions[textureIndex],
+                tlutRevision);
+        const bool uploadTexture =
+            validateTexture &&
+            !mTextureSnapshots[textureIndex].Matches(texture, tlut);
+        if (uploadTexture) {
             std::vector<u8> rgba;
             std::vector<u8> palette;
-            if (texture.format == GX_TF_C4 ||
-                texture.format == GX_TF_C8 ||
-                texture.format == GX_TF_C14X2) {
-                palette = DecodeTlut(
-                    gxState.GetTlutState(texture.tlutName));
+            if (usesTlut) {
+                palette = DecodeTlut(*tlut);
             }
             if (texture.format == GX_TF_RGBA8 ||
                 texture.format == GX_TF_Z24X8) {
@@ -1893,6 +1848,9 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
                 GL_RGBA,
                 GL_UNSIGNED_BYTE,
                 rgba.data());
+            mTextureSnapshots[textureIndex].Capture(texture, tlut);
+        }
+        if (textureObjectCreated || textureStateChanged) {
             glTexParameteri(
                 GL_TEXTURE_2D,
                 GL_TEXTURE_WRAP_S,
@@ -1913,8 +1871,14 @@ void GlRenderer::Draw(const std::vector<RenderVertex>& vertices, GXPrimitive pri
                 texture.magFilter == GX_LINEAR
                     ? GL_LINEAR
                     : GL_NEAREST);
+        }
+        if (validateTexture) {
             mTextureRevisions[textureIndex] =
                 texture.revision;
+            mTextureInvalidationRevisions[textureIndex] =
+                invalidationRevision;
+            mTextureTlutRevisions[textureIndex] =
+                tlutRevision;
         }
         useTextures[stageIndex] = 1;
     }

@@ -1,6 +1,9 @@
 #include <dolphin/types.h>
 
 #include <dolphin/os/OSError.h>
+#ifdef LIBPORPOISE_PORT
+#include <dolphin/os/OSHostMemory.h>
+#endif
 #include <dolphin/hw_regs.h>
 #include <dolphin/os.h>
 
@@ -15,20 +18,22 @@ static OSResetFunctionInfo ResetFunctionInfo = {
 };
 u32 OSGetPhysicalMemSize()
 {
-	#ifdef LIBPORPOISE_PORT
-	return 0x01800000;
-	#else
+#ifdef LIBPORPOISE_PORT
+	const OSHostMemoryLayout* layout = __OSHostMemoryGetLayout();
+	return layout != NULL ? layout->consoleSize : 0x01800000U;
+#else
 	return *(u32*)(OSPhysicalToCached(0x0028));
-	#endif
+#endif
 }
 
 u32 OSGetConsoleSimulatedMemSize()
 {
-	#ifdef LIBPORPOISE_PORT
-	return 0x1800000;
-	#else
+#ifdef LIBPORPOISE_PORT
+	const OSHostMemoryLayout* layout = __OSHostMemoryGetLayout();
+	return layout != NULL ? layout->consoleSize : 0x01800000U;
+#else
 	return *(u32*)(OSPhysicalToCached(0x00F0));
-	#endif
+#endif
 }
 
 static BOOL OnReset(BOOL final)

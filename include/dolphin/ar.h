@@ -14,6 +14,23 @@ typedef void (*ARCallback)(void);
 // ARQ callback function type.
 typedef void (*ARQCallback)(u32 ptrToRequest);
 
+#ifdef LIBPORPOISE_PORT
+/*
+ * Host DMA completion result. The SDK's ARStartDMA() remains source-compatible
+ * and discards this value; host callers that need reliable failure reporting
+ * can use ARStartDMAEx() or query ARGetLastDMAResult().
+ */
+typedef enum ARDMAResult {
+	AR_DMA_RESULT_SUCCESS                   = 0,
+	AR_DMA_RESULT_NOT_STARTED               = -1,
+	AR_DMA_RESULT_BUSY                      = -2,
+	AR_DMA_RESULT_INVALID_DIRECTION         = -3,
+	AR_DMA_RESULT_INVALID_ALIGNMENT         = -4,
+	AR_DMA_RESULT_INVALID_ARAM_RANGE        = -5,
+	AR_DMA_RESULT_INVALID_MAIN_MEMORY_RANGE = -6,
+} ARDMAResult;
+#endif
+
 struct ARQRequest {
 	ARQRequest* next;     // _00
 	u32 owner;            // _04
@@ -43,8 +60,16 @@ u32 ARQGetChunkSize(void);
 ARCallback ARRegisterDMACallback(ARCallback callback);
 u32 ARGetDMAStatus(void);
 void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length);
+#ifdef LIBPORPOISE_PORT
+ARDMAResult ARValidateDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length);
+ARDMAResult ARStartDMAEx(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length);
+ARDMAResult ARGetLastDMAResult(void);
+#endif
 u32 ARInit(u32* stack_index_addr, u32 num_entries);
 BOOL ARCheckInit(void);
+u32 ARAlloc(u32 length);
+u32 ARFree(u32* length);
+void ARReset(void);
 u32 ARGetBaseAddress();
 u32 ARGetSize(void);
 

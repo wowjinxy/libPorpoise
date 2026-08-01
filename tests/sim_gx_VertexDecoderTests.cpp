@@ -1,8 +1,10 @@
 #include "simulator/sim_gx_Geometry.hpp"
+#include "simulator/sim_gx_GlRenderer.hpp"
 #include "simulator/sim_gx_State.hpp"
 
 #include <array>
 #include <cmath>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -320,6 +322,89 @@ bool TestTexGenTypeDecode() {
     return state.GetTexCoordGenState(0).function == GX_TG_MTX3x4;
 }
 
+bool TestActiveTexGenCount() {
+    SIM::GX::GlobalState state;
+    if (state.GetNumTexGens() != 1u) {
+        return false;
+    }
+
+    SIM::GX::RenderVertex vertex;
+    vertex.texCoords[0] = {0.25f, 0.5f, 0.25f};
+    vertex.texCoords[1] = {0.75f, 0.875f, 0.5f};
+    std::vector<SIM::GX::RenderVertex> vertices = {vertex};
+    SIM::GX::ApplyTextureCoordinateGeneration(state, vertices);
+    if (!NearlyEqual(vertices[0].texCoords[0].s, 0.25f) ||
+        !NearlyEqual(vertices[0].texCoords[0].t, 0.5f) ||
+        !NearlyEqual(vertices[0].texCoords[0].q, 1.0f) ||
+        !NearlyEqual(vertices[0].texCoords[1].s, 0.75f) ||
+        !NearlyEqual(vertices[0].texCoords[1].t, 0.875f) ||
+        !NearlyEqual(vertices[0].texCoords[1].q, 0.5f)) {
+        return false;
+    }
+
+    // GENMODE bits 0..3 are the active texgen count. Once slot 1 becomes
+    // active its default generator consumes TEX0, while inactive slots above
+    // it remain untouched.
+    state.SetBpRegister(2u);
+    if (state.GetNumTexGens() != 2u) {
+        return false;
+    }
+    vertices = {vertex};
+    SIM::GX::ApplyTextureCoordinateGeneration(state, vertices);
+    if (!NearlyEqual(vertices[0].texCoords[1].s, 0.25f) ||
+        !NearlyEqual(vertices[0].texCoords[1].t, 0.5f) ||
+        !NearlyEqual(vertices[0].texCoords[1].q, 1.0f)) {
+        return false;
+    }
+
+    state.SetBpRegister(0u);
+    vertices = {vertex};
+    SIM::GX::ApplyTextureCoordinateGeneration(state, vertices);
+    if (state.GetNumTexGens() != 0u ||
+        !NearlyEqual(vertices[0].texCoords[0].q, 0.25f) ||
+        !NearlyEqual(vertices[0].texCoords[1].q, 0.5f)) {
+        return false;
+    }
+
+    state.SetBpRegister(0x0fu);
+    return state.GetNumTexGens() == 8u;
+}
+
+bool TestTexGenOriginalAndGeneratedSourcesRemainDistinct() {
+    SIM::GX::GlobalState state;
+    state.SetBpRegister(2u);
+
+    // Generator zero overwrites TEXCOORD0 from position. Generator one reads
+    // GX_TG_TEX0, which is the original vertex attribute rather than the
+    // result just written by generator zero.
+    const std::array<u32, 2> generators = {
+        0u,
+        5u << 7u,
+    };
+    state.SetXfData(
+        0x1040u,
+        reinterpret_cast<const u8*>(generators.data()),
+        generators.size());
+
+    SIM::GX::RenderVertex vertex;
+    vertex.position = {9.0f, 8.0f, 7.0f};
+    vertex.texCoords[0] = {0.25f, 0.5f, 0.75f};
+    vertex.texCoords[2] = {0.125f, 0.375f, 0.625f};
+    std::vector<SIM::GX::RenderVertex> vertices = {vertex};
+    SIM::GX::ApplyTextureCoordinateGeneration(state, vertices);
+
+    return
+        NearlyEqual(vertices[0].texCoords[0].s, 9.0f) &&
+        NearlyEqual(vertices[0].texCoords[0].t, 8.0f) &&
+        NearlyEqual(vertices[0].texCoords[0].q, 7.0f) &&
+        NearlyEqual(vertices[0].texCoords[1].s, 0.25f) &&
+        NearlyEqual(vertices[0].texCoords[1].t, 0.5f) &&
+        NearlyEqual(vertices[0].texCoords[1].q, 0.75f) &&
+        NearlyEqual(vertices[0].texCoords[2].s, 0.125f) &&
+        NearlyEqual(vertices[0].texCoords[2].t, 0.375f) &&
+        NearlyEqual(vertices[0].texCoords[2].q, 0.625f);
+}
+
 bool TestTevSwapState() {
     SIM::GX::GlobalState state;
 
@@ -367,6 +452,235 @@ bool TestZTextureState() {
         zTexture.bias == 0x00ff8000u;
 }
 
+bool TestTextureInvalidationState() {
+    SIM::GX::GlobalState state;
+    std::array<u8, 32> textureData = {};
+
+    SIM::GX::TextureState texture;
+    texture.data = textureData.data();
+    texture.width = 8;
+    texture.height = 8;
+    texture.format = GX_TF_I4;
+    state.LoadTexture(0, texture);
+    state.LoadTexture(3, texture);
+
+    const u64 firstRevision = state.GetTextureState(0).revision;
+    const u64 secondRevision = state.GetTextureState(3).revision;
+    const u64 firstInvalidation =
+        state.GetTextureInvalidationRevision();
+    if (firstRevision == 0 || secondRevision == 0 ||
+        state.GetTextureState(1).revision != 0) {
+        return false;
+    }
+
+    // Repeating an unchanged GXLoadTexObj descriptor is a cache hit, not a
+    // texture-content change.
+    state.LoadTexture(0, texture);
+    if (state.GetTextureState(0).revision != firstRevision) {
+        return false;
+    }
+
+    // GXInvalidateTexAll emits these BP commands. Texture source memory may
+    // have changed in place, so record a lazy global validation request while
+    // preserving descriptor revisions and untouched texture slots.
+    state.SetBpRegister(0x66001000u);
+    const u64 secondInvalidation =
+        state.GetTextureInvalidationRevision();
+    if (secondInvalidation <= firstInvalidation ||
+        state.GetTextureState(0).revision != firstRevision ||
+        state.GetTextureState(3).revision != secondRevision ||
+        state.GetTextureState(0).data != textureData.data() ||
+        state.GetTextureState(1).revision != 0) {
+        return false;
+    }
+
+    // The companion invalidate command and region-invalidate encodings must
+    // remain observable commands even though their BP payload differs.
+    state.SetBpRegister(0x66001100u);
+    return
+        state.GetTextureInvalidationRevision() > secondInvalidation &&
+        state.GetTextureState(0).revision == firstRevision &&
+        state.GetTextureState(3).revision == secondRevision;
+}
+
+bool TestTextureContentSnapshot() {
+    // Encoded GX textures include complete tiled blocks, including padding at
+    // non-block-aligned dimensions.
+    std::array<u8, 128> textureData = {};
+    std::array<u8, 32> tlutData = {};
+
+    SIM::GX::TextureState texture;
+    texture.data = textureData.data();
+    texture.width = 9;
+    texture.height = 9;
+    texture.format = static_cast<GXTexFmt>(GX_TF_C4);
+    if (SIM::GX::GetTextureSourceByteSize(texture) != 128u) {
+        return false;
+    }
+
+    // GX texture dimensions use 10-bit size-minus-one fields. Invalid host
+    // descriptors must be rejected before any source read or RGBA allocation.
+    SIM::GX::TextureState oversizedTexture = texture;
+    oversizedTexture.width = 1025u;
+    if (SIM::GX::GetTextureSourceByteSize(oversizedTexture) != 0u) {
+        return false;
+    }
+    SIM::GX::TextureContentSnapshot oversizedSnapshot;
+    oversizedSnapshot.Capture(oversizedTexture, nullptr);
+    if (oversizedSnapshot.Matches(oversizedTexture, nullptr)) {
+        return false;
+    }
+
+    SIM::GX::TlutState tlut;
+    tlut.data = tlutData.data();
+    tlut.format = GX_TL_RGB5A3;
+    tlut.entries = 16;
+
+    SIM::GX::TextureContentSnapshot snapshot;
+    if (snapshot.Matches(texture, &tlut)) {
+        return false;
+    }
+    snapshot.Capture(texture, &tlut);
+    if (!snapshot.Matches(texture, &tlut)) {
+        return false;
+    }
+
+    // Changes anywhere in the padded source tile or palette are observable.
+    textureData.back() = 1;
+    if (snapshot.Matches(texture, &tlut)) {
+        return false;
+    }
+    snapshot.Capture(texture, &tlut);
+    tlutData.back() = 1;
+    if (snapshot.Matches(texture, &tlut)) {
+        return false;
+    }
+
+    snapshot.Capture(texture, &tlut);
+    texture.wrapS = GX_REPEAT;
+    return snapshot.Matches(texture, &tlut);
+}
+
+bool TestTlutRevisionInvalidatesIndexedTexture() {
+    using SIM::GX::Detail::ShouldValidateTexture;
+
+    if (ShouldValidateTexture(
+            false, true, 7u, 7u, 11u, 11u, 13u, 13u)) {
+        return false;
+    }
+    if (!ShouldValidateTexture(
+            false, true, 7u, 7u, 11u, 11u, 13u, 14u)) {
+        return false;
+    }
+
+    // A TLUT update cannot affect a direct-color texture, while descriptor,
+    // explicit invalidation, and first-object changes remain observable.
+    return
+        !ShouldValidateTexture(
+            false, false, 7u, 7u, 11u, 11u, 13u, 14u) &&
+        ShouldValidateTexture(
+            false, false, 7u, 8u, 11u, 11u, 13u, 13u) &&
+        ShouldValidateTexture(
+            false, false, 7u, 7u, 11u, 12u, 13u, 13u) &&
+        ShouldValidateTexture(
+            true, false, 7u, 7u, 11u, 11u, 13u, 13u);
+}
+
+bool TestCanonicalBigEndianTlutDecode() {
+    // RGB5A3 opaque red is serialized as FC 00 in GameCube memory. Decode
+    // wire bytes explicitly instead of treating them as a host-native u16.
+    const std::array<u8, 2> opaqueRed = {0xfcu, 0x00u};
+    const SIM::GX::DecodedTlutColor decoded =
+        SIM::GX::DecodeTlutEntry(GX_TL_RGB5A3, opaqueRed.data());
+    if (decoded.red != 255u || decoded.green != 0u ||
+        decoded.blue != 0u || decoded.alpha != 255u) {
+        return false;
+    }
+
+    // Preserve a discriminator for the exact double-swap failure mode.
+    const std::array<u8, 2> swapped = {0x00u, 0xfcu};
+    const SIM::GX::DecodedTlutColor swappedDecoded =
+        SIM::GX::DecodeTlutEntry(GX_TL_RGB5A3, swapped.data());
+    return swappedDecoded.red != decoded.red ||
+           swappedDecoded.green != decoded.green ||
+           swappedDecoded.blue != decoded.blue ||
+           swappedDecoded.alpha != decoded.alpha;
+}
+
+bool TestShaderUniformLocationCache() {
+    SIM::GX::Detail::ShaderUniformLocationCache cache;
+    constexpr size_t locationCount =
+        SIM::GX::Detail::ShaderUniformLocationCache::LocationCount();
+    static_assert(locationCount == 35u);
+
+    size_t resolverCalls = 0;
+    std::string_view firstName;
+    std::string_view lastName;
+    const auto resolver = [&](unsigned int program, const char* name) {
+        if (resolverCalls % locationCount == 0u) {
+            firstName = name;
+        }
+        lastName = name;
+        ++resolverCalls;
+        return static_cast<int>(program * 100u + resolverCalls);
+    };
+
+    const auto& first = cache.Resolve(7u, resolver);
+    const int firstProjection =
+        first[SIM::GX::Detail::ShaderUniform::Projection];
+    if (resolverCalls != locationCount ||
+        firstName != "u_projection" ||
+        lastName != "u_ztexture_bias" ||
+        firstProjection != 701) {
+        return false;
+    }
+
+    const auto& unchanged = cache.Resolve(7u, resolver);
+    if (resolverCalls != locationCount ||
+        unchanged[SIM::GX::Detail::ShaderUniform::Projection] !=
+            firstProjection) {
+        return false;
+    }
+
+    const auto& changedProgram = cache.Resolve(8u, resolver);
+    if (resolverCalls != locationCount * 2u ||
+        changedProgram[SIM::GX::Detail::ShaderUniform::Projection] != 836) {
+        return false;
+    }
+
+    cache.Invalidate();
+    cache.Resolve(8u, resolver);
+    return resolverCalls == locationCount * 3u;
+}
+
+bool TestDecodeRebuildsReusableOutput() {
+    SIM::GX::GlobalState state;
+    state.SetVertexDescriptor(GX_VA_POS, GX_DIRECT);
+    state.SetVertexFormatComponents(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ);
+    state.SetVertexFormatDataType(GX_VTXFMT0, GX_VA_POS, GX_U8);
+    state.SetVertexFormatFraction(GX_VTXFMT0, GX_VA_POS, 0);
+
+    std::vector<SIM::GX::RenderVertex> output(4);
+    const std::array<u8, 6> firstStream = {1, 2, 3, 4, 5, 6};
+    if (!SIM::GX::DecodeVertexStream(
+            state, firstStream, true, output) ||
+        output.size() != 2u ||
+        !NearlyEqual(output[1].position.x, 4.0f)) {
+        return false;
+    }
+
+    // Model the renderer mutating the decoded buffer, then verify the next
+    // primitive replaces both its contents and its previous vertex count.
+    output[0].position.x = 999.0f;
+    const std::array<u8, 3> secondStream = {7, 8, 9};
+    return
+        SIM::GX::DecodeVertexStream(state, secondStream, true, output) &&
+        output.size() == 1u &&
+        NearlyEqual(output[0].position.x, 7.0f) &&
+        NearlyEqual(output[0].position.y, 8.0f) &&
+        NearlyEqual(output[0].position.z, 9.0f);
+}
+
 }
 
 int main() {
@@ -402,6 +716,30 @@ int main() {
     }
     if (!TestZTextureState()) {
         return 11;
+    }
+    if (!TestTextureInvalidationState()) {
+        return 12;
+    }
+    if (!TestTextureContentSnapshot()) {
+        return 13;
+    }
+    if (!TestActiveTexGenCount()) {
+        return 14;
+    }
+    if (!TestShaderUniformLocationCache()) {
+        return 15;
+    }
+    if (!TestDecodeRebuildsReusableOutput()) {
+        return 16;
+    }
+    if (!TestCanonicalBigEndianTlutDecode()) {
+        return 17;
+    }
+    if (!TestTlutRevisionInvalidatesIndexedTexture()) {
+        return 18;
+    }
+    if (!TestTexGenOriginalAndGeneratedSourcesRemainDistinct()) {
+        return 19;
     }
     return 0;
 }

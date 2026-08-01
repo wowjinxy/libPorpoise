@@ -17,8 +17,10 @@ int main() {
         layout->cachedBase != reinterpret_cast<void*>(0x80000000ULL) ||
         layout->uncachedBase != reinterpret_cast<void*>(0xC0000000ULL) ||
         layout->size != 0x01800000U ||
+        layout->consoleSize != 0x01800000U ||
         layout->arenaLo != reinterpret_cast<void*>(0x80004000ULL) ||
-        layout->arenaHi != reinterpret_cast<void*>(0x817FFA80ULL)) {
+        layout->arenaHi != reinterpret_cast<void*>(0x817FFA80ULL) ||
+        layout->consoleArenaHi != reinterpret_cast<void*>(0x817FFA80ULL)) {
         return 1;
     }
     if (__OSHostMemoryGetLayout() != layout ||
@@ -49,6 +51,8 @@ int main() {
     const auto* bootInfo =
         reinterpret_cast<const OSBootInfo*>(0x80000000ULL);
     return bootInfo->memorySize == 0x01800000U &&
+                   OSGetPhysicalMemSize() == 0x01800000U &&
+                   OSGetConsoleSimulatedMemSize() == 0x01800000U &&
                    bootInfo->arenaLo == layout->arenaLo &&
                    bootInfo->arenaHi == layout->arenaHi &&
                    OSGetArenaLo() == layout->arenaLo &&

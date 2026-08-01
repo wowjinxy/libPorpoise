@@ -6,6 +6,9 @@
 
 BEGIN_SCOPE_EXTERN_C
 
+u32 OSGetPhysicalMemSize(void);
+u32 OSGetConsoleSimulatedMemSize(void);
+
 ////////// PROTECT INFO //////////
 // Protect function.
 void OSProtectRange(u32 channel, void* addr, u32 numBytes, u32 control);

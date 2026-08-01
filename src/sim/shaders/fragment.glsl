@@ -86,7 +86,8 @@ vec4 sampleStageTexture(int stage, vec3 coordinate)
 vec4 rasterColor(int channel)
 {
     if (channel == 1) return color1;
-    if (channel == 7) return vec4(1.0);
+    // RAS1_CC_Z is emitted for both GX_COLOR_ZERO and GX_COLOR_NULL.
+    if (channel == 7) return vec4(0.0);
     return color0;
 }
 

@@ -132,10 +132,21 @@ struct TextureState {
 };
 
 struct TlutState {
+    enum class SourceEncoding {
+        CanonicalBigEndian,
+        NativeU16,
+    };
+
     const void* data = nullptr;
     GXTlutFmt format = GX_TL_IA8;
     u16 entries = 0;
     u64 revision = 0;
+    SourceEncoding sourceEncoding = SourceEncoding::CanonicalBigEndian;
+    std::vector<u8> canonicalBytes;
+
+    const void* CanonicalData() const {
+        return canonicalBytes.empty() ? data : canonicalBytes.data();
+    }
 };
 
 struct TexCoordGenState {
@@ -226,6 +237,7 @@ class GlobalState {
   const LightState& GetLightState(size_t index) const;
   const TextureState& GetTextureState(size_t index) const;
   const TlutState& GetTlutState(size_t index) const;
+  u64 GetTextureInvalidationRevision() const;
   const TexCoordGenState& GetTexCoordGenState(size_t index) const;
   const std::array<float, 16>& GetTexCoordGenMatrix(size_t index) const;
   const std::array<float, 16>& GetTexCoordGenPostMatrix(size_t index) const;
@@ -234,6 +246,8 @@ class GlobalState {
   const std::array<float, 4>& GetTevColor(size_t index) const;
   std::array<float, 4> GetTevKonstColor(size_t stage) const;
   float GetTevKonstAlpha(size_t stage) const;
+  size_t GetNumColorChannels() const;
+  size_t GetNumTexGens() const;
   size_t GetNumTevStages() const;
   const std::array<float, 4>& GetCopyClearColor() const;
   float GetCopyClearDepth() const;
@@ -241,7 +255,7 @@ class GlobalState {
   bool ConsumeCopyClearRequest();
 
   void Reset();
-  void SetBpRegister(u32 registerValue);
+  u32 SetBpRegister(u32 registerValue);
   void SetCurrentPrimitive(GXPrimitive primitive);
   void SetCurrentPositionMatrix(u32 matrixId);
   void SetCurrentVertexFormat(GXVtxFmt format);
@@ -311,8 +325,13 @@ class GlobalState {
   std::array<std::array<u8, 4>, 4> mTevSwapTables = {};
   std::array<std::array<float, 4>, 4> mTevColors = {};
   std::array<std::array<float, 4>, 4> mTevKonstColors = {};
+  std::array<u32, 0x100> mBpRegisters = {};
+  u32 mBpWriteMask = 0x00ffffffu;
+  size_t mNumColorChannels = 0;
+  size_t mNumTexGens = 1;
   size_t mNumTevStages = 1;
   u64 mTextureRevision = 0;
+  u64 mTextureInvalidationRevision = 0;
   std::array<float, 4> mCopyClearColor = {};
   float mCopyClearDepth = 1.0f;
   bool mCopyClearRequested = false;

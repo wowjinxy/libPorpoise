@@ -14,6 +14,10 @@
 #include <stddef.h>
 #include <string.h>
 
+#if defined(LIBPORPOISE_PORT) && !defined(LIBPORPOISE_HOST_MEMORY_PROFILE)
+#define LIBPORPOISE_HOST_MEMORY_PROFILE OS_HOST_MEMORY_PROFILE_GAMECUBE
+#endif
+
 // memory locations for important stuff
 #define OS_DBINTERFACE_ADDR     0x40
 #define OS_BI2_DEBUG_ADDRESS    0x800000F4
@@ -170,8 +174,11 @@ void OSInit(void)
 
 		// SYSTEM //
 #ifdef LIBPORPOISE_PORT
-		hostMemory = __OSHostMemoryInit(
-		    OS_HOST_MEMORY_PROFILE_GAMECUBE);
+		hostMemory = __OSHostMemoryGetLayout();
+		if (hostMemory == NULL) {
+			hostMemory = __OSHostMemoryInit(
+			    LIBPORPOISE_HOST_MEMORY_PROFILE);
+		}
 #endif
 #if OS_BUILD_VERSION >= 20011002L
 		__OSStartTime = __OSGetSystemTime();
@@ -187,7 +194,7 @@ void OSInit(void)
 		#ifdef LIBPORPOISE_PORT
 		BootInfo = (OSBootInfo*)hostMemory->cachedBase;
 		memset(BootInfo, 0, sizeof(OSBootInfo));
-		BootInfo->memorySize = hostMemory->size;
+		BootInfo->memorySize = hostMemory->consoleSize;
 		BootInfo->arenaLo = hostMemory->arenaLo;
 		BootInfo->arenaHi = hostMemory->arenaHi;
 		#endif

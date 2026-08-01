@@ -28,6 +28,23 @@ void __OSHostRegisterAlarmThread(void)
 	OSRestoreInterrupts(enabled);
 }
 
+BOOL __OSHostTransferAlarmThread(SDL_threadID expectedOwner)
+{
+	BOOL enabled = OSDisableInterrupts();
+	BOOL transferred = FALSE;
+	SDL_threadID currentThread = SDL_ThreadID();
+
+	if (HostAlarmThread == expectedOwner) {
+		if (HostAlarmThread != currentThread) {
+			HostAlarmThread = currentThread;
+			__OSHostClearAlarmWaitQueue();
+		}
+		transferred = TRUE;
+	}
+	OSRestoreInterrupts(enabled);
+	return transferred;
+}
+
 BOOL __OSHostIsAlarmThread(void)
 {
 	BOOL enabled = OSDisableInterrupts();

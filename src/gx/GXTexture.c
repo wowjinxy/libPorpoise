@@ -20,6 +20,7 @@ typedef struct GXHostTexImageDataEntry {
 typedef struct GXHostTlutDataEntry {
 	const GXTlutObj* object;
 	void* data;
+	GXBool nativeU16;
 } GXHostTlutDataEntry;
 
 static GXHostTexUserDataEntry gxHostTexUserData[GX_HOST_TEX_USER_DATA_SLOTS];
@@ -114,7 +115,8 @@ static void* GXHostGetTexImageData(const GXTexObj* object)
 	return NULL;
 }
 
-static void GXHostSetTlutData(const GXTlutObj* object, void* data)
+static void GXHostSetTlutData(
+	const GXTlutObj* object, void* data, GXBool nativeU16)
 {
 	s32 firstFree = -1;
 	u32 i;
@@ -125,6 +127,7 @@ static void GXHostSetTlutData(const GXTlutObj* object, void* data)
 				gxHostTlutData[i].object = NULL;
 			}
 			gxHostTlutData[i].data = data;
+			gxHostTlutData[i].nativeU16 = nativeU16;
 			return;
 		}
 		if (firstFree < 0 && gxHostTlutData[i].object == NULL) {
@@ -138,12 +141,14 @@ static void GXHostSetTlutData(const GXTlutObj* object, void* data)
 	if (firstFree >= 0) {
 		gxHostTlutData[firstFree].object = object;
 		gxHostTlutData[firstFree].data = data;
+		gxHostTlutData[firstFree].nativeU16 = nativeU16;
 		return;
 	}
 
 	i = (u32)(((uintptr_t)object >> 2) % GX_HOST_TEX_USER_DATA_SLOTS);
 	gxHostTlutData[i].object = object;
 	gxHostTlutData[i].data = data;
+	gxHostTlutData[i].nativeU16 = nativeU16;
 }
 
 static void* GXHostGetTlutData(const GXTlutObj* object)
@@ -156,6 +161,18 @@ static void* GXHostGetTlutData(const GXTlutObj* object)
 		}
 	}
 	return NULL;
+}
+
+static GXBool GXHostTlutUsesNativeU16(const GXTlutObj* object)
+{
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTlutData[i].object == object) {
+			return gxHostTlutData[i].nativeU16;
+		}
+	}
+	return GX_FALSE;
 }
 #endif
 
@@ -997,7 +1014,7 @@ void GXInitTlutObj(GXTlutObj* tlut_obj, void* lut, GXTlutFmt fmt, u16 n_entries)
 	OSAssertMsgLine(0x456, n_entries <= 0x4000, "%s: number of entries exceeds maximum", "GXInitTlutObj");
 	OSAssertMsgLine(0x458, ((u32)lut & 0x1F) == 0, "%s: %s pointer not aligned to 32B", "GXInitTlutObj", "Tlut");
 #ifdef LIBPORPOISE_PORT
-	GXHostSetTlutData(tlut_obj, lut);
+	GXHostSetTlutData(tlut_obj, lut, GX_FALSE);
 #endif
 	t->tlut = 0;
 	SET_REG_FIELD(0x45B, t->tlut, 2, 10, fmt);
@@ -1005,6 +1022,27 @@ void GXInitTlutObj(GXTlutObj* tlut_obj, void* lut, GXTlutFmt fmt, u16 n_entries)
 	SET_REG_FIELD(0x45D, t->loadTlut0, 8, 24, 0x64);
 	t->numEntries = n_entries;
 }
+
+#ifdef LIBPORPOISE_PORT
+void GXInitTlutObjHostNativeU16(
+	GXTlutObj* tlut_obj, u16* lut, GXTlutFmt fmt, u16 n_entries)
+{
+	GXTlutObjPriv* t = (GXTlutObjPriv*)tlut_obj;
+
+	OSAssertMsgLine(0x452, tlut_obj, "TLut Object Pointer is null");
+	CHECK_GXBEGIN(0x453, "GXInitTlutObjHostNativeU16");
+	OSAssertMsgLine(0x456, n_entries <= 0x4000, "%s: number of entries exceeds maximum", "GXInitTlutObjHostNativeU16");
+	/* Unlike a hardware DMA source, native host scalars do not require 32-byte
+	 * alignment because GXLoadTlut snapshots and canonicalizes them in host
+	 * memory before the renderer observes the TLUT. */
+	GXHostSetTlutData(tlut_obj, lut, GX_TRUE);
+	t->tlut = 0;
+	SET_REG_FIELD(0x45B, t->tlut, 2, 10, fmt);
+	SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, ((u32)lut & 0x3FFFFFFF) >> 5);
+	SET_REG_FIELD(0x45D, t->loadTlut0, 8, 24, 0x64);
+	t->numEntries = n_entries;
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -1087,11 +1125,19 @@ void GXLoadTlut(GXTlutObj* tlut_obj, u32 tlut_name)
 	SET_REG_FIELD(0x4B9, t->tlut, 10, 0, tlut_offset);
 	r->tlutObj = *t;
 #ifdef LIBPORPOISE_PORT
-	SIM_GX_CommandProcessor_LoadTlut(
-	    tlut_name,
-	    GXHostGetTlutData(tlut_obj),
-	    GET_REG_FIELD(t->tlut, 2, 10),
-	    t->numEntries);
+	if (GXHostTlutUsesNativeU16(tlut_obj)) {
+		SIM_GX_CommandProcessor_LoadTlutNativeU16(
+		    tlut_name,
+		    (const u16*)GXHostGetTlutData(tlut_obj),
+		    GET_REG_FIELD(t->tlut, 2, 10),
+		    t->numEntries);
+	} else {
+		SIM_GX_CommandProcessor_LoadTlut(
+		    tlut_name,
+		    GXHostGetTlutData(tlut_obj),
+		    GET_REG_FIELD(t->tlut, 2, 10),
+		    t->numEntries);
+	}
 #endif
 }
 

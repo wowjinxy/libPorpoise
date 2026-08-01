@@ -95,6 +95,45 @@ s32 CARDFastDelete(s32 channel, s32 fileNo)
  */
 s32 CARDDeleteAsync(s32 chan, const char* fileName, CARDCallback callback)
 {
-	TRAP_UNIMPLEMENTED;
+	CARDControl* card;
+	s32 fileNo;
+	s32 result;
+	CARDDirectoryBlock* dir;
+	CARDDir* ent;
+
+	result = __CARDGetControlBlock(chan, &card);
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
+
+	result = __CARDGetFileNo(card, fileName, &fileNo);
+	if (result < CARD_RESULT_READY) {
+		return __CARDPutControlBlock(card, result);
+	}
+	if (__CARDIsOpened(card, fileNo)) {
+		return __CARDPutControlBlock(card, CARD_RESULT_BUSY);
+	}
+
+	dir = __CARDGetDirBlock(card);
+	ent = &dir->entries[fileNo];
+	card->startBlock = ent->startBlock;
+	memset(ent, 0xff, sizeof(CARDDir));
+
+	card->apiCallback = callback ? callback : __CARDDefaultApiCallback;
+	result = __CARDUpdateDir(chan, DeleteCallback);
+	if (result < CARD_RESULT_READY) {
+		__CARDPutControlBlock(card, result);
+	}
+	return result;
+}
+
+s32 CARDDelete(s32 chan, const char* fileName)
+{
+	s32 result = CARDDeleteAsync(chan, fileName, __CARDSyncCallback);
+
+	if (result < CARD_RESULT_READY) {
+		return result;
+	}
+	return __CARDSync(chan);
 }
 

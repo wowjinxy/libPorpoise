@@ -28,6 +28,8 @@ void SIM_GX_CommandProcessor_SetVertexArrayU32(
     GXAttr attr, void * ptr, int stride);
 void SIM_GX_CommandProcessor_LoadTlut(
     u32 id, const void* data, u32 format, u16 entries);
+void SIM_GX_CommandProcessor_LoadTlutNativeU16(
+    u32 id, const u16* data, u32 format, u16 entries);
 void SIM_GX_CommandProcessor_LoadTexture(
     u32 id, const void* data, u16 width, u16 height, u32 format,
     u32 wrap_s, u32 wrap_t, u32 min_filter, u32 mag_filter,

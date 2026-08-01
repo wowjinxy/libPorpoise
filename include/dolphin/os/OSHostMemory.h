@@ -16,21 +16,32 @@ BEGIN_SCOPE_EXTERN_C
  * without changing callers of this interface.
  */
 typedef enum OSHostMemoryProfile {
-	OS_HOST_MEMORY_PROFILE_GAMECUBE = 0
+	OS_HOST_MEMORY_PROFILE_GAMECUBE = 0,
+	/*
+	 * Preserves the GameCube address model while providing additional host
+	 * arena space for native structures whose pointers are wider than on
+	 * the console.
+	 */
+	OS_HOST_MEMORY_PROFILE_GAMECUBE_EXTENDED = 1
 } OSHostMemoryProfile;
 
 typedef struct OSHostMemoryLayout {
 	OSHostMemoryProfile profile;
 	void* cachedBase;
 	void* uncachedBase;
+	/* Size of the host mapping; may exceed console-visible memory. */
 	u32 size;
+	/* Physical/simulated size reported to console software. */
+	u32 consoleSize;
 	void* arenaLo;
 	void* arenaHi;
+	void* consoleArenaHi;
 } OSHostMemoryLayout;
 
 const OSHostMemoryLayout* __OSHostMemoryInit(
 	OSHostMemoryProfile profile);
 const OSHostMemoryLayout* __OSHostMemoryGetLayout(void);
+void* __OSHostMemoryResolveArenaHi(void* previous, void* requested);
 
 #endif
 

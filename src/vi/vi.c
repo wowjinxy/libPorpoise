@@ -6,20 +6,51 @@
 #include <stddef.h>
 #ifdef LIBPORPOISE_PORT
 #include <simulator/sim.h>
+#include <SDL2/SDL_mutex.h>
 #include <SDL2/SDL_thread.h>
+#include <SDL2/SDL_timer.h>
 
 extern void __GXHostServiceFifoBreakpoint(void);
 #if defined(__GNUC__)
 extern void __GXHostApplyCopyClear(void) __attribute__((weak));
+extern BOOL SIM_HostReleaseRenderContext(void) __attribute__((weak));
+extern BOOL SIM_HostAcquireRenderContext(void) __attribute__((weak));
 #else
 extern void __GXHostApplyCopyClear(void);
 #endif
 
+#define HOST_RENDER_HANDOFF_TIMEOUT_MS 5000U
+
+typedef enum VIHostRenderHandoffState {
+	VI_HOST_RENDER_HANDOFF_IDLE,
+	VI_HOST_RENDER_HANDOFF_REQUESTED,
+	VI_HOST_RENDER_HANDOFF_RELEASED,
+	VI_HOST_RENDER_HANDOFF_RELEASE_FAILED,
+	VI_HOST_RENDER_HANDOFF_ROLLBACK_REQUESTED,
+	VI_HOST_RENDER_HANDOFF_ROLLED_BACK,
+	VI_HOST_RENDER_HANDOFF_TRANSFERRED,
+	VI_HOST_RENDER_HANDOFF_RETURN_PENDING,
+	VI_HOST_RENDER_HANDOFF_FATAL,
+} VIHostRenderHandoffState;
+
 static BOOL hostRetraceInProgress;
 static BOOL hostCopyRetracePendingWait;
+static BOOL hostDisplayCopyPending;
 static BOOL hostTextureCopyAwaitingDraw;
 static BOOL hostRetraceRuntimeInitialized;
 static SDL_threadID hostRetraceOwnerThread;
+static SDL_threadID hostRetracePreviousOwnerThread;
+static SDL_threadID hostReturnedAlarmOwnerThread;
+static SDL_threadID hostRenderHandoffRequester;
+static SDL_mutex* hostRenderHandoffMutex;
+static SDL_cond* hostRenderHandoffCondition;
+static OSAlarm hostRenderHandoffAlarm;
+static VIHostRenderHandoffState hostRenderHandoffState;
+static Uint64 hostRetraceDeadline;
+static Uint64 hostRetraceRemainder;
+static Uint64 hostRetraceFrequency;
+static u32 hostRetraceRateNumerator;
+static u32 hostRetraceRateDenominator;
 #endif
 
 // Useful macros.
@@ -465,16 +496,726 @@ static void ImportAdjustingValues(void)
 }
 
 #ifdef LIBPORPOISE_PORT
+static BOOL __VIHostReleaseSimulatorContext(void)
+{
+#if defined(__GNUC__)
+	if (SIM_HostReleaseRenderContext == NULL) {
+		return TRUE;
+	}
+#endif
+	return SIM_HostReleaseRenderContext();
+}
+
+static BOOL __VIHostAcquireSimulatorContext(void)
+{
+#if defined(__GNUC__)
+	if (SIM_HostAcquireRenderContext == NULL) {
+		return TRUE;
+	}
+#endif
+	return SIM_HostAcquireRenderContext();
+}
+
+static void __VIHostWakeRetraceWaiters(void)
+{
+	/*
+	 * Do not take the global scheduler lock here. The previous owner may be
+	 * inside a handoff callback while still holding retraceQueue.hostMutex;
+	 * locking scheduler then queue would invert its queue -> scheduler wake
+	 * path. Taking only the queue mutex also closes the signal-before-sleep
+	 * race because SDL_CondWait releases that same mutex atomically.
+	 */
+	SDL_LockMutex(retraceQueue.hostMutex);
+	SDL_CondBroadcast(retraceQueue.hostCondition);
+	SDL_UnlockMutex(retraceQueue.hostMutex);
+}
+
+/*
+ * Context changes are only committed while the old render thread is parked
+ * in a host wait, or after its current retrace has fully presented. This keeps
+ * an alarm serviced from inside a retrace from detaching GL before SIM_Render.
+ */
+static void __VIHostRenderContextAlarm(OSAlarm* alarm, OSContext* context);
+static void __VIHostRenderOwnerThreadWillExit(SDL_threadID exitingThread);
+static void __VIHostWaitForHandoffState(
+	VIHostRenderHandoffState pendingState,
+	Uint64 deadline);
+
+static BOOL __VIHostCurrentThreadOwnsReadyContext(void)
+{
+	SDL_threadID currentThread = SDL_ThreadID();
+	BOOL acquired = TRUE;
+	BOOL alarmTransferred = TRUE;
+	BOOL enabled;
+	BOOL isRenderThread;
+	BOOL reportAlarmFailure = FALSE;
+	BOOL reportFailure = FALSE;
+
+	enabled = OSDisableInterrupts();
+	SDL_LockMutex(hostRenderHandoffMutex);
+	if (currentThread == hostRetraceOwnerThread &&
+	    hostRenderHandoffState ==
+	        VI_HOST_RENDER_HANDOFF_RETURN_PENDING) {
+		/*
+		 * The exiting owner detached GL on its own thread. Only the returned
+		 * owner may attach it again, so defer that half of the handback until
+		 * this thread next reaches a VI/GX ownership boundary.
+		 */
+		acquired = __VIHostAcquireSimulatorContext();
+		if (acquired) {
+			alarmTransferred = __OSHostTransferAlarmThread(
+				hostReturnedAlarmOwnerThread);
+		}
+		hostRenderHandoffState =
+			acquired && alarmTransferred
+			    ? VI_HOST_RENDER_HANDOFF_IDLE
+			    : VI_HOST_RENDER_HANDOFF_FATAL;
+		if (acquired && alarmTransferred) {
+			hostReturnedAlarmOwnerThread = 0;
+		}
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		reportFailure = !acquired;
+		reportAlarmFailure = acquired && !alarmTransferred;
+	}
+	isRenderThread =
+		acquired && alarmTransferred &&
+		hostRenderHandoffState == VI_HOST_RENDER_HANDOFF_IDLE &&
+		currentThread == hostRetraceOwnerThread;
+	SDL_UnlockMutex(hostRenderHandoffMutex);
+	OSRestoreInterrupts(enabled);
+
+	if (reportFailure) {
+		OSReport("libPorpoise VI: the returned render owner could not "
+		         "reacquire its context.\n");
+	} else if (reportAlarmFailure) {
+		OSReport("libPorpoise VI: the returned render owner could not "
+		         "reacquire alarm dispatch.\n");
+	}
+	return isRenderThread;
+}
+
+static void __VIHostGetRetraceRate(u32* numerator, u32* denominator)
+{
+	/* PAL and DEBUG_PAL scan at 50 fields per second. The remaining
+	 * GameCube modes use the NTSC-family 60000/1001 field cadence. */
+	if (HorVer.tv == VI_PAL || HorVer.tv == VI_DEBUG_PAL) {
+		*numerator = 50u;
+		*denominator = 1u;
+	} else {
+		*numerator = 60000u;
+		*denominator = 1001u;
+	}
+}
+
+static void __VIHostResetRetracePacing(void)
+{
+	hostRetraceDeadline = 0u;
+	hostRetraceRemainder = 0u;
+	hostRetraceFrequency = 0u;
+	hostRetraceRateNumerator = 0u;
+	hostRetraceRateDenominator = 0u;
+}
+
+static void __VIHostPaceRetrace(void)
+{
+	Uint64 frequency;
+	Uint64 now;
+	Uint64 scaledPeriod;
+	Uint64 period;
+	Uint64 target;
+	u32 rateNumerator;
+	u32 rateDenominator;
+
+	frequency = SDL_GetPerformanceFrequency();
+	if (frequency == 0u) {
+		return;
+	}
+	__VIHostGetRetraceRate(&rateNumerator, &rateDenominator);
+	now = SDL_GetPerformanceCounter();
+
+	/* The first host retrace, a timer source change, or a TV-mode change
+	 * establishes a phase without adding an artificial startup frame. */
+	if (hostRetraceDeadline == 0u ||
+	    hostRetraceFrequency != frequency ||
+	    hostRetraceRateNumerator != rateNumerator ||
+	    hostRetraceRateDenominator != rateDenominator) {
+		hostRetraceDeadline = now;
+		hostRetraceRemainder = 0u;
+		hostRetraceFrequency = frequency;
+		hostRetraceRateNumerator = rateNumerator;
+		hostRetraceRateDenominator = rateDenominator;
+		return;
+	}
+
+	/* Carry the fractional performance-counter tick so the long-term rate is
+	 * 60000/1001 rather than a rounded integer approximation. */
+	scaledPeriod = frequency * (Uint64)rateDenominator;
+	period = scaledPeriod / (Uint64)rateNumerator;
+	hostRetraceRemainder += scaledPeriod % (Uint64)rateNumerator;
+	if (hostRetraceRemainder >= (Uint64)rateNumerator) {
+		period++;
+		hostRetraceRemainder -= (Uint64)rateNumerator;
+	}
+	if (period == 0u) {
+		period = 1u;
+	}
+	target = hostRetraceDeadline + period;
+	if (target < hostRetraceDeadline) {
+		hostRetraceDeadline = now;
+		hostRetraceRemainder = 0u;
+		return;
+	}
+
+	if (now < target) {
+		const Uint64 remaining = target - now;
+		Uint64 delayMs =
+			(remaining * 1000u + frequency - 1u) / frequency;
+
+		/* Use one rounded-up wait. Splitting off a final SDL_Delay(1) can
+		 * consume a second scheduler quantum on Windows and turn 60 Hz into
+		 * roughly 30 Hz. SDL_Delay waits at least the requested duration. */
+		if (delayMs > 0xffffffffu) {
+			delayMs = 0xffffffffu;
+		}
+		SDL_Delay((Uint32)delayMs);
+		now = SDL_GetPerformanceCounter();
+	}
+
+	/* Preserve the hardware phase after ordinary timer overshoot. If work is
+	 * a complete retrace late, retain at most one interval of timing credit.
+	 * This lets one fast frame follow a slow frame without reducing an already
+	 * sub-60 workload, while the following deadline restores the ceiling and
+	 * prevents an unbounded catch-up burst after a long stall. */
+	if (now - target >= period) {
+		hostRetraceDeadline = now >= period ? now - period : now;
+		hostRetraceRemainder = 0u;
+	} else {
+		hostRetraceDeadline = target;
+	}
+}
+
+static void __VIHostServiceRenderContextRequest(BOOL renderSafePoint)
+{
+	Uint64 deadline;
+	BOOL enabled;
+	BOOL contextReady;
+
+	enabled = OSDisableInterrupts();
+	SDL_LockMutex(hostRenderHandoffMutex);
+	if (SDL_ThreadID() != hostRetraceOwnerThread ||
+	    hostRetraceInProgress) {
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		OSRestoreInterrupts(enabled);
+		return;
+	}
+
+	if (hostRenderHandoffState == VI_HOST_RENDER_HANDOFF_REQUESTED) {
+		if (!renderSafePoint &&
+		    !__OSHostIsBlockingWaitSafePoint()) {
+			/* Retry later; a direct OSCheckAlarmQueue is not a GL boundary. */
+			OSSetAlarm(
+			    &hostRenderHandoffAlarm,
+			    OSMillisecondsToTicks(1),
+			    __VIHostRenderContextAlarm);
+			SDL_UnlockMutex(hostRenderHandoffMutex);
+			OSRestoreInterrupts(enabled);
+			return;
+		}
+		/* The request may have arrived after this retrace's alarm check. */
+		OSCancelAlarm(&hostRenderHandoffAlarm);
+		contextReady = __VIHostReleaseSimulatorContext();
+		hostRenderHandoffState =
+		    contextReady
+		        ? VI_HOST_RENDER_HANDOFF_RELEASED
+		        : VI_HOST_RENDER_HANDOFF_RELEASE_FAILED;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		if (contextReady) {
+			/*
+			 * Do not let the former owner leave this boundary between GL
+			 * release and either a committed transfer or a completed rollback.
+			 */
+			deadline =
+			    SDL_GetTicks64() + HOST_RENDER_HANDOFF_TIMEOUT_MS;
+			__VIHostWaitForHandoffState(
+			    VI_HOST_RENDER_HANDOFF_RELEASED,
+			    deadline);
+		}
+	}
+
+	if (hostRenderHandoffState ==
+	    VI_HOST_RENDER_HANDOFF_ROLLBACK_REQUESTED) {
+		OSCancelAlarm(&hostRenderHandoffAlarm);
+		contextReady = __VIHostAcquireSimulatorContext();
+		hostRenderHandoffState =
+		    contextReady
+		        ? VI_HOST_RENDER_HANDOFF_ROLLED_BACK
+		        : VI_HOST_RENDER_HANDOFF_FATAL;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		if (contextReady) {
+			deadline =
+			    SDL_GetTicks64() + HOST_RENDER_HANDOFF_TIMEOUT_MS;
+			__VIHostWaitForHandoffState(
+			    VI_HOST_RENDER_HANDOFF_ROLLED_BACK,
+			    deadline);
+		}
+	}
+
+	if (hostRenderHandoffState == VI_HOST_RENDER_HANDOFF_RELEASED) {
+		/* The requester vanished after release; restore a usable owner. */
+		contextReady = __VIHostAcquireSimulatorContext();
+		hostRenderHandoffState =
+		    contextReady
+		        ? VI_HOST_RENDER_HANDOFF_IDLE
+		        : VI_HOST_RENDER_HANDOFF_FATAL;
+		hostRenderHandoffRequester = 0;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+	} else if (hostRenderHandoffState ==
+	           VI_HOST_RENDER_HANDOFF_ROLLED_BACK) {
+		/* The requester vanished after rollback; the old owner is usable. */
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_IDLE;
+		hostRenderHandoffRequester = 0;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+	} else if (hostRenderHandoffState ==
+	           VI_HOST_RENDER_HANDOFF_TRANSFERRED) {
+		/*
+		 * Acknowledge that the old owner has left its release boundary. The
+		 * new owner must not enter VI while an outer OS wait still holds a
+		 * queue mutex that the retrace path needs.
+		 */
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_IDLE;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+	}
+	SDL_UnlockMutex(hostRenderHandoffMutex);
+	OSRestoreInterrupts(enabled);
+}
+
+static void __VIHostRenderOwnerThreadWillExit(
+	SDL_threadID exitingThread)
+{
+	SDL_threadID previousOwner;
+	BOOL contextReleased;
+	BOOL enabled;
+
+	if (!hostRetraceRuntimeInitialized ||
+	    hostRenderHandoffMutex == NULL) {
+		return;
+	}
+
+	/*
+	 * If an adoption raced the owner's natural return, the return itself is a
+	 * safe GL boundary. Let the normal transactional handoff finish first.
+	 */
+	enabled = OSDisableInterrupts();
+	SDL_LockMutex(hostRenderHandoffMutex);
+	previousOwner = hostRetracePreviousOwnerThread;
+	if (exitingThread == hostRetraceOwnerThread &&
+	    hostRenderHandoffState == VI_HOST_RENDER_HANDOFF_REQUESTED) {
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		OSRestoreInterrupts(enabled);
+		__VIHostServiceRenderContextRequest(TRUE);
+
+		enabled = OSDisableInterrupts();
+		SDL_LockMutex(hostRenderHandoffMutex);
+		if (hostRetraceOwnerThread != exitingThread) {
+			/* Do not leave a successful new lease pointing back at a dead owner. */
+			if (hostRetracePreviousOwnerThread == exitingThread) {
+				hostRetracePreviousOwnerThread = previousOwner;
+			}
+			SDL_UnlockMutex(hostRenderHandoffMutex);
+			OSRestoreInterrupts(enabled);
+			return;
+		}
+	}
+
+	if (exitingThread != hostRetraceOwnerThread) {
+		/* A fallback that exits before the active owner cannot receive a lease. */
+		if (exitingThread == hostRetracePreviousOwnerThread) {
+			hostRetracePreviousOwnerThread = 0;
+		}
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		OSRestoreInterrupts(enabled);
+		return;
+	}
+
+	if (hostRenderHandoffState != VI_HOST_RENDER_HANDOFF_IDLE ||
+	    hostRetraceInProgress ||
+	    previousOwner == 0 ||
+	    previousOwner == exitingThread) {
+		hostRetraceOwnerThread = 0;
+		hostRetracePreviousOwnerThread = 0;
+		hostReturnedAlarmOwnerThread = 0;
+		hostRenderHandoffRequester = 0;
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_FATAL;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		OSRestoreInterrupts(enabled);
+		__VIHostWakeRetraceWaiters();
+		OSReport("libPorpoise VI: the render owner exited without a live "
+		         "previous owner to receive its context.\n");
+		return;
+	}
+
+	/*
+	 * Native GL release must occur on the exiting owner. Keep alarm dispatch
+	 * parked on that now-inactive ID until the returned owner has attached GL;
+	 * otherwise a due alarm could issue GX work from its wake path too early.
+	 */
+	contextReleased = __VIHostReleaseSimulatorContext();
+	if (contextReleased) {
+		hostRetraceOwnerThread = previousOwner;
+		hostRetracePreviousOwnerThread = 0;
+		hostReturnedAlarmOwnerThread = exitingThread;
+		hostRenderHandoffRequester = 0;
+		hostRenderHandoffState =
+			VI_HOST_RENDER_HANDOFF_RETURN_PENDING;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+	} else {
+		hostRetraceOwnerThread = 0;
+		hostRetracePreviousOwnerThread = 0;
+		hostReturnedAlarmOwnerThread = 0;
+		hostRenderHandoffRequester = 0;
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_FATAL;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+	}
+	SDL_UnlockMutex(hostRenderHandoffMutex);
+	OSRestoreInterrupts(enabled);
+
+	__VIHostWakeRetraceWaiters();
+	if (!contextReleased) {
+		OSReport("libPorpoise VI: exiting render owner could not release "
+		         "its context.\n");
+	}
+}
+
+static void __VIHostRenderContextAlarm(
+	OSAlarm* alarm,
+	OSContext* context)
+{
+	(void)alarm;
+	(void)context;
+	__VIHostServiceRenderContextRequest(FALSE);
+}
+
+/* The caller holds hostRenderHandoffMutex; it remains held on return. */
+static void __VIHostWaitForHandoffState(
+	VIHostRenderHandoffState pendingState,
+	Uint64 deadline)
+{
+	int waitResult = 0;
+
+	while (hostRenderHandoffState == pendingState) {
+		Uint64 now = SDL_GetTicks64();
+		Uint64 remaining;
+
+		if (now >= deadline) {
+			break;
+		}
+		remaining = deadline - now;
+		__OSHostInterruptWillWait();
+		waitResult = SDL_CondWaitTimeout(
+		    hostRenderHandoffCondition,
+		    hostRenderHandoffMutex,
+		    remaining > 0xffffffffU
+		        ? 0xffffffffU
+		        : (u32)remaining);
+		/* Preserve the global scheduler -> handoff-mutex lock order. */
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		__OSHostInterruptDidWait();
+		SDL_LockMutex(hostRenderHandoffMutex);
+		if (waitResult != 0 && waitResult != SDL_MUTEX_TIMEDOUT) {
+			break;
+		}
+	}
+}
+
+static BOOL __VIHostRollbackRenderContext(SDL_threadID requester)
+{
+	Uint64 deadline;
+	BOOL enabled;
+
+	enabled = OSDisableInterrupts();
+	SDL_LockMutex(hostRenderHandoffMutex);
+	if (hostRenderHandoffState == VI_HOST_RENDER_HANDOFF_IDLE &&
+	    hostRetraceOwnerThread != requester) {
+		/* The old owner already performed its bounded self-rollback. */
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		OSRestoreInterrupts(enabled);
+		return TRUE;
+	}
+	if (hostRenderHandoffState != VI_HOST_RENDER_HANDOFF_RELEASED ||
+	    hostRenderHandoffRequester != requester) {
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_FATAL;
+		hostRenderHandoffRequester = 0;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		OSRestoreInterrupts(enabled);
+		return FALSE;
+	}
+	hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_ROLLBACK_REQUESTED;
+	/* The old owner remains inside the release service until this resolves. */
+	SDL_CondBroadcast(hostRenderHandoffCondition);
+	SDL_UnlockMutex(hostRenderHandoffMutex);
+	OSRestoreInterrupts(enabled);
+
+	deadline = SDL_GetTicks64() + HOST_RENDER_HANDOFF_TIMEOUT_MS;
+	SDL_LockMutex(hostRenderHandoffMutex);
+	__VIHostWaitForHandoffState(
+	    VI_HOST_RENDER_HANDOFF_ROLLBACK_REQUESTED,
+	    deadline);
+	if (hostRenderHandoffState == VI_HOST_RENDER_HANDOFF_ROLLED_BACK) {
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_IDLE;
+		hostRenderHandoffRequester = 0;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		__VIHostWakeRetraceWaiters();
+		return TRUE;
+	}
+
+	if (hostRenderHandoffState ==
+	    VI_HOST_RENDER_HANDOFF_ROLLBACK_REQUESTED) {
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_FATAL;
+	}
+	hostRenderHandoffRequester = 0;
+	SDL_CondBroadcast(hostRenderHandoffCondition);
+	SDL_UnlockMutex(hostRenderHandoffMutex);
+	OSCancelAlarm(&hostRenderHandoffAlarm);
+	OSReport("libPorpoise VI: could not restore the previous render "
+	         "thread after a failed handoff.\n");
+	return FALSE;
+}
+
 void __VIHostInitRuntime(void)
 {
+	BOOL enabled;
+
+	enabled = OSDisableInterrupts();
 	if (hostRetraceRuntimeInitialized) {
+		OSRestoreInterrupts(enabled);
 		return;
 	}
 
 	OSInitThreadQueue(&retraceQueue);
+	hostRenderHandoffMutex = SDL_CreateMutex();
+	hostRenderHandoffCondition = SDL_CreateCond();
+	if (hostRenderHandoffMutex == NULL ||
+	    hostRenderHandoffCondition == NULL) {
+		if (hostRenderHandoffCondition != NULL) {
+			SDL_DestroyCond(hostRenderHandoffCondition);
+			hostRenderHandoffCondition = NULL;
+		}
+		if (hostRenderHandoffMutex != NULL) {
+			SDL_DestroyMutex(hostRenderHandoffMutex);
+			hostRenderHandoffMutex = NULL;
+		}
+		OSRestoreInterrupts(enabled);
+		return;
+	}
+
+	OSCreateAlarm(&hostRenderHandoffAlarm);
 	hostRetraceOwnerThread = SDL_ThreadID();
+	hostRetracePreviousOwnerThread = 0;
+	hostReturnedAlarmOwnerThread = 0;
+	hostRenderHandoffRequester = 0;
+	hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_IDLE;
+	__VIHostResetRetracePacing();
+	if (!__OSHostRegisterThreadExitCallback(
+	        __VIHostRenderOwnerThreadWillExit)) {
+		SDL_DestroyCond(hostRenderHandoffCondition);
+		hostRenderHandoffCondition = NULL;
+		SDL_DestroyMutex(hostRenderHandoffMutex);
+		hostRenderHandoffMutex = NULL;
+		OSRestoreInterrupts(enabled);
+		return;
+	}
 	__OSHostRegisterAlarmThread();
 	hostRetraceRuntimeInitialized = TRUE;
+	OSRestoreInterrupts(enabled);
+}
+
+BOOL __VIHostIsRenderThread(void)
+{
+	__VIHostInitRuntime();
+	if (!hostRetraceRuntimeInitialized ||
+	    hostRenderHandoffMutex == NULL) {
+		return FALSE;
+	}
+	return __VIHostCurrentThreadOwnsReadyContext();
+}
+
+BOOL __VIHostAdoptRenderThread(void)
+{
+	SDL_threadID currentThread;
+	SDL_threadID previousOwner;
+	Uint64 deadline;
+	BOOL acquired;
+	BOOL enabled;
+	BOOL releasedForRollback;
+	BOOL transferred;
+
+	__VIHostInitRuntime();
+	if (!hostRetraceRuntimeInitialized ||
+	    hostRenderHandoffMutex == NULL ||
+	    hostRenderHandoffCondition == NULL) {
+		return FALSE;
+	}
+
+	currentThread = SDL_ThreadID();
+	if (__VIHostIsRenderThread()) {
+		return __VIHostAcquireSimulatorContext();
+	}
+	enabled = OSDisableInterrupts();
+	SDL_LockMutex(hostRenderHandoffMutex);
+	if (currentThread == hostRetraceOwnerThread) {
+		if (hostRenderHandoffState != VI_HOST_RENDER_HANDOFF_IDLE) {
+			SDL_UnlockMutex(hostRenderHandoffMutex);
+			OSRestoreInterrupts(enabled);
+			OSReport("libPorpoise VI: a render-thread handoff is pending.\n");
+			return FALSE;
+		}
+		acquired = __VIHostAcquireSimulatorContext();
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		OSRestoreInterrupts(enabled);
+		return acquired;
+	}
+	if (hostRenderHandoffState != VI_HOST_RENDER_HANDOFF_IDLE) {
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		OSRestoreInterrupts(enabled);
+		OSReport("libPorpoise VI: another render-thread handoff is pending.\n");
+		return FALSE;
+	}
+
+	previousOwner = hostRetraceOwnerThread;
+	hostRenderHandoffRequester = currentThread;
+	hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_REQUESTED;
+	/*
+	 * Alarm dispatch is cooperative on the old owner. Scheduling an immediate
+	 * alarm both wakes an owner already in a host OS wait and is serviced by
+	 * the pre-sleep alarm check if the request wins that race.
+	 */
+	OSSetAlarm(
+	    &hostRenderHandoffAlarm,
+	    0,
+	    __VIHostRenderContextAlarm);
+	SDL_UnlockMutex(hostRenderHandoffMutex);
+	OSRestoreInterrupts(enabled);
+
+	deadline = SDL_GetTicks64() + HOST_RENDER_HANDOFF_TIMEOUT_MS;
+	SDL_LockMutex(hostRenderHandoffMutex);
+	__VIHostWaitForHandoffState(
+	    VI_HOST_RENDER_HANDOFF_REQUESTED,
+	    deadline);
+
+	if (hostRenderHandoffState == VI_HOST_RENDER_HANDOFF_REQUESTED) {
+		/* Keep retries out until the shared handoff alarm is cancelled. */
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_RELEASE_FAILED;
+		hostRenderHandoffRequester = 0;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		OSCancelAlarm(&hostRenderHandoffAlarm);
+		SDL_LockMutex(hostRenderHandoffMutex);
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_IDLE;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		__VIHostWakeRetraceWaiters();
+		OSReport("libPorpoise VI: timed out waiting for the previous render "
+		         "thread to release its context.\n");
+		return FALSE;
+	}
+	if (hostRenderHandoffState ==
+	    VI_HOST_RENDER_HANDOFF_RELEASE_FAILED) {
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_IDLE;
+		hostRenderHandoffRequester = 0;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		__VIHostWakeRetraceWaiters();
+		OSReport("libPorpoise VI: previous render thread could not release "
+		         "its context.\n");
+		return FALSE;
+	}
+	if (hostRenderHandoffState != VI_HOST_RENDER_HANDOFF_RELEASED ||
+	    hostRenderHandoffRequester != currentThread) {
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_FATAL;
+		hostRenderHandoffRequester = 0;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		return FALSE;
+	}
+	SDL_UnlockMutex(hostRenderHandoffMutex);
+
+	acquired = __VIHostAcquireSimulatorContext();
+	transferred = FALSE;
+	enabled = OSDisableInterrupts();
+	SDL_LockMutex(hostRenderHandoffMutex);
+	if (acquired &&
+	    hostRenderHandoffState == VI_HOST_RENDER_HANDOFF_RELEASED &&
+	    hostRenderHandoffRequester == currentThread &&
+	    __OSHostTransferAlarmThread(previousOwner)) {
+		hostRetraceOwnerThread = currentThread;
+		hostRetracePreviousOwnerThread = previousOwner;
+		hostReturnedAlarmOwnerThread = 0;
+		hostCopyRetracePendingWait = FALSE;
+		hostRenderHandoffState =
+			VI_HOST_RENDER_HANDOFF_TRANSFERRED;
+		hostRenderHandoffRequester = 0;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		transferred = TRUE;
+	}
+	SDL_UnlockMutex(hostRenderHandoffMutex);
+	OSRestoreInterrupts(enabled);
+
+	if (transferred) {
+		/*
+		 * The previous owner may have serviced the release from inside a
+		 * blocking OS primitive while still holding that primitive's queue
+		 * mutex. Wait for its acknowledgement before this thread can enter VI.
+		 */
+		deadline = SDL_GetTicks64() + HOST_RENDER_HANDOFF_TIMEOUT_MS;
+		SDL_LockMutex(hostRenderHandoffMutex);
+		__VIHostWaitForHandoffState(
+			VI_HOST_RENDER_HANDOFF_TRANSFERRED,
+			deadline);
+		if (hostRenderHandoffState == VI_HOST_RENDER_HANDOFF_IDLE &&
+		    hostRetraceOwnerThread == currentThread) {
+			SDL_UnlockMutex(hostRenderHandoffMutex);
+			return TRUE;
+		}
+		if (hostRenderHandoffState ==
+		    VI_HOST_RENDER_HANDOFF_TRANSFERRED) {
+			hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_FATAL;
+			SDL_CondBroadcast(hostRenderHandoffCondition);
+		}
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		OSReport("libPorpoise VI: timed out waiting for the previous "
+		         "render owner to leave its release boundary.\n");
+		return FALSE;
+	}
+
+	if (!acquired) {
+		OSReport("libPorpoise VI: new render thread could not acquire the "
+		         "released context.\n");
+		releasedForRollback = TRUE;
+	} else {
+		OSReport("libPorpoise VI: render ownership changed before the "
+		         "handoff could complete.\n");
+		releasedForRollback = __VIHostReleaseSimulatorContext();
+	}
+	if (!releasedForRollback) {
+		SDL_LockMutex(hostRenderHandoffMutex);
+		hostRenderHandoffState = VI_HOST_RENDER_HANDOFF_FATAL;
+		hostRenderHandoffRequester = 0;
+		SDL_CondBroadcast(hostRenderHandoffCondition);
+		SDL_UnlockMutex(hostRenderHandoffMutex);
+		OSReport("libPorpoise VI: failed to release the new render context "
+		         "for rollback.\n");
+		return FALSE;
+	}
+
+	if (!__VIHostRollbackRenderContext(currentThread)) {
+		return FALSE;
+	}
+	OSReport("libPorpoise VI: restored the previous render thread after "
+	         "the handoff failed.\n");
+	return FALSE;
 }
 #endif
 
@@ -497,7 +1238,9 @@ void VIInit(void)
 	__VIHostInitRuntime();
 	hostRetraceInProgress = FALSE;
 	hostCopyRetracePendingWait = FALSE;
+	hostDisplayCopyPending = FALSE;
 	hostTextureCopyAwaitingDraw = FALSE;
+	__VIHostResetRetracePacing();
 #endif
 
 	retraceCount = 0;
@@ -606,10 +1349,17 @@ static void __VIHostAdvanceRetrace(void)
 
 	/*
 	 * Post-retrace callbacks may issue the GXCopyDisp which completes the
-	 * frame. Keep presentation after those callbacks so one-XFB applications
-	 * do not alternate between completed and stale host back buffers.
+	 * frame. Present only when a display copy actually supplied a new frame;
+	 * retrace-only waits must not swap a cleared or stale host back buffer.
 	 */
-	SIM_Render();
+	if (hostDisplayCopyPending) {
+		hostDisplayCopyPending = FALSE;
+		SIM_Render();
+	}
+	/* Pace after presentation so CPU rendering and a driver v-sync wait count
+	 * toward the same hardware retrace budget instead of being serialized with
+	 * a second full-frame delay. */
+	__VIHostPaceRetrace();
 	hostRetraceInProgress = FALSE;
 	OSWakeupThread(&retraceQueue);
 }
@@ -627,10 +1377,7 @@ void __VIHostOnDraw(void)
 void __VIHostOnCopyDisp(void)
 {
 	__VIHostInitRuntime();
-	if (hostRetraceInProgress) {
-		return;
-	}
-	if (SDL_ThreadID() != hostRetraceOwnerThread) {
+	if (!__VIHostIsRenderThread()) {
 		return;
 	}
 
@@ -648,8 +1395,15 @@ void __VIHostOnCopyDisp(void)
 		return;
 	}
 
+	hostDisplayCopyPending = TRUE;
+	if (hostRetraceInProgress) {
+		/* The active retrace presents after its post-retrace callback returns. */
+		return;
+	}
+
 	__VIHostAdvanceRetrace();
 	hostCopyRetracePendingWait = TRUE;
+	__VIHostServiceRenderContextRequest(TRUE);
 }
 #endif
 
@@ -661,30 +1415,37 @@ void VIWaitForRetrace(void)
 	interrupt = OSDisableInterrupts();
 #ifdef LIBPORPOISE_PORT
 	__VIHostInitRuntime();
-	if (SDL_ThreadID() == hostRetraceOwnerThread) {
-		if (hostRetraceInProgress) {
-			OSRestoreInterrupts(interrupt);
-			return;
+	for (;;) {
+		if (__VIHostIsRenderThread()) {
+			if (!hostRetraceInProgress) {
+				if (hostCopyRetracePendingWait) {
+					hostCopyRetracePendingWait = FALSE;
+				} else {
+					__VIHostAdvanceRetrace();
+					__VIHostServiceRenderContextRequest(TRUE);
+				}
+			}
+			break;
 		}
-		if (hostCopyRetracePendingWait) {
-			hostCopyRetracePendingWait = FALSE;
-		} else {
-			__VIHostAdvanceRetrace();
-		}
-	} else {
+
 		/*
 		 * Auxiliary emulated OS threads wait for the game/render thread to
-		 * advance VI. The queue mutex closes the read-to-sleep race, so a
-		 * retrace cannot be lost between observing the count and waiting.
+		 * advance VI. If a failed handoff restores this thread as owner, the
+		 * outer loop lets it resume driving retrace instead of sleeping on a
+		 * queue that no other owner will wake.
 		 */
 		SDL_LockMutex(retraceQueue.hostMutex);
 		startCount = retraceCount;
-		while (startCount == retraceCount) {
+		while (startCount == retraceCount &&
+		       !__VIHostIsRenderThread()) {
 			__OSHostWaitForCondition(
 			    &retraceQueue,
 			    retraceQueue.hostMutex);
 		}
 		SDL_UnlockMutex(retraceQueue.hostMutex);
+		if (startCount != retraceCount) {
+			break;
+		}
 	}
 #else
 	startCount = retraceCount;

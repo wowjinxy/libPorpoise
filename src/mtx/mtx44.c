@@ -172,6 +172,9 @@ void PSMTX44Identity(register Mtx44 m)
 		stfs    c1, 0x003c (m)
 	}
 #endif
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Identity(m);
+#endif
 }
 
 /**
@@ -231,6 +234,9 @@ void PSMTX44Copy(register const Mtx44 src, register Mtx44 dst)
 		psq_l   f1, 0x0038 (src), 0, 0
 		psq_st  f1, 0x0038 (dst), 0, 0
 	}
+#endif
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Copy(src, dst);
 #endif
 }
 
@@ -352,6 +358,9 @@ ASM void PSMTX44Concat(register const Mtx44 a, register const Mtx44 b, register 
 	psq_st     f13, 0x38 (ab), 0, 0
 	blr
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Concat(a, b, ab);
+#endif
 }
 
 /**
@@ -430,6 +439,9 @@ ASM void PSMTX44Transpose(register const Mtx44 src, register Mtx44 xPose) {
 	psq_st      f5, 0x38 (xPose), 0, 0
 	blr
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Transpose(src, xPose);
+#endif
 }
 
 #define SWAP(a, b) \
@@ -564,6 +576,9 @@ void PSMTX44Trans(register Mtx44 m, register f32 xT, register f32 yT, register f
 		psq_st      c_01,   0x38 (m), 0, 0
 	}
 #endif
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Trans(m, xT, yT, zT);
+#endif
 }
 
 /**
@@ -632,6 +647,9 @@ ASM void PSMTX44TransApply(register const Mtx44 src, register Mtx44 dst, registe
 	psq_st   f6, 0x38 (dst), 0, 0
 	blr
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	C_MTX44TransApply(src, dst, xT, yT, zT);
+#endif
 }
 
 /**
@@ -688,6 +706,9 @@ void PSMTX44Scale(register Mtx44 m, register f32 xS, register f32 yS, register f
 		psq_st  c_zero, 0x34 (m), 0, 0
 		stfs    c_one,  0x3c (m)
 	}
+#endif
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Scale(m, xS, yS, zS);
 #endif
 }
 
@@ -753,6 +774,9 @@ ASM void PSMTX44ScaleApply(register const Mtx44 src, register Mtx44 dst, registe
 	psq_st    f11, 0x38 (dst), 0, 0
 	blr
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	C_MTX44ScaleApply(src, dst, xS, yS, zS);
+#endif
 }
 
 /**
@@ -949,6 +973,9 @@ void PSMTX44RotTrig(register Mtx44 m, register char axis, register f32 sinA, reg
 	_end:
 	}
 #endif
+#ifdef LIBPORPOISE_PORT
+	C_MTX44RotTrig(m, axis, sinA, cosA);
+#endif
 }
 
 /**
@@ -1080,6 +1107,9 @@ void PSMTX44RotAxisRad(register Mtx44 m, register const Vec* axis, register f32 
         psq_st      tmp4, 0x20 (m), 0, 0
         psq_st      tmp5, 0x28 (m), 0, 0
 	}
+#endif
+#ifdef LIBPORPOISE_PORT
+	C_MTX44RotAxisRad(m, axis, rad);
 #endif
 }
 

@@ -15,6 +15,20 @@ void VIInit(void);
 void VIFlush(void);
 void VIWaitForRetrace(void);
 
+#ifdef LIBPORPOISE_PORT
+/*
+ * Explicitly transfer host retrace/render ownership to the calling thread.
+ * The previous owner must cease issuing GX work after the transfer. When an
+ * adopted emulated OSThread exits, its lease returns to the prior live owner;
+ * GL is attached there at the next ownership boundary. Raw host threads must
+ * still transfer before exit because their lifetime is outside OS tracking.
+ * Ownership is intentionally not inferred from arbitrary thread use.
+ */
+void __VIHostInitRuntime(void);
+BOOL __VIHostAdoptRenderThread(void);
+BOOL __VIHostIsRenderThread(void);
+#endif
+
 // Configure functions.
 void VIConfigure(const GXRenderModeObj* obj);
 

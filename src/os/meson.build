@@ -25,10 +25,15 @@ libos_srcs = files(
 	'OSSync.c',
     'OSStopwatch.c',
     'OSThread.c',
-    'OSTime.c'
+	'OSTime.c'
 )
 
+if build_target != 'gc'
+    libos_srcs += files('OSHostModule.c')
+endif
+
 libos = library('os',
+    dependencies: libporpoise_platform_dependencies,
     include_directories: libporpoise_includes,
     pic: false,
     sources: [libos_srcs],

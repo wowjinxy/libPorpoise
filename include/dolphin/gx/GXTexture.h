@@ -63,6 +63,13 @@ extern void GXLoadTexObj(GXTexObj* obj, GXTexMapID map);
 
 // Tlut functions.
 extern void GXInitTlutObj(GXTlutObj* obj, void* table, GXTlutFmt format, u16 numEntries);
+#ifdef LIBPORPOISE_PORT
+/* Host middleware often builds palettes as native u16 scalar values. This
+ * explicit initializer prevents their byte representation from being
+ * mistaken for canonical GameCube big-endian TLUT memory. */
+extern void GXInitTlutObjHostNativeU16(GXTlutObj* obj, u16* table,
+                                      GXTlutFmt format, u16 numEntries);
+#endif
 extern void GXLoadTlut(GXTlutObj* obj, u32 tlutName);
 extern void GXGetTlutObjAll(const GXTlutObj* obj, void** table,
                             GXTlutFmt* format, u16* numEntries);

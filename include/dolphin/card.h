@@ -279,6 +279,7 @@ s32 CARDGetStatus(s32 channel, s32 fileNo, CARDStat* state);
 s32 CARDSetStatus(s32 channel, s32 fileNo, CARDStat* state);
 s32 CARDSetStatusAsync(s32 channel, s32 fileNo, CARDStat* state, CARDCallback callback);
 s32 CARDGetAttributes(s32 chan, s32 fileNo, u8* attr);
+s32 CARDSetAttributesAsync(s32 chan, s32 fileNo, u8 attr, CARDCallback callback);
 s32 CARDSetAttributes(s32 chan, s32 fileNo, u8 attr);
 
 // CARD serial functions.
@@ -314,6 +315,7 @@ s32 __CARDSync(s32 channel);
 void __CARDCheckSum(void* data, int length, u16* checksum, u16* checksumInv);
 s32 __CARDVerify(CARDControl* card);
 BOOL __CARDCompareFileName(CARDDir* entry, const char* fileName);
+s32 __CARDGetFileNo(CARDControl* card, const char* fileName, s32* outFileNo);
 #if OS_BUILD_VERSION >= 20011112L
 s32 __CARDAccess(CARDControl* card, CARDDir* ent);
 #else
@@ -337,9 +339,9 @@ int __CARDUnlock(int chan, u8 flashID[12]);
 s32 __CARDSeek(CARDFileInfo* fileInfo, s32 length, s32 offset, CARDControl** outCard);
 
 // CARDStatEx.c
-int __CARDGetStatusEx(int chan, int fileNo, struct CARDDir * dirent);
-int __CARDSetStatusExAsync(int chan, int fileNo, struct CARDDir * dirent, void (* callback)(long, long));
-int __CARDSetStatusEx(int chan, int fileNo, struct CARDDir * dirent);
+s32 __CARDGetStatusEx(s32 chan, s32 fileNo, CARDDir* dirent);
+s32 __CARDSetStatusExAsync(s32 chan, s32 fileNo, CARDDir* dirent, CARDCallback callback);
+s32 __CARDSetStatusEx(s32 chan, s32 fileNo, CARDDir* dirent);
 
 
 ////////////////////////////////////////////

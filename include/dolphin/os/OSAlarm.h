@@ -5,6 +5,9 @@
 #include <dolphin/os/OSTime.h>
 #include <dolphin/os/OSUtil.h>
 #include <dolphin/types.h>
+#ifdef LIBPORPOISE_PORT
+#include <SDL2/SDL_thread.h>
+#endif
 
 BEGIN_SCOPE_EXTERN_C
 
@@ -47,11 +50,13 @@ void OSCancelAlarms(u32 tag);
 
 #ifdef LIBPORPOISE_PORT
 /*
- * Cooperative host alarm scheduling. Only the registered emulated CPU thread
- * dispatches handlers; blocking primitives use the next deadline as their
- * condition-wait timeout.
+ * Cooperative host alarm scheduling. Registration selects the initial
+ * emulated CPU thread; an explicit transfer succeeds only while the caller's
+ * expected owner still owns dispatch. Blocking primitives use the next alarm
+ * deadline as their condition-wait timeout.
  */
 void __OSHostRegisterAlarmThread(void);
+BOOL __OSHostTransferAlarmThread(SDL_threadID expectedOwner);
 BOOL __OSHostIsAlarmThread(void);
 u32 __OSHostGetAlarmTimeoutMilliseconds(void);
 #endif

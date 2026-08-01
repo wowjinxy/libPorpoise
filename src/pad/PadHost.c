@@ -7,7 +7,6 @@
 #include <string.h>
 
 static BOOL Initialized = FALSE;
-static BOOL SDLInitialized = FALSE;
 static u32 EnabledBits = 0;
 static u32 AnalogMode = PAD_MODE_3;
 static PADSamplingCallback SamplingCallback = NULL;
@@ -145,7 +144,6 @@ static void ReadKeyboard(PADStatus* status)
     const SDL_Scancode keyL = PADGetKeyboardBinding(PAD_TRIGGER_L);
     const SDL_Scancode keyR = PADGetKeyboardBinding(PAD_TRIGGER_R);
 
-    SDL_PumpEvents();
     keys = SDL_GetKeyboardState(NULL);
     memset(status, 0, sizeof(*status));
     status->err = PAD_ERR_NONE;
@@ -206,6 +204,42 @@ static void ReadKeyboard(PADStatus* status)
     }
     if (keys[SDL_SCANCODE_K]) {
         status->substickY = -100;
+    }
+}
+
+void __PADHostMergeKeyboardState(
+    PADStatus* status, const PADStatus* keyboard)
+{
+    if (status == NULL || keyboard == NULL) {
+        return;
+    }
+
+    status->button |= keyboard->button;
+
+    if (keyboard->stickX != 0) {
+        status->stickX = keyboard->stickX;
+    }
+    if (keyboard->stickY != 0) {
+        status->stickY = keyboard->stickY;
+    }
+    if (keyboard->substickX != 0) {
+        status->substickX = keyboard->substickX;
+    }
+    if (keyboard->substickY != 0) {
+        status->substickY = keyboard->substickY;
+    }
+
+    if (keyboard->triggerLeft > status->triggerLeft) {
+        status->triggerLeft = keyboard->triggerLeft;
+    }
+    if (keyboard->triggerRight > status->triggerRight) {
+        status->triggerRight = keyboard->triggerRight;
+    }
+    if (keyboard->analogA > status->analogA) {
+        status->analogA = keyboard->analogA;
+    }
+    if (keyboard->analogB > status->analogB) {
+        status->analogB = keyboard->analogB;
     }
 }
 
@@ -328,7 +362,6 @@ BOOL PADInit(void)
         OSReport("PAD: SDL initialization failed: %s\n", SDL_GetError());
         return FALSE;
     }
-    SDLInitialized = TRUE;
     SDL_GameControllerEventState(SDL_ENABLE);
     PADLoadConfig();
     memset(Controllers, 0, sizeof(Controllers));
@@ -369,9 +402,6 @@ u32 PADRead(PADStatus* status)
         return 0;
     }
 
-    if (SDLInitialized) {
-        SDL_PumpEvents();
-    }
     ScanControllers();
     if (SamplingCallback != NULL) {
         SamplingCallback();
@@ -384,6 +414,11 @@ u32 PADRead(PADStatus* status)
             status[chan].err = PAD_ERR_NO_CONTROLLER;
         } else if (Controllers[chan] != NULL) {
             ReadController(chan, &status[chan]);
+            if (chan == PAD_CHAN0) {
+                PADStatus keyboard;
+                ReadKeyboard(&keyboard);
+                __PADHostMergeKeyboardState(&status[chan], &keyboard);
+            }
             motorBits |= chanBit;
         } else if (chan == PAD_CHAN0) {
             ReadKeyboard(&status[chan]);

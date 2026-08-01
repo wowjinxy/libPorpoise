@@ -13,6 +13,7 @@ libcard_srcs = files(
     'CARDRead.c',
     'CARDRename.c',
     'CARDStat.c',
+	'CARDStatEx.c',
 	'CARDUnlock.c',
     'CARDWrite.c'
 )

@@ -33,6 +33,11 @@ typedef void* (*OSThreadStartFunction)(void*);
 // Thread switching function.
 typedef void (*OSSwitchThreadCallback)(OSThread* from, OSThread* to);
 
+#ifdef LIBPORPOISE_PORT
+// Host-subsystem observer invoked on the exiting emulated OS thread.
+typedef void (*OSHostThreadExitCallback)(SDL_threadID thread);
+#endif
+
 // Queues and links for threads.
 struct OSThreadQueue {
 	OSThread* head; // _00
@@ -118,8 +123,11 @@ BOOL OSCreateThreadReal(OSThread* thread, OSThreadStartFunction func, void* para
 void __OSHostThreadWillBlock(OSThreadQueue* queue);
 void __OSHostThreadDidWake(void);
 void __OSHostThreadWillExit(void);
+BOOL __OSHostRegisterThreadExitCallback(OSHostThreadExitCallback callback);
+BOOL __OSHostIsBlockingWaitSafePoint(void);
 int __OSHostWaitForCondition(OSThreadQueue* queue, SDL_mutex* mutex);
 void __OSHostWakeAlarmThread(void);
+void __OSHostClearAlarmWaitQueue(void);
 #else
 BOOL OSCreateThread(OSThread* thread, OSThreadStartFunction func, void* param, void* stack, u32 stackSize, OSPriority priority, u16 attr);
 #endif

@@ -21,12 +21,21 @@
 #include <unistd.h>
 #endif
 
-#define GAMECUBE_MEMORY_SIZE 0x01800000U
-#define GAMECUBE_ARENA_LO    0x00004000U
-#define GAMECUBE_ARENA_HI    0x017FFA80U
+#define GAMECUBE_MEMORY_SIZE          0x01800000U
+#define GAMECUBE_EXTENDED_MEMORY_SIZE 0x02000000U
+#define GAMECUBE_ARENA_LO             0x00004000U
+#define GAMECUBE_ARENA_TOP_RESERVED   0x00000580U
 
 static OSHostMemoryLayout HostMemoryLayout;
 static BOOL HostMemoryInitialized;
+
+typedef enum HostArenaHiAdjustmentState {
+	HOST_ARENA_HI_WAITING_FOR_INITIAL_VALUE = 0,
+	HOST_ARENA_HI_WAITING_FOR_NORMALIZATION,
+	HOST_ARENA_HI_ADJUSTMENT_COMPLETE
+} HostArenaHiAdjustmentState;
+
+static HostArenaHiAdjustmentState HostArenaHiAdjustment;
 
 #if defined(LIBPORPOISE_BUILD_WIN64)
 static HANDLE HostMemoryBacking;
@@ -144,7 +153,10 @@ static void* MapLinuxView(
 }
 #endif
 
-static void InitializeGameCubeMemory(void)
+static void InitializeGameCubeMemory(
+	OSHostMemoryProfile profile,
+	u32 memorySize,
+	u32 consoleSize)
 {
 	void* cached;
 	void* uncached;
@@ -155,23 +167,23 @@ static void InitializeGameCubeMemory(void)
 	    NULL,
 	    PAGE_READWRITE,
 	    0,
-	    GAMECUBE_MEMORY_SIZE,
+	    memorySize,
 	    NULL);
 	if (HostMemoryBacking == NULL) {
 		FailWindowsMapping(
 		    "GameCube backing",
 		    OS_BASE_CACHED,
-		    GAMECUBE_MEMORY_SIZE,
+		    memorySize,
 		    GetLastError());
 	}
 	cached = MapWindowsView(
 	    "GameCube cached",
 	    OS_BASE_CACHED,
-	    GAMECUBE_MEMORY_SIZE);
+	    memorySize);
 	uncached = MapWindowsView(
 	    "GameCube uncached",
 	    OS_BASE_UNCACHED,
-	    GAMECUBE_MEMORY_SIZE);
+	    memorySize);
 #elif defined(LIBPORPOISE_BUILD_LINUX)
 	{
 		char backingName[96];
@@ -190,39 +202,42 @@ static void InitializeGameCubeMemory(void)
 			FailLinuxMapping(
 			    "GameCube backing",
 			    OS_BASE_CACHED,
-			    GAMECUBE_MEMORY_SIZE,
+			    memorySize,
 			    errno);
 		}
 		shm_unlink(backingName);
-		if (ftruncate(HostMemoryBacking, GAMECUBE_MEMORY_SIZE) != 0) {
+		if (ftruncate(HostMemoryBacking, memorySize) != 0) {
 			FailLinuxMapping(
 			    "GameCube backing",
 			    OS_BASE_CACHED,
-			    GAMECUBE_MEMORY_SIZE,
+			    memorySize,
 			    errno);
 		}
 	}
 	cached = MapLinuxView(
 	    "GameCube cached",
 	    OS_BASE_CACHED,
-	    GAMECUBE_MEMORY_SIZE);
+	    memorySize);
 	uncached = MapLinuxView(
 	    "GameCube uncached",
 	    OS_BASE_UNCACHED,
-	    GAMECUBE_MEMORY_SIZE);
+	    memorySize);
 #else
 #error Unsupported libPorpoise host platform
 #endif
 
-	memset(cached, 0, GAMECUBE_MEMORY_SIZE);
-	HostMemoryLayout.profile = OS_HOST_MEMORY_PROFILE_GAMECUBE;
+	memset(cached, 0, memorySize);
+	HostMemoryLayout.profile = profile;
 	HostMemoryLayout.cachedBase = cached;
 	HostMemoryLayout.uncachedBase = uncached;
-	HostMemoryLayout.size = GAMECUBE_MEMORY_SIZE;
+	HostMemoryLayout.size = memorySize;
+	HostMemoryLayout.consoleSize = consoleSize;
 	HostMemoryLayout.arenaLo =
 	    (void*)((u8*)cached + GAMECUBE_ARENA_LO);
 	HostMemoryLayout.arenaHi =
-	    (void*)((u8*)cached + GAMECUBE_ARENA_HI);
+	    (void*)((u8*)cached + memorySize - GAMECUBE_ARENA_TOP_RESERVED);
+	HostMemoryLayout.consoleArenaHi =
+	    (void*)((u8*)cached + consoleSize - GAMECUBE_ARENA_TOP_RESERVED);
 }
 
 const OSHostMemoryLayout* __OSHostMemoryInit(
@@ -243,7 +258,16 @@ const OSHostMemoryLayout* __OSHostMemoryInit(
 
 	switch (profile) {
 	case OS_HOST_MEMORY_PROFILE_GAMECUBE:
-		InitializeGameCubeMemory();
+		InitializeGameCubeMemory(
+		    profile,
+		    GAMECUBE_MEMORY_SIZE,
+		    GAMECUBE_MEMORY_SIZE);
+		break;
+	case OS_HOST_MEMORY_PROFILE_GAMECUBE_EXTENDED:
+		InitializeGameCubeMemory(
+		    profile,
+		    GAMECUBE_EXTENDED_MEMORY_SIZE,
+		    GAMECUBE_MEMORY_SIZE);
 		break;
 	default:
 		fprintf(
@@ -260,6 +284,55 @@ const OSHostMemoryLayout* __OSHostMemoryInit(
 const OSHostMemoryLayout* __OSHostMemoryGetLayout(void)
 {
 	return HostMemoryInitialized ? &HostMemoryLayout : NULL;
+}
+
+void* __OSHostMemoryResolveArenaHi(void* previous, void* requested)
+{
+	if (!HostMemoryInitialized ||
+	    HostMemoryLayout.profile !=
+	        OS_HOST_MEMORY_PROFILE_GAMECUBE_EXTENDED) {
+		return requested;
+	}
+
+	switch (HostArenaHiAdjustment) {
+	case HOST_ARENA_HI_WAITING_FOR_INITIAL_VALUE:
+		/*
+		 * OSInit publishes the profile's initial extended ceiling from a
+		 * zero-initialized arena. Only that exact transition arms the
+		 * compatibility adjustment.
+		 */
+		if (previous == NULL && requested == HostMemoryLayout.arenaHi) {
+			HostArenaHiAdjustment =
+			    HOST_ARENA_HI_WAITING_FOR_NORMALIZATION;
+		} else {
+			HostArenaHiAdjustment =
+			    HOST_ARENA_HI_ADJUSTMENT_COMPLETE;
+		}
+		return requested;
+
+	case HOST_ARENA_HI_WAITING_FOR_NORMALIZATION:
+		/* Redundant publication of the initial ceiling is harmless. */
+		if (previous == HostMemoryLayout.arenaHi &&
+		    requested == HostMemoryLayout.arenaHi) {
+			return requested;
+		}
+
+		HostArenaHiAdjustment = HOST_ARENA_HI_ADJUSTMENT_COMPLETE;
+		if (previous == HostMemoryLayout.arenaHi &&
+		    requested == HostMemoryLayout.consoleArenaHi) {
+			/*
+			 * Console startup code may normalize ArenaHi from the host
+			 * ceiling to the authentic 24 MiB ceiling. Preserve the host
+			 * overhead once; all later heap operations pass through exactly.
+			 */
+			return HostMemoryLayout.arenaHi;
+		}
+		return requested;
+
+	case HOST_ARENA_HI_ADJUSTMENT_COMPLETE:
+	default:
+		return requested;
+	}
 }
 
 #endif

@@ -121,8 +121,11 @@ void GlobalState::Reset() {
     }
     mTevColors = {};
     mTevKonstColors = {};
+    mBpRegisters.fill(0);
+    mBpWriteMask = 0x00ffffffu;
+    mNumColorChannels = 0;
+    mNumTexGens = 1;
     mNumTevStages = 1;
-    mTextureRevision = 0;
     mCopyClearColor = {
         64.0f / 255.0f,
         64.0f / 255.0f,
@@ -131,6 +134,39 @@ void GlobalState::Reset() {
     };
     mCopyClearDepth = 1.0f;
     mCopyClearRequested = false;
+
+    // Keep the raw BP mirror consistent with the simulator's reset state so
+    // that a masked write can preserve fields before their first full write.
+    mBpRegisters[0x00] = 1u;
+    mBpRegisters[0x22] = 6u | (6u << 8u);
+    mBpRegisters[0x40] =
+        1u |
+        (static_cast<u32>(GX_LEQUAL) << 1u) |
+        (1u << 4u);
+    mBpRegisters[0x41] =
+        (1u << 2u) |
+        (1u << 3u) |
+        (1u << 4u) |
+        (static_cast<u32>(GX_BL_ZERO) << 5u) |
+        (static_cast<u32>(GX_BL_ONE) << 8u) |
+        (static_cast<u32>(GX_LO_CLEAR) << 12u);
+    for (size_t registerIndex = 0; registerIndex < 8u; ++registerIndex) {
+        const size_t tableIndex = registerIndex / 2u;
+        const size_t componentOffset = (registerIndex & 1u) * 2u;
+        const size_t firstStage = registerIndex * 2u;
+        mBpRegisters[0xf6u + registerIndex] =
+            static_cast<u32>(mTevSwapTables[tableIndex][componentOffset]) |
+            (static_cast<u32>(
+                 mTevSwapTables[tableIndex][componentOffset + 1u]) << 2u) |
+            (static_cast<u32>(
+                 mTevStages[firstStage].konstColorSelection) << 4u) |
+            (static_cast<u32>(
+                 mTevStages[firstStage].konstAlphaSelection) << 9u) |
+            (static_cast<u32>(
+                 mTevStages[firstStage + 1u].konstColorSelection) << 14u) |
+            (static_cast<u32>(
+                 mTevStages[firstStage + 1u].konstAlphaSelection) << 19u);
+    }
 }
 
 size_t GlobalState::GetDescriptorSize(GXAttrType descriptorType, GXCompType dataType, bool isColorType) const {
@@ -538,6 +574,14 @@ float GlobalState::GetTevKonstAlpha(size_t stage) const {
     return 0.0f;
 }
 
+size_t GlobalState::GetNumColorChannels() const {
+    return mNumColorChannels;
+}
+
+size_t GlobalState::GetNumTexGens() const {
+    return mNumTexGens;
+}
+
 size_t GlobalState::GetNumTevStages() const {
     return mNumTevStages;
 }
@@ -560,15 +604,34 @@ bool GlobalState::ConsumeCopyClearRequest() {
     return requested;
 }
 
-void GlobalState::SetBpRegister(u32 registerValue) {
+u32 GlobalState::SetBpRegister(u32 registerValue) {
     const u8 address = static_cast<u8>(registerValue >> 24);
-    const u32 value = registerValue & 0x00ffffffu;
+    const u32 incomingValue = registerValue & 0x00ffffffu;
+
+    // BP register 0xfe is a one-shot 24-bit write mask. It controls the data
+    // bits of the next BP command, then hardware restores the all-ones mask.
+    // A raw register mirror is required because the unselected bits retain
+    // their previous values; decoding the incoming word directly loses them.
+    if (address == 0xfeu) {
+        mBpWriteMask = incomingValue;
+        return registerValue;
+    }
+
+    const u32 previousValue = mBpRegisters[address];
+    const u32 value =
+        (previousValue & ~mBpWriteMask) |
+        (incomingValue & mBpWriteMask);
+    mBpRegisters[address] = value;
+    mBpWriteMask = 0x00ffffffu;
+
     const auto field = [value](u32 width, u32 shift) {
         return (value >> shift) & ((1u << width) - 1u);
     };
 
     switch (address) {
         case 0x00: {
+            mNumTexGens = std::min<size_t>(field(4, 0), 8u);
+            mNumColorChannels = std::min<size_t>(field(2, 4), 2u);
             mNumTevStages = static_cast<size_t>(field(4, 10)) + 1u;
             const auto hardwareMode =
                 static_cast<GXCullMode>(field(2, 14));
@@ -763,6 +826,16 @@ void GlobalState::SetBpRegister(u32 registerValue) {
             if (field(1, 14) != 0 && field(1, 11) != 0) {
                 mCopyClearRequested = true;
             }
+            break;
+        case 0x66:
+            // BP writes to TMEMTEXINVALIDATE are commands, not passive
+            // configuration. Record a global invalidation serial instead of
+            // eagerly dirtying every texture. The renderer validates each
+            // used texture's source bytes lazily and only reuploads content
+            // that actually changed. Region invalidations use this register
+            // too; conservatively validating all used textures is correct
+            // while TMEM residency is not modeled by the simulator.
+            ++mTextureInvalidationRevision;
             break;
         case 0xe8: {
             const u32 encodedCenter = field(10, 0);
@@ -990,6 +1063,12 @@ void GlobalState::SetBpRegister(u32 registerValue) {
             }
             break;
     }
+
+    return (static_cast<u32>(address) << 24u) | value;
+}
+
+u64 GlobalState::GetTextureInvalidationRevision() const {
+    return mTextureInvalidationRevision;
 }
 
 void GlobalState::SetCurrentPrimitive(GXPrimitive primitive) {
@@ -1037,6 +1116,23 @@ void GlobalState::LoadTexture(size_t index, const TextureState& texture) {
     if (index >= mTextures.size()) {
         return;
     }
+
+    const auto& current = mTextures[index];
+    if (current.data == texture.data &&
+        current.width == texture.width &&
+        current.height == texture.height &&
+        current.format == texture.format &&
+        current.wrapS == texture.wrapS &&
+        current.wrapT == texture.wrapT &&
+        current.minFilter == texture.minFilter &&
+        current.magFilter == texture.magFilter &&
+        current.tlutName == texture.tlutName) {
+        // GXLoadTexObj is commonly repeated before draws. Loading an
+        // identical descriptor does not alter texture memory or sampler
+        // state, so preserve its revision and the renderer's cache hit.
+        return;
+    }
+
     mTextures[index] = texture;
     mTextures[index].revision = ++mTextureRevision;
 }
@@ -1045,17 +1141,69 @@ void GlobalState::LoadTlut(size_t index, const TlutState& tlut) {
     if (index >= mTluts.size()) {
         return;
     }
-    mTluts[index] = tlut;
-    mTluts[index].revision = ++mTextureRevision;
 
-    for (auto& texture : mTextures) {
-        if (texture.tlutName == index &&
-            (texture.format == GX_TF_C4 ||
-             texture.format == GX_TF_C8 ||
-             texture.format == GX_TF_C14X2)) {
-            texture.revision = ++mTextureRevision;
+    const size_t byteSize = static_cast<size_t>(tlut.entries) * 2u;
+    const auto* sourceBytes = static_cast<const u8*>(tlut.data);
+    const auto* sourceWords = static_cast<const u16*>(tlut.data);
+    const auto& current = mTluts[index];
+    bool contentsMatch =
+        current.format == tlut.format &&
+        current.entries == tlut.entries &&
+        current.canonicalBytes.size() ==
+            (tlut.data != nullptr ? byteSize : 0u);
+    if (contentsMatch && byteSize != 0u && tlut.data != nullptr) {
+        if (tlut.sourceEncoding ==
+            TlutState::SourceEncoding::NativeU16) {
+            for (size_t entry = 0; entry < tlut.entries; ++entry) {
+                const u16 value = sourceWords[entry];
+                if (current.canonicalBytes[entry * 2u] !=
+                        static_cast<u8>(value >> 8u) ||
+                    current.canonicalBytes[entry * 2u + 1u] !=
+                        static_cast<u8>(value)) {
+                    contentsMatch = false;
+                    break;
+                }
+            }
+        } else {
+            contentsMatch = std::memcmp(
+                current.canonicalBytes.data(),
+                sourceBytes,
+                byteSize) == 0;
         }
     }
+    if (contentsMatch) {
+        // Reissuing a GX TLUT DMA with identical contents is observable as a
+        // command, but it cannot change any decoded indexed texture.
+        return;
+    }
+
+    auto& loaded = mTluts[index];
+    loaded.data = nullptr;
+    loaded.format = tlut.format;
+    loaded.entries = tlut.entries;
+    loaded.sourceEncoding =
+        TlutState::SourceEncoding::CanonicalBigEndian;
+    if (tlut.data == nullptr || byteSize == 0u) {
+        loaded.canonicalBytes.clear();
+    } else {
+        loaded.canonicalBytes.resize(byteSize);
+        if (tlut.sourceEncoding ==
+            TlutState::SourceEncoding::NativeU16) {
+            for (size_t entry = 0; entry < tlut.entries; ++entry) {
+                const u16 value = sourceWords[entry];
+                loaded.canonicalBytes[entry * 2u] =
+                    static_cast<u8>(value >> 8u);
+                loaded.canonicalBytes[entry * 2u + 1u] =
+                    static_cast<u8>(value);
+            }
+        } else {
+            std::memcpy(
+                loaded.canonicalBytes.data(),
+                sourceBytes,
+                byteSize);
+        }
+    }
+    loaded.revision = ++mTextureRevision;
 }
 
 void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
@@ -1082,6 +1230,12 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
     }
 
     const u32 endAddress = address + static_cast<u32>(writableWords);
+    constexpr u32 numColorsAddress = 0x1009u;
+    if (address <= numColorsAddress && endAddress > numColorsAddress) {
+        mNumColorChannels = std::min<size_t>(
+            mXfMemory[numColorsAddress],
+            2u);
+    }
     RefreshPositionMatrices(address, endAddress);
     RefreshNormalMatrices(address, endAddress);
     RefreshTextureMatrices(address, endAddress);

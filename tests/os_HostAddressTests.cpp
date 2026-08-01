@@ -5,6 +5,7 @@
 #include <SDL2/SDL_thread.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <cstdint>
 #include <vector>
 
@@ -14,6 +15,8 @@ std::atomic<int> WorkerFailure = 0;
 ARQRequest* ExpectedRequest = nullptr;
 ARQRequest* CallbackRequest = nullptr;
 u32 CallbackToken = 0;
+int ImageBackedStaticData = 0x504F5250;
+int ImageZeroFillStaticData;
 
 int ExerciseAddressTranslator(void* argument) {
     const auto worker = reinterpret_cast<std::uintptr_t>(argument);
@@ -62,6 +65,26 @@ int main() {
         return 2;
     }
 
+    int stackData = 0;
+    void* heapData = std::malloc(64);
+    if (heapData == nullptr) {
+        return 18;
+    }
+    const bool imageClassificationIsCorrect =
+        __OSHostIsFileBackedImageAddress(
+            reinterpret_cast<const void*>(&main)) &&
+        __OSHostIsFileBackedImageAddress(&ImageBackedStaticData) &&
+        !__OSHostIsFileBackedImageAddress(&ImageZeroFillStaticData) &&
+        !__OSHostIsFileBackedImageAddress(nullptr) &&
+        !__OSHostIsFileBackedImageAddress(&stackData) &&
+        !__OSHostIsFileBackedImageAddress(heapData) &&
+        !__OSHostIsFileBackedImageAddress(layout->cachedBase) &&
+        !__OSHostIsFileBackedImageAddress(layout->uncachedBase);
+    std::free(heapData);
+    if (!imageClassificationIsCorrect) {
+        return 19;
+    }
+
     void* cached = reinterpret_cast<void*>(0x80123400ULL);
     void* uncached = reinterpret_cast<void*>(0xC0123400ULL);
     if (__OSHostEncodeAddress(cached) != 0x80123400U ||
@@ -79,6 +102,27 @@ int main() {
         !__OSHostIsAddressToken(OS_HOST_ADDRESS_TOKEN_TAG) ||
         __OSHostDecodeAddress(0xCC006000U) != nullptr) {
         return 4;
+    }
+
+    void* ambiguousLowPointer =
+        reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x0F123450U));
+    const u32 ambiguousLowToken =
+        __OSHostEncodePointerWord(ambiguousLowPointer);
+    if (!__OSHostIsAddressToken(ambiguousLowToken) ||
+        __OSHostDecodeAddress(ambiguousLowToken) != ambiguousLowPointer) {
+        return 15;
+    }
+    __OSHostReleaseAddress(ambiguousLowToken);
+    if (__OSHostDecodeAddress(ambiguousLowToken) != nullptr) {
+        return 16;
+    }
+
+    void* directImagePointer =
+        reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10012340U));
+    if (__OSHostEncodePointerWord(directImagePointer) != 0x10012340U ||
+        __OSHostEncodePointerWord(cached) != 0x80123400U ||
+        __OSHostEncodePointerWord(uncached) != 0xC0123400U) {
+        return 17;
     }
 
     int hostValue = 42;

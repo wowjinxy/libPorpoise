@@ -3,11 +3,16 @@
 #include <dolphin.h>
 #include <simulator/sim.h>
 #include <simulator/sim_gx_CommandProcessor.h>
+#include <simulator/sim_gx_GlRenderer.hpp>
 #include <simulator/sim_gx_State.hpp>
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
+#include <atomic>
 static SDL_GLContext context;
 static SDL_Window * window;
+static SDL_threadID contextThread;
+static SDL_mutex* contextMutex;
+static std::atomic<bool> drawableViewportChanged{false};
 
 static void UpdateDrawableViewport() {
     int drawableWidth = 0;
@@ -15,6 +20,9 @@ static void UpdateDrawableViewport() {
     SDL_GL_GetDrawableSize(window, &drawableWidth, &drawableHeight);
     if (drawableWidth > 0 && drawableHeight > 0) {
         glViewport(0, 0, drawableWidth, drawableHeight);
+        SIM::GX::GetGlRenderer().SetDrawableSize(
+            drawableWidth,
+            drawableHeight);
     }
 }
 
@@ -107,9 +115,61 @@ extern "C" {
 void DolphinMain();
 }
 
+struct GameThreadState {
+    std::atomic<bool> finished{false};
+    int result = 1;
+};
+
+static BOOL IsRenderContextOwner() {
+    BOOL isOwner;
+
+    SDL_LockMutex(contextMutex);
+    isOwner = contextThread != 0 && contextThread == SDL_ThreadID();
+    SDL_UnlockMutex(contextMutex);
+    return isOwner;
+}
+
+static int RunDolphinMain(void* data) {
+    auto* state = static_cast<GameThreadState*>(data);
+
+    if (!SIM_HostAcquireRenderContext()) {
+        fprintf(stderr,
+                "libPorpoise SIM: game thread could not acquire the "
+                "initial render context.\n");
+    } else {
+        DolphinMain();
+        state->result = 0;
+        if (IsRenderContextOwner()) {
+            SIM_HostReleaseRenderContext();
+        }
+    }
+    state->finished.store(true, std::memory_order_release);
+    return state->result;
+}
+
+static void ProcessWindowEvent(const SDL_Event& event) {
+    if (event.type == SDL_QUIT) {
+        /* Console applications generally have no orderly main-loop exit. */
+        exit(0);
+    }
+    if (event.type == SDL_WINDOWEVENT &&
+        event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+        drawableViewportChanged.store(true, std::memory_order_release);
+    }
+}
+
 int main(int argc, char** argv) {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK) != 0) {
+    if (SDL_Init(
+            SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER |
+            SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC | SDL_INIT_EVENTS) != 0) {
         fprintf(stderr, "SDL initialization failed: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    contextMutex = SDL_CreateMutex();
+    if (contextMutex == NULL) {
+        fprintf(stderr, "OpenGL context mutex creation failed: %s\n", SDL_GetError());
+        SDL_Quit();
         return 1;
     }
 
@@ -134,12 +194,16 @@ int main(int argc, char** argv) {
         fprintf(stderr, "OpenGL context creation failed: %s\n", SDL_GetError());
         return 1;
     }
+    contextThread = SDL_ThreadID();
 
     if (!gladLoadGLLoader(SDL_GL_GetProcAddress)) {
         fprintf(stderr, "OpenGL function loading failed\n");
         return 1;
     }
-    SDL_GL_SetSwapInterval(1);
+    /* The emulated VI provides the hardware cadence after presentation.
+     * Disable driver v-sync because a frame just slower than the monitor can
+     * otherwise be quantized from (for example) 42 FPS down to 30 FPS. */
+    SDL_GL_SetSwapInterval(0);
 
     UpdateDrawableViewport();
     glEnable(GL_DEPTH_TEST);
@@ -153,32 +217,139 @@ int main(int argc, char** argv) {
     CompileFragmentShader(gxFragmentShader, SIM_GXFragmentShader);
     LinkShader(gxShaderProgramId, gxVertexShader, gxFragmentShader);
     glUseProgram(gxShaderProgramId);
+    SIM::GX::GetGlRenderer().SetShaderProgram(gxShaderProgramId);
     
     SIM::GX::InitGlobalState();
     SIM_GX_CommandProcessor_Init();
 
-    DolphinMain();
+    /*
+     * Keep the native window-creator thread available for SDL's event pump.
+     * The emulated console bootstrap owns GL while it initializes, and VI can
+     * later transfer that context explicitly to the long-lived render thread.
+     */
+    if (!SIM_HostReleaseRenderContext()) {
+        return 1;
+    }
+
+    GameThreadState gameState;
+    SDL_Thread* gameThread =
+        SDL_CreateThread(RunDolphinMain, "DolphinMain", &gameState);
+    if (gameThread == NULL) {
+        fprintf(stderr, "Game thread creation failed: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    while (!gameState.finished.load(std::memory_order_acquire)) {
+        SDL_Event event;
+        if (SDL_WaitEventTimeout(&event, 8)) {
+            ProcessWindowEvent(event);
+            while (SDL_PollEvent(&event)) {
+                ProcessWindowEvent(event);
+            }
+        }
+    }
+
+    int gameResult = 1;
+    SDL_WaitThread(gameThread, &gameResult);
+    if (!SIM_HostAcquireRenderContext()) {
+        fprintf(stderr,
+                "libPorpoise SIM: render context still belongs to a game "
+                "thread after DolphinMain returned.\n");
+        return 1;
+    }
+    SDL_LockMutex(contextMutex);
+    SDL_GL_DeleteContext(context);
+    context = NULL;
+    contextThread = 0;
+    SDL_UnlockMutex(contextMutex);
+    SDL_DestroyWindow(window);
+    window = NULL;
+    SDL_DestroyMutex(contextMutex);
+    contextMutex = NULL;
+    SDL_Quit();
+    return gameResult;
+}
+
+BOOL SIM_HostReleaseRenderContext(void) {
+    const SDL_threadID currentThread = SDL_ThreadID();
+
+    if (contextMutex == NULL) {
+        return FALSE;
+    }
+    SDL_LockMutex(contextMutex);
+
+    if (context == NULL || contextThread == 0) {
+        SDL_UnlockMutex(contextMutex);
+        return TRUE;
+    }
+    if (contextThread != currentThread) {
+        fprintf(stderr,
+                "libPorpoise SIM: render context release requested from "
+                "a non-owner thread.\n");
+        SDL_UnlockMutex(contextMutex);
+        return FALSE;
+    }
+    if (SDL_GL_GetCurrentContext() == context &&
+        SDL_GL_MakeCurrent(NULL, NULL) != 0) {
+        fprintf(stderr, "libPorpoise SIM: OpenGL context release failed: %s\n",
+                SDL_GetError());
+        SDL_UnlockMutex(contextMutex);
+        return FALSE;
+    }
+    contextThread = 0;
+    SDL_UnlockMutex(contextMutex);
+    return TRUE;
+}
+
+BOOL SIM_HostAcquireRenderContext(void) {
+    const SDL_threadID currentThread = SDL_ThreadID();
+
+    if (contextMutex == NULL) {
+        return FALSE;
+    }
+    SDL_LockMutex(contextMutex);
+
+    if (window == NULL || context == NULL) {
+        SDL_UnlockMutex(contextMutex);
+        return FALSE;
+    }
+    if (contextThread != 0 && contextThread != currentThread) {
+        fprintf(stderr,
+                "libPorpoise SIM: render context acquisition requested "
+                "before its previous owner released it.\n");
+        SDL_UnlockMutex(contextMutex);
+        return FALSE;
+    }
+    if (SDL_GL_GetCurrentContext() != context &&
+        SDL_GL_MakeCurrent(window, context) != 0) {
+        fprintf(stderr, "libPorpoise SIM: OpenGL context acquisition failed: %s\n",
+                SDL_GetError());
+        SDL_UnlockMutex(contextMutex);
+        return FALSE;
+    }
+    glUseProgram(gxShaderProgramId);
+    SIM::GX::GetGlRenderer().SetShaderProgram(gxShaderProgramId);
+    contextThread = currentThread;
+    UpdateDrawableViewport();
+    SDL_UnlockMutex(contextMutex);
+    return TRUE;
 }
 
 void SIM_VIInit() {
 }
 
 void SIM_Render() {
-    SDL_Event Event;
-
-    while( SDL_PollEvent(&Event))
-    {
-        if (Event.type == SDL_QUIT) {
-            SDL_GL_DeleteContext(context);
-            SDL_DestroyWindow(window);
-            SDL_Quit();
-            exit(0);
-        }
-
-        if (Event.type == SDL_WINDOWEVENT &&
-            Event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-            UpdateDrawableViewport();
-        }
+    if (!IsRenderContextOwner() ||
+        SDL_GL_GetCurrentContext() != context) {
+        fprintf(stderr,
+                "libPorpoise SIM: presentation requested without the render "
+                "context on the calling thread.\n");
+        return;
+    }
+    if (drawableViewportChanged.exchange(
+            false,
+            std::memory_order_acq_rel)) {
+        UpdateDrawableViewport();
     }
 
     // Present the EFB contents, then apply a requested GX copy clear to the

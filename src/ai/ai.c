@@ -4,6 +4,239 @@
 #include <dolphin/os.h>
 #include <macros.h>
 
+#ifdef LIBPORPOISE_PORT
+
+/*
+ * The host backend intentionally models the AI control surface without
+ * producing audio.  In particular, it must not run the console's sample-rate
+ * calibration loop: that loop waits for hardware sample counters which do not
+ * exist in the simulator.
+ *
+ * DMA and stream counters make bounded progress when queried.  This preserves
+ * useful state for ports which inspect the AI while ensuring that ordinary
+ * polling loops cannot wait forever on a device that is not present.
+ */
+static AISCallback HostStreamCallback;
+static AIDCallback HostDMACallback;
+static BOOL HostAIInitialized;
+static BOOL HostDMAEnabled;
+static u32 HostDMAStartAddress;
+static u32 HostDMALength;
+static u32 HostDMABytesLeft;
+static u32 HostDSPSampleRate = AI_SAMPLERATE_32KHZ;
+static u32 HostStreamSampleRate = AI_SAMPLERATE_48KHZ;
+static u32 HostStreamSampleCount;
+static u32 HostStreamTrigger;
+static u32 HostStreamPlayState = AI_STREAM_STOP;
+static u8 HostStreamVolumeLeft;
+static u8 HostStreamVolumeRight;
+
+static u32 AIHostNormalizeSampleRate(u32 rate)
+{
+	return rate == AI_SAMPLERATE_32KHZ
+	    ? AI_SAMPLERATE_32KHZ
+	    : AI_SAMPLERATE_48KHZ;
+}
+
+static void AIHostResetState(void)
+{
+	HostStreamCallback = NULL;
+	HostDMACallback = NULL;
+	HostDMAEnabled = FALSE;
+	HostDMAStartAddress = 0;
+	HostDMALength = 0;
+	HostDMABytesLeft = 0;
+	HostDSPSampleRate = AI_SAMPLERATE_32KHZ;
+	HostStreamSampleRate = AI_SAMPLERATE_48KHZ;
+	HostStreamSampleCount = 0;
+	HostStreamTrigger = 0;
+	HostStreamPlayState = AI_STREAM_STOP;
+	HostStreamVolumeLeft = 0;
+	HostStreamVolumeRight = 0;
+}
+
+static void AIHostCompleteDMA(void)
+{
+	AIDCallback callback;
+
+	if (!HostDMAEnabled) {
+		return;
+	}
+
+	/* Complete the transfer before invoking user code.  A callback may query
+	 * the DMA state or start the next buffer, and that new state must survive
+	 * after this completion returns. */
+	HostDMABytesLeft = 0;
+	HostDMAEnabled = FALSE;
+	callback = HostDMACallback;
+	if (callback != NULL) {
+		callback();
+	}
+}
+
+AIDCallback AIRegisterDMACallback(AIDCallback callback)
+{
+	AIDCallback previous = HostDMACallback;
+	HostDMACallback = callback;
+	return previous;
+}
+
+void AIInitDMA(u32 startAddress, u32 length)
+{
+	HostDMAStartAddress = startAddress;
+	HostDMALength = length;
+	HostDMABytesLeft = length;
+	HostDMAEnabled = FALSE;
+}
+
+BOOL AIGetDMAEnableFlag(void)
+{
+	const BOOL enabled = HostDMAEnabled;
+	if (enabled) {
+		AIHostCompleteDMA();
+	}
+	return enabled;
+}
+
+void AIStartDMA(void)
+{
+	HostDMABytesLeft = HostDMALength;
+	HostDMAEnabled = HostDMALength != 0 ? TRUE : FALSE;
+}
+
+void AIStopDMA(void)
+{
+	/* Stopping DMA cancels the transfer; hardware does not report that as a
+	 * completed-buffer interrupt. */
+	HostDMABytesLeft = 0;
+	HostDMAEnabled = FALSE;
+}
+
+u32 AIGetDMABytesLeft(void)
+{
+	const u32 bytesLeft = HostDMABytesLeft;
+	if (HostDMAEnabled) {
+		AIHostCompleteDMA();
+	}
+	return bytesLeft;
+}
+
+u32 AIGetDMAStartAddr(void)
+{
+	return HostDMAStartAddress;
+}
+
+u32 AIGetDMALength(void)
+{
+	return HostDMALength;
+}
+
+u32 AIGetDSPSampleRate(void)
+{
+	return HostDSPSampleRate;
+}
+
+void AISetDSPSampleRate(u32 rate)
+{
+	HostDSPSampleRate = AIHostNormalizeSampleRate(rate);
+}
+
+AISCallback AIRegisterStreamCallback(AISCallback callback)
+{
+	AISCallback previous = HostStreamCallback;
+	HostStreamCallback = callback;
+	return previous;
+}
+
+u32 AIGetStreamSampleCount(void)
+{
+	const u32 count = HostStreamSampleCount;
+	if (HostStreamPlayState == AI_STREAM_START) {
+		++HostStreamSampleCount;
+	}
+	return count;
+}
+
+void AIResetStreamSampleCount(void)
+{
+	HostStreamSampleCount = 0;
+}
+
+void AISetStreamTrigger(u32 trigger)
+{
+	HostStreamTrigger = trigger;
+}
+
+u32 AIGetStreamTrigger(void)
+{
+	return HostStreamTrigger;
+}
+
+void AISetStreamPlayState(u32 state)
+{
+	HostStreamPlayState = state != AI_STREAM_STOP
+	    ? AI_STREAM_START
+	    : AI_STREAM_STOP;
+}
+
+u32 AIGetStreamPlayState(void)
+{
+	return HostStreamPlayState;
+}
+
+void AISetStreamSampleRate(u32 rate)
+{
+	HostStreamSampleRate = AIHostNormalizeSampleRate(rate);
+}
+
+u32 AIGetStreamSampleRate(void)
+{
+	return HostStreamSampleRate;
+}
+
+void AISetStreamVolLeft(u8 volume)
+{
+	HostStreamVolumeLeft = volume;
+}
+
+void AISetStreamVolRight(u8 volume)
+{
+	HostStreamVolumeRight = volume;
+}
+
+u8 AIGetStreamVolLeft(void)
+{
+	return HostStreamVolumeLeft;
+}
+
+u8 AIGetStreamVolRight(void)
+{
+	return HostStreamVolumeRight;
+}
+
+void AIInit(u8* stack)
+{
+	(void)stack;
+	if (HostAIInitialized) {
+		return;
+	}
+	AIHostResetState();
+	HostAIInitialized = TRUE;
+}
+
+BOOL AICheckInit(void)
+{
+	return HostAIInitialized;
+}
+
+void AIReset(void)
+{
+	AIHostResetState();
+	HostAIInitialized = FALSE;
+}
+
+#else
+
 static AISCallback __AIS_Callback;
 static AIDCallback __AID_Callback;
 static u8* __CallbackStack;
@@ -348,3 +581,5 @@ void __AI_SRC_INIT(void)
 	profile.t_end = OSGetTime();
 #endif
 }
+
+#endif /* LIBPORPOISE_PORT */

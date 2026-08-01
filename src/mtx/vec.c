@@ -35,6 +35,9 @@ void PSVECAdd(register const Vec* a, const register Vec* b, register Vec* ab)
 		psq_st  fp7, 0x0008 (ab), 1, 0
 	}
 #endif
+#ifdef LIBPORPOISE_PORT
+	C_VECAdd(a, b, ab);
+#endif
 }
 
 /**
@@ -70,6 +73,9 @@ void PSVECSubtract(register const Vec* a, register const Vec* b, register Vec* a
 		psq_st  fp7, 0x0008 (a_b), 1, 0
 	}
 #endif
+#ifdef LIBPORPOISE_PORT
+	C_VECSubtract(a, b, a_b);
+#endif
 }
 
 /**
@@ -103,6 +109,9 @@ void PSVECScale(register const Vec* src, register Vec* dst, register f32 scale)
 		ps_muls0  rz, vz, scale
 		psq_st    rz,  0x0008 (dst), 1, 0
 	}
+#endif
+#ifdef LIBPORPOISE_PORT
+	C_VECScale(src, dst, scale);
 #endif
 }
 
@@ -164,6 +173,9 @@ void PSVECNormalize(register const Vec* src, register Vec* unit)
 		psq_st    v1_z, 0x0008 (unit), 1, 0
 	}
 	#endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	C_VECNormalize(src, unit);
+#endif
 }
 
 /**
@@ -196,6 +208,9 @@ ASM f32 PSVECSquareMag(register const Vec* v) {
 	blr  // Whoops! An extra blr was added despite the compiler automatically handling that.
 #endif
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	return C_VECSquareMag(v);
+#endif
 }
 
 /**
@@ -247,6 +262,10 @@ f32 PSVECMag(register const Vec* v)
 	}
 #endif
 
+#ifdef LIBPORPOISE_PORT
+	res = C_VECMag(v);
+#endif
+
 	return res;
 }
 
@@ -283,6 +302,10 @@ f32 PSVECDotProduct(register const Vec* a, register const Vec* b)
 		ps_madd  fp3, fp5, fp4, fp2
 		ps_sum0  res, fp3, fp2, fp2
 	}
+#endif
+
+#ifdef LIBPORPOISE_PORT
+	res = C_VECDotProduct(a, b);
 #endif
 
 	return res;
@@ -331,6 +354,9 @@ void PSVECCrossProduct(register const Vec* a, register const Vec* b, register Ve
 		ps_neg      fp10, fp10
 		psq_st      fp10, 0x0004 (axb), 0, 0
 	}
+#endif
+#ifdef LIBPORPOISE_PORT
+	C_VECCrossProduct(a, b, axb);
 #endif
 }
 
@@ -426,6 +452,10 @@ f32 PSVECSquareDistance(register const Vec* a, register const Vec* b)
 	}
 #endif
 
+#ifdef LIBPORPOISE_PORT
+	res = C_VECSquareDistance(a, b);
+#endif
+
 	return res;
 }
 
@@ -471,6 +501,10 @@ f32 PSVECDistance(register const Vec* a, register const Vec* b)
         fsel     fp1, fp1, fp1, fp0
         fmuls    res, fp0, fp1
 	}
+#endif
+
+#ifdef LIBPORPOISE_PORT
+	res = C_VECDistance(a, b);
 #endif
 
 	return res;

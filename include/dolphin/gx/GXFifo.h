@@ -185,7 +185,17 @@ static inline void GXColor1u16(const u16 x)
 
 static inline void GXColor1u32(u32 c)
 {
+#ifdef LIBPORPOISE_PORT
+	/* A PowerPC scalar write places R, G, B, A on the FIFO in that order.
+	 * Splitting the packed value keeps the same contract on little-endian
+	 * hosts without changing numeric U32 command writes. */
+	GX_WRITE_U8((u8)(c >> 24));
+	GX_WRITE_U8((u8)(c >> 16));
+	GX_WRITE_U8((u8)(c >> 8));
+	GX_WRITE_U8((u8)c);
+#else
 	GX_WRITE_U32(c);
+#endif
 }
 
 static inline void GXColor4u8(const u8 r, const u8 g, const u8 b, const u8 a)

@@ -39,6 +39,28 @@ int main()
 		return 6;
 	}
 
+	const u8 arrayBytes[] = {0x12, 0x34, 0xab, 0xcd, 0xfe, 0xdc};
+	u16 decodedArray[3] = {};
+	OSReadBigEndian16Array(decodedArray, arrayBytes, 3);
+	if (decodedArray[0] != 0x1234U || decodedArray[1] != 0xabcdU ||
+	    decodedArray[2] != 0xfedcU) {
+		return 7;
+	}
+
+	u16 inPlaceArray[2] = {};
+	u8* inPlaceBytes = reinterpret_cast<u8*>(inPlaceArray);
+	inPlaceBytes[0] = 0xfc;
+	inPlaceBytes[1] = 0x00;
+	inPlaceBytes[2] = 0x80;
+	inPlaceBytes[3] = 0x1f;
+	OSReadBigEndian16Array(
+	    inPlaceArray,
+	    inPlaceArray,
+	    2);
+	if (inPlaceArray[0] != 0xfc00U || inPlaceArray[1] != 0x801fU) {
+		return 8;
+	}
+
 	u8 output[28] = {};
 	OSWriteBigEndian16(output + 1, 0x1234U);
 	OSWriteBigEndian32(output + 3, 0x89ABCDEFU);
@@ -47,7 +69,7 @@ int main()
 	OSWriteBigEndianF64(output + 19, -2.5);
 	for (std::size_t index = 1; index < sizeof(bytes); ++index) {
 		if (output[index] != bytes[index]) {
-			return 7;
+			return 9;
 		}
 	}
 
