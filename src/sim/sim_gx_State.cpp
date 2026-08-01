@@ -105,36 +105,6 @@ size_t GlobalState::GetNumBytesPerVertex() {
     return totalBytes;
 }
 
-size_t GlobalState::GetNumPositionComponents(GXCompCnt compType) {
-    switch(compType) {
-        case GX_POS_XY:
-            return 2;
-        default:
-        case GX_POS_XYZ:
-            return 3;
-    }
-}
-
-GXPrimitive GlobalState::GetCurrentPrimitive() const {
-    return mCurrentPrimitive;
-}
-
-const VertexArray& GlobalState::GetVertexArray(GXAttr attr) {
-    return mVertexArrays[attr];
-}
-
-GXAttrType GlobalState::GetVertexDescriptor(GXAttr attr) {
-    return mVertexDescriptors[attr];
-}
-
-const VertexFormat& GlobalState::GetCurrentVertexFormat() {
-    return mVertexFormats[mCurrentVertexFormat];
-}
-
-const VertexFormat& GlobalState::GetVertexFormat(GXVtxFmt formatIdx) {
-    return mVertexFormats[formatIdx];
-}
-
 const std::array<float, 16>& GlobalState::GetPositionMatrix() const {
     if (mCurrentPositionMatrix < mPositionMatrices.size() &&
         mPositionMatrixValid[mCurrentPositionMatrix]) {
@@ -152,41 +122,6 @@ const std::array<float, 16>& GlobalState::GetProjectionMatrix() const {
 
     static const std::array<float, 16> identity = IdentityMatrix();
     return identity;
-}
-
-void GlobalState::SetCurrentPrimitive(GXPrimitive primitive) {
-    mCurrentPrimitive = primitive;
-}
-
-void GlobalState::SetCurrentPositionMatrix(u32 matrixId) {
-    const size_t slot = static_cast<size_t>(matrixId / 3);
-    if (slot < mPositionMatrices.size()) {
-        mCurrentPositionMatrix = slot;
-    }
-}
-
-void GlobalState::SetCurrentVertexFormat(GXVtxFmt format) {
-    mCurrentVertexFormat = format;
-}
-
-void GlobalState::SetVertexArray(GXAttr attr, VertexArray array) {
-    mVertexArrays[attr] = array;
-}
-
-void GlobalState::SetVertexDescriptor(GXAttr attr, GXAttrType descType) {
-    mVertexDescriptors[attr] = descType;
-}
-
-void GlobalState::SetVertexFormatComponents(GXVtxFmt formatIndex, GXAttr attrIndex, GXCompCnt component) {
-    mVertexFormats[formatIndex].mAttributes[attrIndex].mComponents = component;
-}
-
-void GlobalState::SetVertexFormatDataType(GXVtxFmt formatIndex, GXAttr attrIndex, GXCompType dataType) {
-    mVertexFormats[formatIndex].mAttributes[attrIndex].mDataType = dataType;
-}
-
-void GlobalState::SetVertexFormatFraction(GXVtxFmt formatIndex, GXAttr attrIndex, u8 fraction) {
-    mVertexFormats[formatIndex].mAttributes[attrIndex].mFraction = fraction;
 }
 
 void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {

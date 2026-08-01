@@ -17,74 +17,78 @@ CommandProcessor::CommandProcessor() : mGeometryProcessor(GeometryProcessor()),
 
 void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
     while(len > 0) {
-        if(mCurrentState == CommandProcessor::State::ReadOpcode) {
-            u8 currentByte = *data;
-            if(currentByte >= 0x80) {
-                //This is a beginPrimitive opcode, extract out the Vtx Format
-                mLastVertexFormatIdx = static_cast<GXVtxFmt>(currentByte & GX_VTXFMT7);
-                currentByte = currentByte & ~(GX_VTXFMT7);
-            }
-            CommandProcessor::Opcode code = static_cast<CommandProcessor::Opcode>(currentByte);
-            data++;
-            len--;
-            int numArgs = GetOpcodeArgSize(code);
-            mLastOpcode = code;
-            if(numArgs <= 0) {
-                ProcessOpcode();
-            } else {
-                mCurrentState = CommandProcessor::State::ReadArguments;
-                mRemainingArgBytes = numArgs;
-            }
-        } else if(mCurrentState == CommandProcessor::State::ReadArguments) {
-            size_t argsLen = std::min<size_t>(mRemainingArgBytes, len);
-            for(auto i = 0; i < argsLen; i++) {
-                mArgsVec.push_back(*data);
+
+        switch(mCurrentState) {
+            case CommandProcessor::State::ReadOpcode:
+            {
+                u8 currentByte = *data;
+                if(currentByte >= 0x80) {
+                    //This is a beginPrimitive opcode, extract out the Vtx Format
+                    mLastVertexFormatIdx = static_cast<GXVtxFmt>(currentByte & GX_VTXFMT7);
+                    currentByte = currentByte & ~(GX_VTXFMT7);
+                }
+                CommandProcessor::Opcode code = static_cast<CommandProcessor::Opcode>(currentByte);
                 data++;
                 len--;
-                mRemainingArgBytes--;
-            }
-            if(mRemainingArgBytes <= 0) {
-                ProcessOpcode();
-            }
-        } else if(mCurrentState == CommandProcessor::State::ReadGeometry) {
-            if(mRemainingGeometryBytes <= 0 ) {
-                OSReport("GPU: Geometry error.\n");
-            }
+                int numArgs = GetOpcodeArgSize(code);
+                mLastOpcode = code;
+                if(numArgs <= 0) {
+                    ProcessOpcode();
+                } else {
+                    mCurrentState = CommandProcessor::State::ReadArguments;
+                    mRemainingArgBytes = numArgs;
+                }
+            } break;
+            case CommandProcessor::State::ReadArguments:
+            {
+                size_t argsLen = std::min<size_t>(mRemainingArgBytes, len);
+                for(auto i = 0; i < argsLen; i++) {
+                    mArgsVec.push_back(*data);
+                    data++;
+                    len--;
+                    mRemainingArgBytes--;
+                }
+                if(mRemainingArgBytes <= 0) {
+                    ProcessOpcode();
+                }
+            } break;
+            case CommandProcessor::State::ReadGeometry:
+            {
+                size_t geometryLen = std::min<size_t>(mRemainingGeometryBytes, len);
+                for(auto i = 0; i < geometryLen; i++) {
+                    mGeometryVec.push_back(*data);
+                    data++;
+                    len--;
+                    mRemainingGeometryBytes--;
+                }
 
-            size_t geometryLen = std::min<size_t>(mRemainingGeometryBytes, len);
-            for(auto i = 0; i < geometryLen; i++) {
-                mGeometryVec.push_back(*data);
-                data++;
-                len--;
-                mRemainingGeometryBytes--;
-            }
+                if(mRemainingGeometryBytes <= 0) {
+                    //mGeometryProcessor.ProcessByteStream(mGeometryVec);
+                    mGeometryVec.clear();
+                    mCurrentState = CommandProcessor::State::ReadOpcode;
+                }
+            } break;
+            case CommandProcessor::State::ReadXfRegData:
+            {
+                size_t xfRegDataLen = std::min<size_t>(mRemainingXfRegData, len);
+                for(auto i = 0; i < xfRegDataLen; i++) {
+                    mXfRegDataVec.push_back(*data);
+                    data++;
+                    len--;
+                    mRemainingXfRegData--;
+                }
 
-            if(mRemainingGeometryBytes <= 0) {
-                mGeometryProcessor.ProcessByteStream(mGeometryVec);
-                mGeometryVec.clear();
-                mCurrentState = CommandProcessor::State::ReadOpcode;
-            }
-        } else if(mCurrentState == State::ReadXfRegData) {
-            if(mRemainingXfRegData <= 0 ) {
-                OSReport("GPU: XfRegData error.\n");
-            }
-
-            size_t xfRegDataLen = std::min<size_t>(mRemainingXfRegData, len);
-            for(auto i = 0; i < xfRegDataLen; i++) {
-                mXfRegDataVec.push_back(*data);
-                data++;
-                len--;
-                mRemainingXfRegData--;
-            }
-
-            if(mRemainingXfRegData <= 0 ) {
-                GetGlobalState().SetXfData(
-                    mXfRegAddr,
-                    mXfRegDataVec.data(),
-                    mXfRegDataVec.size() / sizeof(u32));
-                mCurrentState = State::ReadOpcode;
-                mXfRegDataVec.clear();
-            }
+                if(mRemainingXfRegData <= 0 ) {
+                    GetGlobalState().SetXfData(
+                        mXfRegAddr,
+                        mXfRegDataVec.data(),
+                        mXfRegDataVec.size() / sizeof(u32));
+                    mCurrentState = State::ReadOpcode;
+                    mXfRegDataVec.clear();
+                }
+            } break;
+            default:
+                OSReport("SIM::GX: Invalid CommandProcessor State!\n");
         }
     }
 }
@@ -134,6 +138,7 @@ void CommandProcessor::HandleBeginPrimitive(GXPrimitive primitive, size_t numVer
         mCurrentState = State::ReadOpcode;
     } else {
         mCurrentState = State::ReadGeometry;
+        mGeometryVec.reserve(mRemainingGeometryBytes);
     }
 }
 

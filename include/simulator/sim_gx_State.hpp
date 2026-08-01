@@ -34,25 +34,44 @@ class GlobalState {
 
   size_t GetDescriptorSize(GXAttrType descriptorType, GXCompType dataType, bool isColorType = false);
   size_t GetNumBytesPerVertex();
-  size_t GetNumPositionComponents(GXCompCnt compType);
+  static inline size_t GetNumPositionComponents(GXCompCnt compType) {
+    switch(compType) {
+        case GX_POS_XY:
+            return 2;
+        default:
+        case GX_POS_XYZ:
+            return 3;
+    }
+  };
 
-  GXPrimitive GetCurrentPrimitive() const;
-  GXAttrType GetVertexDescriptor(GXAttr attr);
-  const VertexFormat& GetCurrentVertexFormat();
-  const VertexArray& GetVertexArray(GXAttr attr);
-  const VertexFormat& GetVertexFormat(GXVtxFmt formatIdx);
+  inline GXPrimitive GetCurrentPrimitive() const {return mCurrentPrimitive;};
+  inline GXAttrType GetVertexDescriptor(GXAttr attr) {return mVertexDescriptors[attr];};
+  inline const VertexFormat& GetCurrentVertexFormat() {return mVertexFormats[mCurrentVertexFormat];};
+  inline const VertexArray& GetVertexArray(GXAttr attr) {return mVertexArrays[attr];};
+  inline const VertexFormat& GetVertexFormat(GXVtxFmt formatIdx) {return mVertexFormats[formatIdx];};
   const std::array<float, 16>& GetPositionMatrix() const;
   const std::array<float, 16>& GetProjectionMatrix() const;
 
   void Reset();
-  void SetCurrentPrimitive(GXPrimitive primitive);
-  void SetCurrentPositionMatrix(u32 matrixId);
-  void SetCurrentVertexFormat(GXVtxFmt format);
-  void SetVertexArray(GXAttr attr, VertexArray array);
-  void SetVertexDescriptor(GXAttr attr, GXAttrType descType);
-  void SetVertexFormatComponents(GXVtxFmt formatIndex, GXAttr attrIndex, GXCompCnt component);
-  void SetVertexFormatDataType(GXVtxFmt formatIndex, GXAttr attrIndex, GXCompType dataType);
-  void SetVertexFormatFraction(GXVtxFmt formatIndex, GXAttr attrIndex, u8 fraction);
+  inline void SetCurrentPrimitive(GXPrimitive primitive) {mCurrentPrimitive = primitive;};
+  inline void SetCurrentPositionMatrix(u32 matrixId) {
+    const size_t slot = static_cast<size_t>(matrixId / 3);
+    if (slot < mPositionMatrices.size()) {
+        mCurrentPositionMatrix = slot;
+    }
+  };
+  inline void SetCurrentVertexFormat(GXVtxFmt format) {mCurrentVertexFormat = format;};
+  inline void SetVertexArray(GXAttr attr, VertexArray array) {mVertexArrays[attr] = array;};
+  inline void SetVertexDescriptor(GXAttr attr, GXAttrType descType) {mVertexDescriptors[attr] = descType;};
+  inline void SetVertexFormatComponents(GXVtxFmt formatIndex, GXAttr attrIndex, GXCompCnt component) {
+    mVertexFormats[formatIndex].mAttributes[attrIndex].mComponents = component;
+  };
+  inline void SetVertexFormatDataType(GXVtxFmt formatIndex, GXAttr attrIndex, GXCompType dataType) {
+    mVertexFormats[formatIndex].mAttributes[attrIndex].mDataType = dataType;
+  };
+  inline void SetVertexFormatFraction(GXVtxFmt formatIndex, GXAttr attrIndex, u8 fraction) {
+    mVertexFormats[formatIndex].mAttributes[attrIndex].mFraction = fraction;
+  };
   void SetXfData(u32 address, const u8* data, size_t wordCount);
 
  private:
