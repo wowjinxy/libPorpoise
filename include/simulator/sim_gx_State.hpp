@@ -248,6 +248,7 @@ class GlobalState {
   const TextureState& GetTextureState(size_t index) const;
   const TlutState& GetTlutState(size_t index) const;
   u64 GetTextureInvalidationRevision() const;
+  u64 GetUniformStateRevision() const;
   const TexCoordGenState& GetTexCoordGenState(size_t index) const;
   const std::array<float, 16>& GetTexCoordGenMatrix(size_t index) const;
   const std::array<float, 16>& GetTexCoordGenPostMatrix(size_t index) const;
@@ -298,6 +299,7 @@ class GlobalState {
   std::array<VertexFormat, GX_MAX_VTXFMT> mVertexFormats = {};
   std::array<VertexArray, GX_VA_MAX_ATTR> mVertexArrays = {};
   std::array<u32, 0x1100> mXfMemory = {};
+  std::array<bool, 0x1100> mXfWordWritten = {};
   std::array<std::array<float, 16>, 10> mPositionMatrices = {};
   std::array<bool, 10> mPositionMatrixValid = {};
   std::array<std::array<float, 16>, 10> mNormalMatrices = {};
@@ -336,12 +338,14 @@ class GlobalState {
   std::array<std::array<float, 4>, 4> mTevColors = {};
   std::array<std::array<float, 4>, 4> mTevKonstColors = {};
   std::array<u32, 0x100> mBpRegisters = {};
+  std::array<bool, 0x100> mBpRegisterWritten = {};
   u32 mBpWriteMask = 0x00ffffffu;
   size_t mNumColorChannels = 0;
   size_t mNumTexGens = 1;
   size_t mNumTevStages = 1;
   u64 mTextureRevision = 0;
   u64 mTextureInvalidationRevision = 0;
+  u64 mUniformStateRevision = 0;
   std::array<float, 4> mCopyClearColor = {};
   float mCopyClearDepth = 1.0f;
   bool mCopyClearRequested = false;

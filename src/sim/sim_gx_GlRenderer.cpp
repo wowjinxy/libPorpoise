@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <type_traits>
 #include <vector>
 
@@ -68,6 +69,84 @@ GLenum ToGlPrimitive(GXPrimitive primitive) {
         case GX_QUADSTRIP:
         default:
             return GL_TRIANGLES;
+    }
+}
+
+void DrainGlErrors() {
+    // A lost context can report an error indefinitely. Bound cleanup so a
+    // failed optional fast path always reaches the mutable-buffer fallback.
+    constexpr size_t maxErrors = 32u;
+    for (size_t error = 0u;
+         error < maxErrors && glGetError() != GL_NO_ERROR;
+         ++error) {
+    }
+}
+
+void ConfigureRenderVertexAttributes() {
+    using SIM::GX::RenderTexCoord;
+    using SIM::GX::RenderVertex;
+
+    static_assert(std::is_standard_layout_v<RenderVertex>);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(
+        0,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, position)));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(
+        1,
+        4,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, color0)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(
+        2,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, normal)));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(
+        3,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, binormal)));
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(
+        4,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, tangent)));
+    glEnableVertexAttribArray(5);
+    glVertexAttribPointer(
+        5,
+        4,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, color1)));
+
+    for (size_t index = 0; index < 8u; ++index) {
+        glEnableVertexAttribArray(static_cast<GLuint>(6u + index));
+        glVertexAttribPointer(
+            static_cast<GLuint>(6u + index),
+            3,
+            GL_FLOAT,
+            GL_FALSE,
+            sizeof(RenderVertex),
+            reinterpret_cast<void*>(
+                offsetof(RenderVertex, texCoords) +
+                index * sizeof(RenderTexCoord)));
     }
 }
 
@@ -1488,69 +1567,164 @@ void GlRenderer::Initialize() {
     glBindVertexArray(mVertexArray);
     glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);
 
-    static_assert(std::is_standard_layout_v<RenderVertex>);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(
-        0,
-        3,
-        GL_FLOAT,
-        GL_FALSE,
-        sizeof(RenderVertex),
-        reinterpret_cast<void*>(offsetof(RenderVertex, position)));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(
-        1,
-        4,
-        GL_FLOAT,
-        GL_FALSE,
-        sizeof(RenderVertex),
-        reinterpret_cast<void*>(offsetof(RenderVertex, color0)));
-
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(
-        2,
-        3,
-        GL_FLOAT,
-        GL_FALSE,
-        sizeof(RenderVertex),
-        reinterpret_cast<void*>(offsetof(RenderVertex, normal)));
-    glEnableVertexAttribArray(3);
-    glVertexAttribPointer(
-        3,
-        3,
-        GL_FLOAT,
-        GL_FALSE,
-        sizeof(RenderVertex),
-        reinterpret_cast<void*>(offsetof(RenderVertex, binormal)));
-    glEnableVertexAttribArray(4);
-    glVertexAttribPointer(
-        4,
-        3,
-        GL_FLOAT,
-        GL_FALSE,
-        sizeof(RenderVertex),
-        reinterpret_cast<void*>(offsetof(RenderVertex, tangent)));
-    glEnableVertexAttribArray(5);
-    glVertexAttribPointer(
-        5,
-        4,
-        GL_FLOAT,
-        GL_FALSE,
-        sizeof(RenderVertex),
-        reinterpret_cast<void*>(offsetof(RenderVertex, color1)));
-
-    for (size_t index = 0; index < 8; ++index) {
-        glEnableVertexAttribArray(static_cast<GLuint>(6 + index));
-        glVertexAttribPointer(
-            static_cast<GLuint>(6 + index),
-            3,
-            GL_FLOAT,
-            GL_FALSE,
-            sizeof(RenderVertex),
-            reinterpret_cast<void*>(
-                offsetof(RenderVertex, texCoords) +
-                index * sizeof(RenderTexCoord)));
+    const bool persistentMappingAvailable =
+        GLAD_GL_ARB_buffer_storage != 0 &&
+        glad_glBufferStorage != nullptr &&
+        glad_glMapBufferRange != nullptr &&
+        glad_glFenceSync != nullptr &&
+        glad_glClientWaitSync != nullptr &&
+        glad_glDeleteSync != nullptr;
+    if (persistentMappingAvailable) {
+        constexpr size_t totalVertexCapacity =
+            VertexStreamPageCapacity * VertexStreamPageCount;
+        constexpr size_t totalByteCapacity =
+            totalVertexCapacity * sizeof(RenderVertex);
+        constexpr GLbitfield mapFlags =
+            GL_MAP_WRITE_BIT |
+            GL_MAP_PERSISTENT_BIT |
+            GL_MAP_COHERENT_BIT;
+        DrainGlErrors();
+        glBufferStorage(
+            GL_ARRAY_BUFFER,
+            static_cast<GLsizeiptr>(totalByteCapacity),
+            nullptr,
+            mapFlags);
+        const GLenum storageError = glGetError();
+        if (storageError == GL_NO_ERROR) {
+            mMappedVertexBytes = static_cast<u8*>(glMapBufferRange(
+                GL_ARRAY_BUFFER,
+                0,
+                static_cast<GLsizeiptr>(totalByteCapacity),
+                mapFlags));
+        }
+        const GLenum mappingError =
+            storageError == GL_NO_ERROR ? glGetError() : storageError;
+        mPersistentVertexStream =
+            mMappedVertexBytes != nullptr &&
+            mappingError == GL_NO_ERROR;
+        if (!mPersistentVertexStream) {
+            if (mMappedVertexBytes != nullptr) {
+                glUnmapBuffer(GL_ARRAY_BUFFER);
+                mMappedVertexBytes = nullptr;
+            }
+            DrainGlErrors();
+            // Immutable storage cannot fall back to glBufferData. Replace the
+            // object with a normal mutable GL 3.3 buffer if setup failed.
+            glDeleteBuffers(1, &mVertexBuffer);
+            glGenBuffers(1, &mVertexBuffer);
+            glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);
+        }
     }
+
+    ConfigureRenderVertexAttributes();
+}
+
+void GlRenderer::AdvancePersistentVertexPage(size_t pageIndex) {
+    if (mVertexStreamPageHasDraws) {
+        GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0u);
+        if (fence == nullptr) {
+            glFinish();
+        } else {
+            mVertexStreamFences[mActiveVertexStreamPage] = fence;
+        }
+    }
+
+    GLsync pending =
+        static_cast<GLsync>(mVertexStreamFences[pageIndex]);
+    if (pending != nullptr) {
+        GLenum waitResult = GL_TIMEOUT_EXPIRED;
+        while (waitResult == GL_TIMEOUT_EXPIRED) {
+            waitResult = glClientWaitSync(
+                pending,
+                GL_SYNC_FLUSH_COMMANDS_BIT,
+                1000000u);
+        }
+        if (waitResult == GL_WAIT_FAILED) {
+            glFinish();
+        }
+        glDeleteSync(pending);
+        mVertexStreamFences[pageIndex] = nullptr;
+    }
+
+    mActiveVertexStreamPage = pageIndex;
+    mVertexStreamPageHasDraws = false;
+}
+
+void GlRenderer::DrawPersistentVertices(
+    const std::vector<RenderVertex>& vertices,
+    GXPrimitive primitive) {
+    const GLenum glPrimitive = ToGlPrimitive(primitive);
+    if (vertices.size() > VertexStreamPageCapacity &&
+        glPrimitive != GL_TRIANGLES) {
+        // Native FIFO primitive counts fit in u16. Keep the public renderer
+        // entry point lossless for synthetic/host callers that exceed that
+        // invariant by using a separate mutable overflow buffer.
+        DrawOverflowVertices(vertices, primitive);
+        return;
+    }
+
+    size_t sourceOffset = 0u;
+    while (sourceOffset < vertices.size()) {
+        const size_t remaining = vertices.size() - sourceOffset;
+        size_t chunkSize =
+            std::min(remaining, VertexStreamPageCapacity);
+        if (remaining > VertexStreamPageCapacity &&
+            glPrimitive == GL_TRIANGLES) {
+            chunkSize -= chunkSize % 3u;
+        }
+        // Native GX primitive counts fit in one page. Only triangle lists
+        // (including expanded quads) are split, at triangle boundaries.
+        if (chunkSize == 0u) {
+            DrawOverflowVertices(vertices, primitive);
+            return;
+        }
+
+        Detail::VertexStreamAllocation allocation;
+        if (!mVertexStreamRing.Allocate(chunkSize, allocation)) {
+            DrawOverflowVertices(vertices, primitive);
+            return;
+        }
+        if (allocation.pageChanged) {
+            AdvancePersistentVertexPage(allocation.pageIndex);
+        }
+
+        std::memcpy(
+            mMappedVertexBytes +
+                allocation.firstVertex * sizeof(RenderVertex),
+            vertices.data() + sourceOffset,
+            chunkSize * sizeof(RenderVertex));
+        glDrawArrays(
+            glPrimitive,
+            static_cast<GLint>(allocation.firstVertex),
+            static_cast<GLsizei>(chunkSize));
+        mVertexStreamPageHasDraws = true;
+        sourceOffset += chunkSize;
+    }
+}
+
+void GlRenderer::DrawOverflowVertices(
+    const std::vector<RenderVertex>& vertices,
+    GXPrimitive primitive) {
+    if (mOverflowVertexArray == 0u) {
+        glGenVertexArrays(1, &mOverflowVertexArray);
+        glGenBuffers(1, &mOverflowVertexBuffer);
+        glBindVertexArray(mOverflowVertexArray);
+        glBindBuffer(GL_ARRAY_BUFFER, mOverflowVertexBuffer);
+        ConfigureRenderVertexAttributes();
+    } else {
+        glBindVertexArray(mOverflowVertexArray);
+        glBindBuffer(GL_ARRAY_BUFFER, mOverflowVertexBuffer);
+    }
+
+    glBufferData(
+        GL_ARRAY_BUFFER,
+        static_cast<GLsizeiptr>(vertices.size() * sizeof(RenderVertex)),
+        vertices.data(),
+        GL_STREAM_DRAW);
+    glDrawArrays(
+        ToGlPrimitive(primitive),
+        0,
+        static_cast<GLsizei>(vertices.size()));
 }
 
 void GlRenderer::SetDrawableSize(int width, int height) {
@@ -1570,8 +1744,14 @@ void GlRenderer::SetShaderProgram(unsigned int program) {
         return;
     }
     mShaderProgram = program;
-    mUniformLocations.Invalidate();
+    InvalidateShaderProgramCache();
     mRenderStateCache.Invalidate();
+}
+
+void GlRenderer::InvalidateShaderProgramCache() {
+    mUniformLocations.Invalidate();
+    mUniformValues.Invalidate();
+    mUniformStateRevisionValid = false;
 }
 
 void GlRenderer::InvalidateRenderStateCache() {
@@ -1625,169 +1805,99 @@ void GlRenderer::Draw(std::vector<RenderVertex>& vertices, GXPrimitive primitive
             mDrawableHeight,
             renderStateDirty);
     }
+    const u64 uniformStateRevision = gxState.GetUniformStateRevision();
+    const bool updateUniformValues =
+        !mUniformStateRevisionValid ||
+        mUniformStateRevision != uniformStateRevision ||
+        mUniformDrawableWidth != mDrawableWidth ||
+        mUniformDrawableHeight != mDrawableHeight;
     using Detail::ShaderUniform;
-    const auto& uniformLocations = mUniformLocations.Resolve(
-        static_cast<GLuint>(mShaderProgram),
-        [](unsigned int program, const char* name) {
-            return glGetUniformLocation(static_cast<GLuint>(program), name);
-        });
-    const GLint projectionLocation =
-        uniformLocations[ShaderUniform::Projection];
-    const GLint modelViewLocation =
-        uniformLocations[ShaderUniform::ModelView];
-    const GLint numTevStagesLocation =
-        uniformLocations[ShaderUniform::NumTevStages];
-    const GLint useTexturesLocation =
-        uniformLocations[ShaderUniform::UseTextures];
-    const GLint stageTexturesLocation =
-        uniformLocations[ShaderUniform::StageTextures];
-    const GLint stageTexCoordsLocation =
-        uniformLocations[ShaderUniform::StageTexCoords];
-    const GLint stageRasterChannelsLocation =
-        uniformLocations[ShaderUniform::StageRasterChannels];
-    const GLint tevColorInputsLocation =
-        uniformLocations[ShaderUniform::TevColorInputs];
-    const GLint tevAlphaInputsLocation =
-        uniformLocations[ShaderUniform::TevAlphaInputs];
-    const GLint tevColorOperationsLocation =
-        uniformLocations[ShaderUniform::TevColorOperations];
-    const GLint tevAlphaOperationsLocation =
-        uniformLocations[ShaderUniform::TevAlphaOperations];
-    const GLint tevOutputRegistersLocation =
-        uniformLocations[ShaderUniform::TevOutputRegisters];
-    const GLint tevSwapSelectorsLocation =
-        uniformLocations[ShaderUniform::TevSwapSelectors];
-    const GLint tevSwapTablesLocation =
-        uniformLocations[ShaderUniform::TevSwapTables];
-    const GLint tevRegistersLocation =
-        uniformLocations[ShaderUniform::TevRegisters];
-    const GLint tevKonstColorsLocation =
-        uniformLocations[ShaderUniform::TevKonstColors];
-    const GLint tevKonstAlphasLocation =
-        uniformLocations[ShaderUniform::TevKonstAlphas];
-    const GLint alphaComparison0Location =
-        uniformLocations[ShaderUniform::AlphaComparison0];
-    const GLint alphaReference0Location =
-        uniformLocations[ShaderUniform::AlphaReference0];
-    const GLint alphaOperationLocation =
-        uniformLocations[ShaderUniform::AlphaOperation];
-    const GLint alphaComparison1Location =
-        uniformLocations[ShaderUniform::AlphaComparison1];
-    const GLint alphaReference1Location =
-        uniformLocations[ShaderUniform::AlphaReference1];
-    const GLint fogTypeLocation =
-        uniformLocations[ShaderUniform::FogType];
-    const GLint fogOrthographicLocation =
-        uniformLocations[ShaderUniform::FogOrthographic];
-    const GLint fogALocation =
-        uniformLocations[ShaderUniform::FogA];
-    const GLint fogBLocation =
-        uniformLocations[ShaderUniform::FogB];
-    const GLint fogCLocation =
-        uniformLocations[ShaderUniform::FogC];
-    const GLint fogColorLocation =
-        uniformLocations[ShaderUniform::FogColor];
-    const GLint fogRangeEnabledLocation =
-        uniformLocations[ShaderUniform::FogRangeEnabled];
-    const GLint fogRangeCenterLocation =
-        uniformLocations[ShaderUniform::FogRangeCenter];
-    const GLint fogRangeTableLocation =
-        uniformLocations[ShaderUniform::FogRangeTable];
-    const GLint fogXScaleLocation =
-        uniformLocations[ShaderUniform::FogXScale];
-    const GLint zTextureOperationLocation =
-        uniformLocations[ShaderUniform::ZTextureOperation];
-    const GLint zTextureFormatLocation =
-        uniformLocations[ShaderUniform::ZTextureFormat];
-    const GLint zTextureBiasLocation =
-        uniformLocations[ShaderUniform::ZTextureBias];
-    if (projectionLocation >= 0) {
-        glUniformMatrix4fv(
-            projectionLocation,
-            1,
-            GL_TRUE,
-            gxState.GetProjectionMatrix().data());
-    }
-    if (modelViewLocation >= 0) {
-        constexpr std::array<float, 16> identityModelView = {
+    auto& uniformValues = mUniformScratch;
+    if (updateUniformValues) {
+        uniformValues.projection = gxState.GetProjectionMatrix();
+        uniformValues.modelView = {
             1.0f, 0.0f, 0.0f, 0.0f,
             0.0f, 1.0f, 0.0f, 0.0f,
             0.0f, 0.0f, 1.0f, 0.0f,
             0.0f, 0.0f, 0.0f, 1.0f,
         };
-        glUniformMatrix4fv(
-            modelViewLocation,
-            1,
-            GL_TRUE,
-            identityModelView.data());
+        uniformValues.useTextures.fill(0);
     }
-    constexpr size_t maxTevStages = 16;
-    std::array<GLint, maxTevStages> useTextures = {};
-    std::array<GLint, maxTevStages> textureUnits = {};
-    std::array<GLint, maxTevStages> textureCoordinates = {};
-    std::array<GLint, maxTevStages> rasterChannels = {};
-    std::array<GLint, maxTevStages * 4u> colorInputs = {};
-    std::array<GLint, maxTevStages * 4u> alphaInputs = {};
-    std::array<GLint, maxTevStages * 4u> colorOperations = {};
-    std::array<GLint, maxTevStages * 4u> alphaOperations = {};
-    std::array<GLint, maxTevStages * 2u> outputRegisters = {};
-    std::array<GLint, maxTevStages * 2u> swapSelectors = {};
-    std::array<GLint, 4u * 4u> swapTables = {};
-    std::array<float, maxTevStages * 4u> konstColors = {};
-    std::array<float, maxTevStages> konstAlphas = {};
+    constexpr size_t maxTevStages =
+        Detail::ShaderUniformValues::MaxTevStages;
+    auto& useTextures = uniformValues.useTextures;
+    auto& textureUnits = uniformValues.stageTextures;
+    auto& textureCoordinates = uniformValues.stageTexCoords;
+    auto& rasterChannels = uniformValues.stageRasterChannels;
+    auto& colorInputs = uniformValues.tevColorInputs;
+    auto& alphaInputs = uniformValues.tevAlphaInputs;
+    auto& colorOperations = uniformValues.tevColorOperations;
+    auto& alphaOperations = uniformValues.tevAlphaOperations;
+    auto& outputRegisters = uniformValues.tevOutputRegisters;
+    auto& swapSelectors = uniformValues.tevSwapSelectors;
+    auto& swapTables = uniformValues.tevSwapTables;
+    auto& registers = uniformValues.tevRegisters;
+    auto& konstColors = uniformValues.tevKonstColors;
+    auto& konstAlphas = uniformValues.tevKonstAlphas;
 
     const size_t numTevStages =
         std::min(gxState.GetNumTevStages(), maxTevStages);
+    if (updateUniformValues) {
+        uniformValues.numTevStages = static_cast<int>(numTevStages);
+    }
+    const size_t stageLoopCount =
+        updateUniformValues ? maxTevStages : numTevStages;
     for (size_t stageIndex = 0;
-         stageIndex < maxTevStages;
+         stageIndex < stageLoopCount;
          ++stageIndex) {
         const auto& stage =
             gxState.GetTevStageState(stageIndex);
-        textureUnits[stageIndex] =
-            static_cast<GLint>(stageIndex);
-        textureCoordinates[stageIndex] =
-            static_cast<GLint>(stage.textureCoordinate);
-        rasterChannels[stageIndex] =
-            static_cast<GLint>(stage.rasterChannel);
-        for (size_t input = 0; input < 4u; ++input) {
-            colorInputs[stageIndex * 4u + input] =
-                static_cast<GLint>(stage.colorInputs[input]);
-            alphaInputs[stageIndex * 4u + input] =
-                static_cast<GLint>(stage.alphaInputs[input]);
+        if (updateUniformValues) {
+            textureUnits[stageIndex] = static_cast<int>(stageIndex);
+            textureCoordinates[stageIndex] =
+                static_cast<int>(stage.textureCoordinate);
+            rasterChannels[stageIndex] =
+                static_cast<int>(stage.rasterChannel);
+            for (size_t input = 0; input < 4u; ++input) {
+                colorInputs[stageIndex * 4u + input] =
+                    static_cast<int>(stage.colorInputs[input]);
+                alphaInputs[stageIndex * 4u + input] =
+                    static_cast<int>(stage.alphaInputs[input]);
+            }
+            colorOperations[stageIndex * 4u] =
+                static_cast<int>(stage.colorOperation);
+            colorOperations[stageIndex * 4u + 1u] =
+                static_cast<int>(stage.colorBias);
+            colorOperations[stageIndex * 4u + 2u] =
+                static_cast<int>(stage.colorScale);
+            colorOperations[stageIndex * 4u + 3u] =
+                stage.colorClamp ? 1 : 0;
+            alphaOperations[stageIndex * 4u] =
+                static_cast<int>(stage.alphaOperation);
+            alphaOperations[stageIndex * 4u + 1u] =
+                static_cast<int>(stage.alphaBias);
+            alphaOperations[stageIndex * 4u + 2u] =
+                static_cast<int>(stage.alphaScale);
+            alphaOperations[stageIndex * 4u + 3u] =
+                stage.alphaClamp ? 1 : 0;
+            outputRegisters[stageIndex * 2u] =
+                static_cast<int>(stage.colorOutput);
+            outputRegisters[stageIndex * 2u + 1u] =
+                static_cast<int>(stage.alphaOutput);
+            swapSelectors[stageIndex * 2u] =
+                static_cast<int>(stage.rasterSwapTable);
+            swapSelectors[stageIndex * 2u + 1u] =
+                static_cast<int>(stage.textureSwapTable);
+            const auto konstColor =
+                gxState.GetTevKonstColor(stageIndex);
+            std::copy(
+                konstColor.begin(),
+                konstColor.end(),
+                konstColors.begin() +
+                    static_cast<std::ptrdiff_t>(stageIndex * 4u));
+            konstAlphas[stageIndex] =
+                gxState.GetTevKonstAlpha(stageIndex);
         }
-        colorOperations[stageIndex * 4u] =
-            static_cast<GLint>(stage.colorOperation);
-        colorOperations[stageIndex * 4u + 1u] =
-            static_cast<GLint>(stage.colorBias);
-        colorOperations[stageIndex * 4u + 2u] =
-            static_cast<GLint>(stage.colorScale);
-        colorOperations[stageIndex * 4u + 3u] =
-            stage.colorClamp ? 1 : 0;
-        alphaOperations[stageIndex * 4u] =
-            static_cast<GLint>(stage.alphaOperation);
-        alphaOperations[stageIndex * 4u + 1u] =
-            static_cast<GLint>(stage.alphaBias);
-        alphaOperations[stageIndex * 4u + 2u] =
-            static_cast<GLint>(stage.alphaScale);
-        alphaOperations[stageIndex * 4u + 3u] =
-            stage.alphaClamp ? 1 : 0;
-        outputRegisters[stageIndex * 2u] =
-            static_cast<GLint>(stage.colorOutput);
-        outputRegisters[stageIndex * 2u + 1u] =
-            static_cast<GLint>(stage.alphaOutput);
-        swapSelectors[stageIndex * 2u] =
-            static_cast<GLint>(stage.rasterSwapTable);
-        swapSelectors[stageIndex * 2u + 1u] =
-            static_cast<GLint>(stage.textureSwapTable);
-        const auto konstColor =
-            gxState.GetTevKonstColor(stageIndex);
-        std::copy(
-            konstColor.begin(),
-            konstColor.end(),
-            konstColors.begin() +
-                static_cast<std::ptrdiff_t>(stageIndex * 4u));
-        konstAlphas[stageIndex] =
-            gxState.GetTevKonstAlpha(stageIndex);
 
         if (stageIndex >= numTevStages ||
             !stage.textureEnabled ||
@@ -1964,237 +2074,387 @@ void GlRenderer::Draw(std::vector<RenderVertex>& vertices, GXPrimitive primitive
             mTextureTlutRevisions[textureIndex] =
                 tlutRevision;
         }
-        useTextures[stageIndex] = 1;
+        if (updateUniformValues) {
+            useTextures[stageIndex] = 1;
+        }
     }
 
-    if (numTevStagesLocation >= 0) {
-        glUniform1i(
-            numTevStagesLocation,
-            static_cast<GLint>(numTevStages));
+    if (updateUniformValues) {
+    const auto& uniformLocations = mUniformLocations.Resolve(
+        static_cast<GLuint>(mShaderProgram),
+        [](unsigned int program, const char* name) {
+            return glGetUniformLocation(static_cast<GLuint>(program), name);
+        });
+    const GLint projectionLocation =
+        uniformLocations[ShaderUniform::Projection];
+    const GLint modelViewLocation =
+        uniformLocations[ShaderUniform::ModelView];
+    const GLint numTevStagesLocation =
+        uniformLocations[ShaderUniform::NumTevStages];
+    const GLint useTexturesLocation =
+        uniformLocations[ShaderUniform::UseTextures];
+    const GLint stageTexturesLocation =
+        uniformLocations[ShaderUniform::StageTextures];
+    const GLint stageTexCoordsLocation =
+        uniformLocations[ShaderUniform::StageTexCoords];
+    const GLint stageRasterChannelsLocation =
+        uniformLocations[ShaderUniform::StageRasterChannels];
+    const GLint tevColorInputsLocation =
+        uniformLocations[ShaderUniform::TevColorInputs];
+    const GLint tevAlphaInputsLocation =
+        uniformLocations[ShaderUniform::TevAlphaInputs];
+    const GLint tevColorOperationsLocation =
+        uniformLocations[ShaderUniform::TevColorOperations];
+    const GLint tevAlphaOperationsLocation =
+        uniformLocations[ShaderUniform::TevAlphaOperations];
+    const GLint tevOutputRegistersLocation =
+        uniformLocations[ShaderUniform::TevOutputRegisters];
+    const GLint tevSwapSelectorsLocation =
+        uniformLocations[ShaderUniform::TevSwapSelectors];
+    const GLint tevSwapTablesLocation =
+        uniformLocations[ShaderUniform::TevSwapTables];
+    const GLint tevRegistersLocation =
+        uniformLocations[ShaderUniform::TevRegisters];
+    const GLint tevKonstColorsLocation =
+        uniformLocations[ShaderUniform::TevKonstColors];
+    const GLint tevKonstAlphasLocation =
+        uniformLocations[ShaderUniform::TevKonstAlphas];
+    const GLint alphaComparison0Location =
+        uniformLocations[ShaderUniform::AlphaComparison0];
+    const GLint alphaReference0Location =
+        uniformLocations[ShaderUniform::AlphaReference0];
+    const GLint alphaOperationLocation =
+        uniformLocations[ShaderUniform::AlphaOperation];
+    const GLint alphaComparison1Location =
+        uniformLocations[ShaderUniform::AlphaComparison1];
+    const GLint alphaReference1Location =
+        uniformLocations[ShaderUniform::AlphaReference1];
+    const GLint fogTypeLocation =
+        uniformLocations[ShaderUniform::FogType];
+    const GLint fogOrthographicLocation =
+        uniformLocations[ShaderUniform::FogOrthographic];
+    const GLint fogALocation =
+        uniformLocations[ShaderUniform::FogA];
+    const GLint fogBLocation =
+        uniformLocations[ShaderUniform::FogB];
+    const GLint fogCLocation =
+        uniformLocations[ShaderUniform::FogC];
+    const GLint fogColorLocation =
+        uniformLocations[ShaderUniform::FogColor];
+    const GLint fogRangeEnabledLocation =
+        uniformLocations[ShaderUniform::FogRangeEnabled];
+    const GLint fogRangeCenterLocation =
+        uniformLocations[ShaderUniform::FogRangeCenter];
+    const GLint fogRangeTableLocation =
+        uniformLocations[ShaderUniform::FogRangeTable];
+    const GLint fogXScaleLocation =
+        uniformLocations[ShaderUniform::FogXScale];
+    const GLint zTextureOperationLocation =
+        uniformLocations[ShaderUniform::ZTextureOperation];
+    const GLint zTextureFormatLocation =
+        uniformLocations[ShaderUniform::ZTextureFormat];
+    const GLint zTextureBiasLocation =
+        uniformLocations[ShaderUniform::ZTextureBias];
+    for (size_t tableIndex = 0; tableIndex < 4u; ++tableIndex) {
+        const auto& table = gxState.GetTevSwapTable(tableIndex);
+        for (size_t component = 0; component < 4u; ++component) {
+            swapTables[tableIndex * 4u + component] =
+                static_cast<int>(table[component]);
+        }
     }
-    if (useTexturesLocation >= 0) {
+    for (size_t registerIndex = 0;
+         registerIndex < 4u;
+         ++registerIndex) {
+        const auto& source = gxState.GetTevColor(registerIndex);
+        std::copy(
+            source.begin(),
+            source.end(),
+            registers.begin() +
+                static_cast<std::ptrdiff_t>(registerIndex * 4u));
+    }
+
+    const auto& alphaCompare = gxState.GetAlphaCompareState();
+    uniformValues.alphaComparison0 =
+        static_cast<int>(alphaCompare.comparison0);
+    uniformValues.alphaReference0 =
+        static_cast<int>(alphaCompare.reference0);
+    uniformValues.alphaOperation =
+        static_cast<int>(alphaCompare.operation);
+    uniformValues.alphaComparison1 =
+        static_cast<int>(alphaCompare.comparison1);
+    uniformValues.alphaReference1 =
+        static_cast<int>(alphaCompare.reference1);
+
+    const auto& fog = gxState.GetFogState();
+    uniformValues.fogType = static_cast<int>(fog.type);
+    uniformValues.fogOrthographic = fog.orthographic ? 1 : 0;
+    uniformValues.fogA =
+        std::ldexp(fog.parameterA, fog.parameterBShift);
+    uniformValues.fogB =
+        static_cast<float>(fog.parameterBMagnitude) /
+        8388638.0f *
+        std::ldexp(1.0f, static_cast<int>(fog.parameterBShift) - 1);
+    uniformValues.fogC = fog.parameterC;
+    uniformValues.fogColor = fog.color;
+    uniformValues.fogRangeEnabled =
+        fog.rangeAdjustmentEnabled ? 1 : 0;
+    uniformValues.fogRangeCenter =
+        static_cast<float>(fog.rangeAdjustmentCenter);
+    for (size_t index = 0;
+         index < uniformValues.fogRangeTable.size();
+         ++index) {
+        uniformValues.fogRangeTable[index] =
+            static_cast<float>(fog.rangeAdjustmentTable[index]) / 256.0f;
+    }
+    const auto& viewport = gxState.GetViewportState();
+    uniformValues.fogXScale =
+        mDrawableWidth > 0 && viewport.referenceWidth > 0.0f
+            ? viewport.referenceWidth /
+                static_cast<float>(mDrawableWidth)
+            : 1.0f;
+
+    const auto& zTexture = gxState.GetZTextureState();
+    uniformValues.zTextureOperation =
+        static_cast<int>(zTexture.operation);
+    uniformValues.zTextureFormat = 2;
+    if (zTexture.format == GX_TF_Z8) {
+        uniformValues.zTextureFormat = 0;
+    } else if (zTexture.format == GX_TF_Z16) {
+        uniformValues.zTextureFormat = 1;
+    }
+    uniformValues.zTextureBias = zTexture.bias;
+
+    const u64 uniformDirty = mUniformValues.Update(uniformValues);
+    const auto isUniformDirty = [uniformDirty](ShaderUniform uniform) {
+        return Detail::IsShaderUniformDirty(uniformDirty, uniform);
+    };
+
+    if (projectionLocation >= 0 &&
+        isUniformDirty(ShaderUniform::Projection)) {
+        glUniformMatrix4fv(
+            projectionLocation,
+            1,
+            GL_TRUE,
+            uniformValues.projection.data());
+    }
+    if (modelViewLocation >= 0 &&
+        isUniformDirty(ShaderUniform::ModelView)) {
+        glUniformMatrix4fv(
+            modelViewLocation,
+            1,
+            GL_TRUE,
+            uniformValues.modelView.data());
+    }
+    if (numTevStagesLocation >= 0 &&
+        isUniformDirty(ShaderUniform::NumTevStages)) {
+        glUniform1i(numTevStagesLocation, uniformValues.numTevStages);
+    }
+    if (useTexturesLocation >= 0 &&
+        isUniformDirty(ShaderUniform::UseTextures)) {
         glUniform1iv(
             useTexturesLocation,
             static_cast<GLsizei>(useTextures.size()),
             useTextures.data());
     }
-    if (stageTexturesLocation >= 0) {
+    if (stageTexturesLocation >= 0 &&
+        isUniformDirty(ShaderUniform::StageTextures)) {
         glUniform1iv(
             stageTexturesLocation,
             static_cast<GLsizei>(textureUnits.size()),
             textureUnits.data());
     }
-    if (stageTexCoordsLocation >= 0) {
+    if (stageTexCoordsLocation >= 0 &&
+        isUniformDirty(ShaderUniform::StageTexCoords)) {
         glUniform1iv(
             stageTexCoordsLocation,
             static_cast<GLsizei>(textureCoordinates.size()),
             textureCoordinates.data());
     }
-    if (stageRasterChannelsLocation >= 0) {
+    if (stageRasterChannelsLocation >= 0 &&
+        isUniformDirty(ShaderUniform::StageRasterChannels)) {
         glUniform1iv(
             stageRasterChannelsLocation,
             static_cast<GLsizei>(rasterChannels.size()),
             rasterChannels.data());
     }
-    if (tevColorInputsLocation >= 0) {
+    if (tevColorInputsLocation >= 0 &&
+        isUniformDirty(ShaderUniform::TevColorInputs)) {
         glUniform4iv(
             tevColorInputsLocation,
             static_cast<GLsizei>(maxTevStages),
             colorInputs.data());
     }
-    if (tevAlphaInputsLocation >= 0) {
+    if (tevAlphaInputsLocation >= 0 &&
+        isUniformDirty(ShaderUniform::TevAlphaInputs)) {
         glUniform4iv(
             tevAlphaInputsLocation,
             static_cast<GLsizei>(maxTevStages),
             alphaInputs.data());
     }
-    if (tevColorOperationsLocation >= 0) {
+    if (tevColorOperationsLocation >= 0 &&
+        isUniformDirty(ShaderUniform::TevColorOperations)) {
         glUniform4iv(
             tevColorOperationsLocation,
             static_cast<GLsizei>(maxTevStages),
             colorOperations.data());
     }
-    if (tevAlphaOperationsLocation >= 0) {
+    if (tevAlphaOperationsLocation >= 0 &&
+        isUniformDirty(ShaderUniform::TevAlphaOperations)) {
         glUniform4iv(
             tevAlphaOperationsLocation,
             static_cast<GLsizei>(maxTevStages),
             alphaOperations.data());
     }
-    if (tevOutputRegistersLocation >= 0) {
+    if (tevOutputRegistersLocation >= 0 &&
+        isUniformDirty(ShaderUniform::TevOutputRegisters)) {
         glUniform2iv(
             tevOutputRegistersLocation,
             static_cast<GLsizei>(maxTevStages),
             outputRegisters.data());
     }
-    if (tevSwapSelectorsLocation >= 0) {
+    if (tevSwapSelectorsLocation >= 0 &&
+        isUniformDirty(ShaderUniform::TevSwapSelectors)) {
         glUniform2iv(
             tevSwapSelectorsLocation,
             static_cast<GLsizei>(maxTevStages),
             swapSelectors.data());
     }
-    if (tevSwapTablesLocation >= 0) {
-        for (size_t tableIndex = 0;
-             tableIndex < 4u;
-             ++tableIndex) {
-            const auto& table =
-                gxState.GetTevSwapTable(tableIndex);
-            for (size_t component = 0;
-                 component < 4u;
-                 ++component) {
-                swapTables[tableIndex * 4u + component] =
-                    static_cast<GLint>(table[component]);
-            }
-        }
-        glUniform4iv(
-            tevSwapTablesLocation,
-            4,
-            swapTables.data());
+    if (tevSwapTablesLocation >= 0 &&
+        isUniformDirty(ShaderUniform::TevSwapTables)) {
+        glUniform4iv(tevSwapTablesLocation, 4, swapTables.data());
     }
-    if (tevRegistersLocation >= 0) {
-        std::array<float, 16> registers = {};
-        for (size_t registerIndex = 0;
-             registerIndex < 4u;
-             ++registerIndex) {
-            const auto& source =
-                gxState.GetTevColor(registerIndex);
-            std::copy(
-                source.begin(),
-                source.end(),
-                registers.begin() +
-                    static_cast<std::ptrdiff_t>(
-                        registerIndex * 4u));
-        }
-        glUniform4fv(
-            tevRegistersLocation,
-            4,
-            registers.data());
+    if (tevRegistersLocation >= 0 &&
+        isUniformDirty(ShaderUniform::TevRegisters)) {
+        glUniform4fv(tevRegistersLocation, 4, registers.data());
     }
-    if (tevKonstColorsLocation >= 0) {
+    if (tevKonstColorsLocation >= 0 &&
+        isUniformDirty(ShaderUniform::TevKonstColors)) {
         glUniform4fv(
             tevKonstColorsLocation,
             static_cast<GLsizei>(maxTevStages),
             konstColors.data());
     }
-    if (tevKonstAlphasLocation >= 0) {
+    if (tevKonstAlphasLocation >= 0 &&
+        isUniformDirty(ShaderUniform::TevKonstAlphas)) {
         glUniform1fv(
             tevKonstAlphasLocation,
             static_cast<GLsizei>(maxTevStages),
             konstAlphas.data());
     }
-    const auto& alphaCompare = gxState.GetAlphaCompareState();
-    if (alphaComparison0Location >= 0) {
+    if (alphaComparison0Location >= 0 &&
+        isUniformDirty(ShaderUniform::AlphaComparison0)) {
         glUniform1i(
             alphaComparison0Location,
-            static_cast<GLint>(alphaCompare.comparison0));
+            uniformValues.alphaComparison0);
     }
-    if (alphaReference0Location >= 0) {
+    if (alphaReference0Location >= 0 &&
+        isUniformDirty(ShaderUniform::AlphaReference0)) {
         glUniform1i(
             alphaReference0Location,
-            static_cast<GLint>(alphaCompare.reference0));
+            uniformValues.alphaReference0);
     }
-    if (alphaOperationLocation >= 0) {
+    if (alphaOperationLocation >= 0 &&
+        isUniformDirty(ShaderUniform::AlphaOperation)) {
         glUniform1i(
             alphaOperationLocation,
-            static_cast<GLint>(alphaCompare.operation));
+            uniformValues.alphaOperation);
     }
-    if (alphaComparison1Location >= 0) {
+    if (alphaComparison1Location >= 0 &&
+        isUniformDirty(ShaderUniform::AlphaComparison1)) {
         glUniform1i(
             alphaComparison1Location,
-            static_cast<GLint>(alphaCompare.comparison1));
+            uniformValues.alphaComparison1);
     }
-    if (alphaReference1Location >= 0) {
+    if (alphaReference1Location >= 0 &&
+        isUniformDirty(ShaderUniform::AlphaReference1)) {
         glUniform1i(
             alphaReference1Location,
-            static_cast<GLint>(alphaCompare.reference1));
+            uniformValues.alphaReference1);
     }
-    const auto& fog = gxState.GetFogState();
-    const float fogA =
-        std::ldexp(fog.parameterA, fog.parameterBShift);
-    const float fogB =
-        static_cast<float>(fog.parameterBMagnitude) /
-        8388638.0f *
-        std::ldexp(1.0f, static_cast<int>(fog.parameterBShift) - 1);
-    if (fogTypeLocation >= 0) {
-        glUniform1i(fogTypeLocation, static_cast<GLint>(fog.type));
+    if (fogTypeLocation >= 0 &&
+        isUniformDirty(ShaderUniform::FogType)) {
+        glUniform1i(fogTypeLocation, uniformValues.fogType);
     }
-    if (fogOrthographicLocation >= 0) {
-        glUniform1i(fogOrthographicLocation, fog.orthographic ? 1 : 0);
+    if (fogOrthographicLocation >= 0 &&
+        isUniformDirty(ShaderUniform::FogOrthographic)) {
+        glUniform1i(
+            fogOrthographicLocation,
+            uniformValues.fogOrthographic);
     }
-    if (fogALocation >= 0) {
-        glUniform1f(fogALocation, fogA);
+    if (fogALocation >= 0 && isUniformDirty(ShaderUniform::FogA)) {
+        glUniform1f(fogALocation, uniformValues.fogA);
     }
-    if (fogBLocation >= 0) {
-        glUniform1f(fogBLocation, fogB);
+    if (fogBLocation >= 0 && isUniformDirty(ShaderUniform::FogB)) {
+        glUniform1f(fogBLocation, uniformValues.fogB);
     }
-    if (fogCLocation >= 0) {
-        glUniform1f(fogCLocation, fog.parameterC);
+    if (fogCLocation >= 0 && isUniformDirty(ShaderUniform::FogC)) {
+        glUniform1f(fogCLocation, uniformValues.fogC);
     }
-    if (fogColorLocation >= 0) {
-        glUniform3fv(fogColorLocation, 1, fog.color.data());
+    if (fogColorLocation >= 0 &&
+        isUniformDirty(ShaderUniform::FogColor)) {
+        glUniform3fv(fogColorLocation, 1, uniformValues.fogColor.data());
     }
-    if (fogRangeEnabledLocation >= 0) {
+    if (fogRangeEnabledLocation >= 0 &&
+        isUniformDirty(ShaderUniform::FogRangeEnabled)) {
         glUniform1i(
             fogRangeEnabledLocation,
-            fog.rangeAdjustmentEnabled ? 1 : 0);
+            uniformValues.fogRangeEnabled);
     }
-    if (fogRangeCenterLocation >= 0) {
+    if (fogRangeCenterLocation >= 0 &&
+        isUniformDirty(ShaderUniform::FogRangeCenter)) {
         glUniform1f(
             fogRangeCenterLocation,
-            static_cast<float>(fog.rangeAdjustmentCenter));
+            uniformValues.fogRangeCenter);
     }
-    if (fogRangeTableLocation >= 0) {
-        std::array<float, 10> rangeAdjustments = {};
-        for (size_t index = 0;
-             index < rangeAdjustments.size();
-             ++index) {
-            rangeAdjustments[index] =
-                static_cast<float>(fog.rangeAdjustmentTable[index]) /
-                256.0f;
-        }
+    if (fogRangeTableLocation >= 0 &&
+        isUniformDirty(ShaderUniform::FogRangeTable)) {
         glUniform1fv(
             fogRangeTableLocation,
-            static_cast<GLsizei>(rangeAdjustments.size()),
-            rangeAdjustments.data());
+            static_cast<GLsizei>(uniformValues.fogRangeTable.size()),
+            uniformValues.fogRangeTable.data());
     }
-    if (fogXScaleLocation >= 0) {
-        const auto& viewport = gxState.GetViewportState();
-        const float xScale =
-            mDrawableWidth > 0 && viewport.referenceWidth > 0.0f
-                ? viewport.referenceWidth /
-                    static_cast<float>(mDrawableWidth)
-                : 1.0f;
-        glUniform1f(fogXScaleLocation, xScale);
+    if (fogXScaleLocation >= 0 &&
+        isUniformDirty(ShaderUniform::FogXScale)) {
+        glUniform1f(fogXScaleLocation, uniformValues.fogXScale);
     }
-    const auto& zTexture = gxState.GetZTextureState();
-    if (zTextureOperationLocation >= 0) {
+    if (zTextureOperationLocation >= 0 &&
+        isUniformDirty(ShaderUniform::ZTextureOperation)) {
         glUniform1i(
             zTextureOperationLocation,
-            static_cast<GLint>(zTexture.operation));
+            uniformValues.zTextureOperation);
     }
-    if (zTextureFormatLocation >= 0) {
-        GLint format = 2;
-        if (zTexture.format == GX_TF_Z8) {
-            format = 0;
-        } else if (zTexture.format == GX_TF_Z16) {
-            format = 1;
-        }
-        glUniform1i(zTextureFormatLocation, format);
+    if (zTextureFormatLocation >= 0 &&
+        isUniformDirty(ShaderUniform::ZTextureFormat)) {
+        glUniform1i(
+            zTextureFormatLocation,
+            uniformValues.zTextureFormat);
     }
-    if (zTextureBiasLocation >= 0) {
-        glUniform1ui(zTextureBiasLocation, zTexture.bias);
+    if (zTextureBiasLocation >= 0 &&
+        isUniformDirty(ShaderUniform::ZTextureBias)) {
+        glUniform1ui(zTextureBiasLocation, uniformValues.zTextureBias);
+    }
+    mUniformStateRevision = uniformStateRevision;
+    mUniformDrawableWidth = mDrawableWidth;
+    mUniformDrawableHeight = mDrawableHeight;
+    mUniformStateRevisionValid = true;
     }
 
     glBindVertexArray(mVertexArray);
     glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);
-    glBufferData(
-        GL_ARRAY_BUFFER,
-        static_cast<GLsizeiptr>(drawVertices->size() * sizeof(RenderVertex)),
-        drawVertices->data(),
-        GL_STREAM_DRAW);
-    glDrawArrays(
-        ToGlPrimitive(primitive),
-        0,
-        static_cast<GLsizei>(drawVertices->size()));
+    if (mPersistentVertexStream) {
+        DrawPersistentVertices(*drawVertices, primitive);
+    } else {
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            static_cast<GLsizeiptr>(
+                drawVertices->size() * sizeof(RenderVertex)),
+            drawVertices->data(),
+            GL_STREAM_DRAW);
+        glDrawArrays(
+            ToGlPrimitive(primitive),
+            0,
+            static_cast<GLsizei>(drawVertices->size()));
+    }
 }
 
 GlRenderer& GetGlRenderer() {

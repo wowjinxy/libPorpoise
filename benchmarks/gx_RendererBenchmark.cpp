@@ -8,10 +8,12 @@
 #include <SDL2/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 extern const char* SIM_GXVertexShader;
@@ -21,7 +23,13 @@ namespace {
 
 std::uint64_t UniformCalls;
 std::uint64_t BufferUploads;
+std::uint64_t BufferStorageCalls;
+std::uint64_t BufferMapCalls;
+std::uint64_t FenceCalls;
+std::uint64_t FenceWaitCalls;
 std::uint64_t DrawCalls;
+std::uint64_t NonZeroFirstDraws;
+bool ForceMapFailure;
 
 PFNGLUNIFORMMATRIX4FVPROC RealUniformMatrix4fv;
 PFNGLUNIFORM1IPROC RealUniform1i;
@@ -34,6 +42,10 @@ PFNGLUNIFORM3FVPROC RealUniform3fv;
 PFNGLUNIFORM1FPROC RealUniform1f;
 PFNGLUNIFORM1UIPROC RealUniform1ui;
 PFNGLBUFFERDATAPROC RealBufferData;
+PFNGLBUFFERSTORAGEPROC RealBufferStorage;
+PFNGLMAPBUFFERRANGEPROC RealMapBufferRange;
+PFNGLFENCESYNCPROC RealFenceSync;
+PFNGLCLIENTWAITSYNCPROC RealClientWaitSync;
 PFNGLDRAWARRAYSPROC RealDrawArrays;
 
 void APIENTRY CountUniformMatrix4fv(
@@ -117,11 +129,48 @@ void APIENTRY CountBufferData(
     RealBufferData(target, size, data, usage);
 }
 
+void APIENTRY CountBufferStorage(
+    GLenum target,
+    GLsizeiptr size,
+    const void* data,
+    GLbitfield flags) {
+    ++BufferStorageCalls;
+    RealBufferStorage(target, size, data, flags);
+}
+
+void* APIENTRY CountMapBufferRange(
+    GLenum target,
+    GLintptr offset,
+    GLsizeiptr length,
+    GLbitfield access) {
+    ++BufferMapCalls;
+    if (ForceMapFailure) {
+        return nullptr;
+    }
+    return RealMapBufferRange(target, offset, length, access);
+}
+
+GLsync APIENTRY CountFenceSync(GLenum condition, GLbitfield flags) {
+    ++FenceCalls;
+    return RealFenceSync(condition, flags);
+}
+
+GLenum APIENTRY CountClientWaitSync(
+    GLsync sync,
+    GLbitfield flags,
+    GLuint64 timeout) {
+    ++FenceWaitCalls;
+    return RealClientWaitSync(sync, flags, timeout);
+}
+
 void APIENTRY CountDrawArrays(
     GLenum mode,
     GLint first,
     GLsizei count) {
     ++DrawCalls;
+    if (first != 0) {
+        ++NonZeroFirstDraws;
+    }
     RealDrawArrays(mode, first, count);
 }
 
@@ -137,6 +186,10 @@ void InstallCounters() {
     RealUniform1f = glad_glUniform1f;
     RealUniform1ui = glad_glUniform1ui;
     RealBufferData = glad_glBufferData;
+    RealBufferStorage = glad_glBufferStorage;
+    RealMapBufferRange = glad_glMapBufferRange;
+    RealFenceSync = glad_glFenceSync;
+    RealClientWaitSync = glad_glClientWaitSync;
     RealDrawArrays = glad_glDrawArrays;
 
     glad_glUniformMatrix4fv = CountUniformMatrix4fv;
@@ -150,6 +203,18 @@ void InstallCounters() {
     glad_glUniform1f = CountUniform1f;
     glad_glUniform1ui = CountUniform1ui;
     glad_glBufferData = CountBufferData;
+    if (glad_glBufferStorage != nullptr) {
+        glad_glBufferStorage = CountBufferStorage;
+    }
+    if (glad_glMapBufferRange != nullptr) {
+        glad_glMapBufferRange = CountMapBufferRange;
+    }
+    if (glad_glFenceSync != nullptr) {
+        glad_glFenceSync = CountFenceSync;
+    }
+    if (glad_glClientWaitSync != nullptr) {
+        glad_glClientWaitSync = CountClientWaitSync;
+    }
     glad_glDrawArrays = CountDrawArrays;
 }
 
@@ -215,6 +280,88 @@ size_t ParseCount(const char* text, size_t fallback) {
     return static_cast<size_t>(value);
 }
 
+bool FramebufferContainsNonBlackPixel() {
+    std::array<std::uint8_t, 64u * 64u * 4u> pixels = {};
+    glReadPixels(
+        0,
+        0,
+        64,
+        64,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        pixels.data());
+    for (size_t offset = 0u;
+         offset < pixels.size();
+         offset += 4u) {
+        if (pixels[offset] != 0u ||
+            pixels[offset + 1u] != 0u ||
+            pixels[offset + 2u] != 0u) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ValidatePersistentRing(SIM::GX::GlRenderer& renderer) {
+    constexpr size_t pageCapacity = 65535u;
+    constexpr size_t markerCount = 4u;
+    std::vector<SIM::GX::RenderVertex> vertices(
+        pageCapacity * markerCount);
+    for (auto& vertex : vertices) {
+        vertex.position = {2.0f, 2.0f, 0.0f};
+        vertex.normal = {0.0f, 0.0f, 1.0f};
+        vertex.color0 = {1.0f, 1.0f, 1.0f, 1.0f};
+    }
+
+    constexpr std::array<std::array<float, 2>, markerCount> centers = {{
+        {{-0.55f, -0.55f}},
+        {{ 0.55f, -0.55f}},
+        {{-0.55f,  0.55f}},
+        {{ 0.55f,  0.55f}},
+    }};
+    for (size_t marker = 0u; marker < markerCount; ++marker) {
+        const size_t first = marker * pageCapacity;
+        const float x = centers[marker][0];
+        const float y = centers[marker][1];
+        vertices[first].position = {x - 0.22f, y - 0.18f, 0.0f};
+        vertices[first + 1u].position = {x + 0.22f, y - 0.18f, 0.0f};
+        vertices[first + 2u].position = {x, y + 0.22f, 0.0f};
+    }
+
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    renderer.Draw(vertices, GX_TRIANGLES);
+    glFinish();
+
+    std::array<std::uint8_t, 64u * 64u * 4u> pixels = {};
+    glReadPixels(
+        0,
+        0,
+        64,
+        64,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        pixels.data());
+    for (size_t quadrant = 0u; quadrant < markerCount; ++quadrant) {
+        const size_t firstX = (quadrant & 1u) != 0u ? 32u : 0u;
+        const size_t firstY = quadrant >= 2u ? 32u : 0u;
+        bool markerRendered = false;
+        for (size_t y = firstY; y < firstY + 32u; ++y) {
+            for (size_t x = firstX; x < firstX + 32u; ++x) {
+                const size_t offset = (y * 64u + x) * 4u;
+                markerRendered =
+                    markerRendered ||
+                    pixels[offset] != 0u ||
+                    pixels[offset + 1u] != 0u ||
+                    pixels[offset + 2u] != 0u;
+            }
+        }
+        if (!markerRendered) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -223,6 +370,12 @@ int main(int argc, char** argv) {
     size_t vertexCount =
         ParseCount(argc > 2 ? argv[2] : nullptr, 192u);
     vertexCount = std::max<size_t>(3u, vertexCount - vertexCount % 3u);
+    const bool forceLegacy =
+        argc > 3 && std::strcmp(argv[3], "legacy") == 0;
+    ForceMapFailure =
+        argc > 3 && std::strcmp(argv[3], "map-fail") == 0;
+    const char* requestedMode =
+        forceLegacy ? "legacy" : ForceMapFailure ? "map-fail" : "auto";
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::fprintf(stderr, "SDL initialization failed: %s\n", SDL_GetError());
@@ -257,6 +410,26 @@ int main(int argc, char** argv) {
         return 3;
     }
     SDL_GL_SetSwapInterval(0);
+    const bool persistentCapabilityAvailable =
+        GLAD_GL_ARB_buffer_storage != 0 &&
+        glad_glBufferStorage != nullptr &&
+        glad_glMapBufferRange != nullptr &&
+        glad_glFenceSync != nullptr &&
+        glad_glClientWaitSync != nullptr &&
+        glad_glDeleteSync != nullptr;
+    if (!forceLegacy && !persistentCapabilityAvailable) {
+        std::fprintf(
+            stderr,
+            "SKIP: %s mode requires persistent buffer-storage support\n",
+            requestedMode);
+        SDL_GL_DeleteContext(context);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 77;
+    }
+    if (forceLegacy) {
+        GLAD_GL_ARB_buffer_storage = 0;
+    }
     InstallCounters();
 
     const GLuint program = CreateProgram();
@@ -272,6 +445,9 @@ int main(int argc, char** argv) {
     auto& renderer = SIM::GX::GetGlRenderer();
     renderer.SetDrawableSize(64, 64);
     renderer.SetShaderProgram(program);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearDepth(1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     std::vector<SIM::GX::RenderVertex> vertices(vertexCount);
     for (size_t index = 0; index < vertices.size(); ++index) {
@@ -290,9 +466,17 @@ int main(int argc, char** argv) {
     }
     glFinish();
 
+    // Timed rendering must produce its own output; warmup pixels cannot make
+    // a broken upload path appear valid.
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glFinish();
+
     UniformCalls = 0;
     BufferUploads = 0;
+    FenceCalls = 0;
+    FenceWaitCalls = 0;
     DrawCalls = 0;
+    NonZeroFirstDraws = 0;
 
     const auto start = std::chrono::steady_clock::now();
     for (size_t draw = 0; draw < drawCount; ++draw) {
@@ -300,23 +484,93 @@ int main(int argc, char** argv) {
     }
     glFinish();
     const auto end = std::chrono::steady_clock::now();
+    const bool timedOutputValidated = FramebufferContainsNonBlackPixel();
+
+    const std::uint64_t timedUniformCalls = UniformCalls;
+    const std::uint64_t timedBufferUploads = BufferUploads;
+    const std::uint64_t initializedBufferStorageCalls = BufferStorageCalls;
+    const std::uint64_t initializedBufferMapCalls = BufferMapCalls;
+    const std::uint64_t timedFenceCalls = FenceCalls;
+    const std::uint64_t timedFenceWaitCalls = FenceWaitCalls;
+    const std::uint64_t timedDrawCalls = DrawCalls;
+    const std::uint64_t timedNonZeroFirstDraws = NonZeroFirstDraws;
+    bool modeCountersValidated =
+        timedUniformCalls == 0u &&
+        timedDrawCalls == drawCount;
+    if (forceLegacy) {
+        modeCountersValidated =
+            modeCountersValidated &&
+            initializedBufferStorageCalls == 0u &&
+            initializedBufferMapCalls == 0u &&
+            timedBufferUploads == drawCount &&
+            timedFenceCalls == 0u &&
+            timedFenceWaitCalls == 0u &&
+            timedNonZeroFirstDraws == 0u;
+    } else if (ForceMapFailure) {
+        modeCountersValidated =
+            modeCountersValidated &&
+            initializedBufferStorageCalls == 1u &&
+            initializedBufferMapCalls == 1u &&
+            timedBufferUploads == drawCount &&
+            timedFenceCalls == 0u &&
+            timedFenceWaitCalls == 0u &&
+            timedNonZeroFirstDraws == 0u;
+    } else {
+        modeCountersValidated =
+            modeCountersValidated &&
+            initializedBufferStorageCalls == 1u &&
+            initializedBufferMapCalls == 1u &&
+            timedBufferUploads == 0u &&
+            timedFenceCalls != 0u &&
+            timedFenceWaitCalls != 0u &&
+            timedNonZeroFirstDraws != 0u;
+    }
+    const bool ringValidated = ValidatePersistentRing(renderer);
 
     const double elapsedMs =
         std::chrono::duration<double, std::milli>(end - start).count();
     std::printf(
-        "draws=%zu vertices_per_draw=%zu elapsed_ms=%.3f us_per_draw=%.3f "
-        "uniform_calls=%llu buffer_uploads=%llu draw_calls=%llu\n",
+        "requested_mode=%s draws=%zu vertices_per_draw=%zu elapsed_ms=%.3f "
+        "us_per_draw=%.3f "
+        "uniform_calls=%llu buffer_uploads=%llu buffer_storage=%llu "
+        "buffer_maps=%llu fences=%llu fence_waits=%llu draw_calls=%llu "
+        "nonzero_first_draws=%llu\n",
+        requestedMode,
         drawCount,
         vertexCount,
         elapsedMs,
         elapsedMs * 1000.0 / static_cast<double>(drawCount),
-        static_cast<unsigned long long>(UniformCalls),
-        static_cast<unsigned long long>(BufferUploads),
-        static_cast<unsigned long long>(DrawCalls));
+        static_cast<unsigned long long>(timedUniformCalls),
+        static_cast<unsigned long long>(timedBufferUploads),
+        static_cast<unsigned long long>(initializedBufferStorageCalls),
+        static_cast<unsigned long long>(initializedBufferMapCalls),
+        static_cast<unsigned long long>(timedFenceCalls),
+        static_cast<unsigned long long>(timedFenceWaitCalls),
+        static_cast<unsigned long long>(timedDrawCalls),
+        static_cast<unsigned long long>(timedNonZeroFirstDraws));
 
     glDeleteProgram(program);
     SDL_GL_DeleteContext(context);
     SDL_DestroyWindow(window);
     SDL_Quit();
+    if (!timedOutputValidated) {
+        std::fprintf(
+            stderr,
+            "renderer benchmark timed draws produced no color output\n");
+        return 5;
+    }
+    if (!ringValidated) {
+        std::fprintf(
+            stderr,
+            "renderer benchmark failed the four-page ring validation\n");
+        return 6;
+    }
+    if (!modeCountersValidated) {
+        std::fprintf(
+            stderr,
+            "renderer benchmark did not exercise requested %s mode\n",
+            requestedMode);
+        return 7;
+    }
     return 0;
 }

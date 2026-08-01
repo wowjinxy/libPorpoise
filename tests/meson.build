@@ -53,6 +53,7 @@ sim_gx_vertex_decoder_test = executable(
         '../src/sim/sim_gx_State.cpp',
         '../src/sim/sim_gx_TexGen.cpp',
         '../src/sim/sim_gx_TextureCache.cpp',
+        '../src/sim/sim_gx_UniformCache.cpp',
         '../src/sim/sim_gx_VertexDecoder.cpp',
     ),
     include_directories: libporpoise_includes,

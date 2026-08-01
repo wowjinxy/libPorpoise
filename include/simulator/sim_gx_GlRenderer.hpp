@@ -210,6 +210,113 @@ enum class ShaderUniform : size_t {
   Count,
 };
 
+constexpr u64 ShaderUniformMask(ShaderUniform uniform) {
+  return u64{1} << static_cast<size_t>(uniform);
+}
+
+constexpr u64 AllShaderUniformsMask() {
+  static_assert(static_cast<size_t>(ShaderUniform::Count) < 64u);
+  return
+      (u64{1} << static_cast<size_t>(ShaderUniform::Count)) - u64{1};
+}
+
+constexpr bool IsShaderUniformDirty(u64 dirty, ShaderUniform uniform) {
+  return (dirty & ShaderUniformMask(uniform)) != 0u;
+}
+
+// Host-native values exactly as consumed by the GLSL program. Comparing this
+// payload avoids repeating driver calls when GX state is unchanged while
+// leaving FIFO parsing and its explicit big-endian decode boundaries alone.
+struct ShaderUniformValues {
+  static constexpr size_t MaxTevStages = 16u;
+
+  std::array<float, 16> projection = {};
+  std::array<float, 16> modelView = {};
+  int numTevStages = 0;
+  std::array<int, MaxTevStages> useTextures = {};
+  std::array<int, MaxTevStages> stageTextures = {};
+  std::array<int, MaxTevStages> stageTexCoords = {};
+  std::array<int, MaxTevStages> stageRasterChannels = {};
+  std::array<int, MaxTevStages * 4u> tevColorInputs = {};
+  std::array<int, MaxTevStages * 4u> tevAlphaInputs = {};
+  std::array<int, MaxTevStages * 4u> tevColorOperations = {};
+  std::array<int, MaxTevStages * 4u> tevAlphaOperations = {};
+  std::array<int, MaxTevStages * 2u> tevOutputRegisters = {};
+  std::array<int, MaxTevStages * 2u> tevSwapSelectors = {};
+  std::array<int, 4u * 4u> tevSwapTables = {};
+  std::array<float, 4u * 4u> tevRegisters = {};
+  std::array<float, MaxTevStages * 4u> tevKonstColors = {};
+  std::array<float, MaxTevStages> tevKonstAlphas = {};
+  int alphaComparison0 = 0;
+  int alphaReference0 = 0;
+  int alphaOperation = 0;
+  int alphaComparison1 = 0;
+  int alphaReference1 = 0;
+  int fogType = 0;
+  int fogOrthographic = 0;
+  float fogA = 0.0f;
+  float fogB = 0.0f;
+  float fogC = 0.0f;
+  std::array<float, 3> fogColor = {};
+  int fogRangeEnabled = 0;
+  float fogRangeCenter = 0.0f;
+  std::array<float, 10> fogRangeTable = {};
+  float fogXScale = 1.0f;
+  int zTextureOperation = 0;
+  int zTextureFormat = 0;
+  u32 zTextureBias = 0;
+};
+
+class ShaderUniformValueCache {
+ public:
+  u64 Update(const ShaderUniformValues& values);
+  void Invalidate() { mValid = false; }
+
+ private:
+  ShaderUniformValues mValues = {};
+  bool mValid = false;
+};
+
+struct VertexStreamAllocation {
+  size_t pageIndex = 0;
+  size_t firstVertex = 0;
+  bool pageChanged = false;
+};
+
+// Pure page allocator for a persistently mapped vertex ring. The renderer
+// fences the old page and waits for the returned page before writing whenever
+// pageChanged is true.
+class VertexStreamRing {
+ public:
+  VertexStreamRing(size_t pageCapacity, size_t pageCount)
+      : mPageCapacity(pageCapacity), mPageCount(pageCount) {}
+
+  bool Allocate(size_t vertexCount, VertexStreamAllocation& allocation) {
+    if (vertexCount == 0u || vertexCount > mPageCapacity ||
+        mPageCapacity == 0u || mPageCount == 0u) {
+      return false;
+    }
+
+    allocation.pageChanged = false;
+    if (mPageOffset + vertexCount > mPageCapacity) {
+      mPageIndex = (mPageIndex + 1u) % mPageCount;
+      mPageOffset = 0u;
+      allocation.pageChanged = true;
+    }
+    allocation.pageIndex = mPageIndex;
+    allocation.firstVertex =
+        mPageIndex * mPageCapacity + mPageOffset;
+    mPageOffset += vertexCount;
+    return true;
+  }
+
+ private:
+  size_t mPageCapacity = 0u;
+  size_t mPageCount = 0u;
+  size_t mPageIndex = 0u;
+  size_t mPageOffset = 0u;
+};
+
 // Uniform locations are stable for the lifetime of a linked GL program.
 // Keeping the resolver injectable lets the program-keyed behavior be tested
 // without creating an OpenGL context.
@@ -289,13 +396,26 @@ class GlRenderer {
   void Draw(std::vector<RenderVertex>& vertices, GXPrimitive primitive);
   void SetDrawableSize(int width, int height);
   void SetShaderProgram(unsigned int program);
+  void InvalidateShaderProgramCache();
   void InvalidateRenderStateCache();
 
  private:
   void Initialize();
+  void DrawPersistentVertices(
+      const std::vector<RenderVertex>& vertices,
+      GXPrimitive primitive);
+  void DrawOverflowVertices(
+      const std::vector<RenderVertex>& vertices,
+      GXPrimitive primitive);
+  void AdvancePersistentVertexPage(size_t pageIndex);
+
+  static constexpr size_t VertexStreamPageCount = 3u;
+  static constexpr size_t VertexStreamPageCapacity = 65535u;
 
   unsigned int mVertexArray = 0;
   unsigned int mVertexBuffer = 0;
+  unsigned int mOverflowVertexArray = 0;
+  unsigned int mOverflowVertexBuffer = 0;
   unsigned int mShaderProgram = 0;
   std::array<unsigned int, 8> mTextures = {};
   std::array<u64, 8> mTextureRevisions = {};
@@ -303,8 +423,23 @@ class GlRenderer {
   std::array<u64, 8> mTextureTlutRevisions = {};
   std::array<TextureContentSnapshot, 8> mTextureSnapshots = {};
   Detail::ShaderUniformLocationCache mUniformLocations;
+  Detail::ShaderUniformValueCache mUniformValues;
+  Detail::ShaderUniformValues mUniformScratch = {};
   Detail::RenderStateCache mRenderStateCache;
   std::vector<RenderVertex> mExpandedVertices;
+  Detail::VertexStreamRing mVertexStreamRing = {
+      VertexStreamPageCapacity,
+      VertexStreamPageCount,
+  };
+  std::array<void*, VertexStreamPageCount> mVertexStreamFences = {};
+  u8* mMappedVertexBytes = nullptr;
+  size_t mActiveVertexStreamPage = 0u;
+  bool mPersistentVertexStream = false;
+  bool mVertexStreamPageHasDraws = false;
+  u64 mUniformStateRevision = 0;
+  bool mUniformStateRevisionValid = false;
+  int mUniformDrawableWidth = 0;
+  int mUniformDrawableHeight = 0;
   int mDrawableWidth = 640;
   int mDrawableHeight = 480;
 };

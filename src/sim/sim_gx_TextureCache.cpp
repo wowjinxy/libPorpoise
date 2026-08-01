@@ -1,5 +1,6 @@
 #include <simulator/sim_gx_GlRenderer.hpp>
 
+#include <bit>
 #include <cstring>
 
 #include <simulator/sim_gx_State.hpp>
@@ -61,6 +62,206 @@ size_t GetMipLevelByteSize(
         (static_cast<size_t>(height) + block.height - 1u) /
         block.height;
     return blockColumns * blockRows * block.byteSize;
+}
+
+bool MatchesCanonicalNativeU16Bytes(
+    const void* source,
+    const std::vector<u8>& canonicalBytes) {
+    const size_t byteSize = canonicalBytes.size();
+    if (source == nullptr || byteSize == 0u ||
+        (byteSize & 1u) != 0u) {
+        return false;
+    }
+
+    if constexpr (std::endian::native == std::endian::big) {
+        return std::memcmp(source, canonicalBytes.data(), byteSize) == 0;
+    }
+
+    const auto* sourceBytes = static_cast<const u8*>(source);
+    size_t byteOffset = 0u;
+    if constexpr (std::endian::native == std::endian::little) {
+        constexpr u64 lowBytes = 0x00ff00ff00ff00ffull;
+        constexpr u64 highBytes = 0xff00ff00ff00ff00ull;
+        for (;
+             byteOffset + sizeof(u64) <= byteSize;
+             byteOffset += sizeof(u64)) {
+            u64 nativeWords = 0u;
+            u64 canonicalWords = 0u;
+            std::memcpy(
+                &nativeWords,
+                sourceBytes + byteOffset,
+                sizeof(nativeWords));
+            std::memcpy(
+                &canonicalWords,
+                canonicalBytes.data() + byteOffset,
+                sizeof(canonicalWords));
+            const u64 swappedWords =
+                ((nativeWords & lowBytes) << 8u) |
+                ((nativeWords & highBytes) >> 8u);
+            if (swappedWords != canonicalWords) {
+                return false;
+            }
+        }
+    }
+
+    for (;
+         byteOffset < byteSize;
+         byteOffset += sizeof(u16)) {
+        u16 value = 0u;
+        std::memcpy(
+            &value,
+            sourceBytes + byteOffset,
+            sizeof(value));
+        if (canonicalBytes[byteOffset] !=
+                static_cast<u8>(value >> 8u) ||
+            canonicalBytes[byteOffset + 1u] !=
+                static_cast<u8>(value)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CopyCanonicalNativeU16Bytes(
+    const void* source,
+    size_t byteSize,
+    std::vector<u8>& canonicalBytes) {
+    if (source == nullptr || byteSize == 0u ||
+        (byteSize & 1u) != 0u) {
+        canonicalBytes.clear();
+        return false;
+    }
+
+    canonicalBytes.resize(byteSize);
+    const auto* sourceBytes = static_cast<const u8*>(source);
+    if constexpr (std::endian::native == std::endian::big) {
+        std::memcpy(canonicalBytes.data(), source, byteSize);
+        return true;
+    }
+
+    size_t byteOffset = 0u;
+    if constexpr (std::endian::native == std::endian::little) {
+        constexpr u64 lowBytes = 0x00ff00ff00ff00ffull;
+        constexpr u64 highBytes = 0xff00ff00ff00ff00ull;
+        for (;
+             byteOffset + sizeof(u64) <= byteSize;
+             byteOffset += sizeof(u64)) {
+            u64 nativeWords = 0u;
+            std::memcpy(
+                &nativeWords,
+                sourceBytes + byteOffset,
+                sizeof(nativeWords));
+            const u64 swappedWords =
+                ((nativeWords & lowBytes) << 8u) |
+                ((nativeWords & highBytes) >> 8u);
+            std::memcpy(
+                canonicalBytes.data() + byteOffset,
+                &swappedWords,
+                sizeof(swappedWords));
+        }
+    }
+
+    for (;
+         byteOffset < byteSize;
+         byteOffset += sizeof(u16)) {
+        u16 value = 0u;
+        std::memcpy(
+            &value,
+            sourceBytes + byteOffset,
+            sizeof(value));
+        canonicalBytes[byteOffset] = static_cast<u8>(value >> 8u);
+        canonicalBytes[byteOffset + 1u] = static_cast<u8>(value);
+    }
+    return true;
+}
+
+bool MatchesCanonicalTextureBytes(
+    const TextureState& texture,
+    const std::vector<u8>& canonicalBytes) {
+    const size_t byteSize = canonicalBytes.size();
+    if (texture.data == nullptr || byteSize == 0u) {
+        return false;
+    }
+    if (texture.sourceEncoding ==
+        TextureState::SourceEncoding::CanonicalBigEndian) {
+        return std::memcmp(
+            canonicalBytes.data(),
+            texture.data,
+            byteSize) == 0;
+    }
+
+    // NativeU16 is an SDK-facing host representation. Compare each word to
+    // the canonical GameCube byte snapshot explicitly, without allocating a
+    // second full-size vector or interpreting console bytes in host order.
+    return MatchesCanonicalNativeU16Bytes(
+        texture.data,
+        canonicalBytes);
+}
+
+bool MatchesCanonicalTlutBytes(
+    const TlutState& tlut,
+    const std::vector<u8>& canonicalBytes) {
+    const bool hasSource =
+        !tlut.canonicalBytes.empty() || tlut.data != nullptr;
+    if (!hasSource) {
+        return canonicalBytes.empty();
+    }
+
+    const size_t byteSize = static_cast<size_t>(tlut.entries) * 2u;
+    if (byteSize == 0u || canonicalBytes.size() != byteSize) {
+        return false;
+    }
+    if (!tlut.canonicalBytes.empty()) {
+        return
+            tlut.canonicalBytes.size() == byteSize &&
+            std::memcmp(
+                canonicalBytes.data(),
+                tlut.canonicalBytes.data(),
+                byteSize) == 0;
+    }
+    if (tlut.sourceEncoding == TlutState::SourceEncoding::NativeU16) {
+        return MatchesCanonicalNativeU16Bytes(
+            tlut.data,
+            canonicalBytes);
+    }
+    return std::memcmp(
+        canonicalBytes.data(),
+        tlut.data,
+        byteSize) == 0;
+}
+
+bool CopyCanonicalTlutBytes(
+    const TlutState& tlut,
+    std::vector<u8>& canonicalBytes) {
+    const bool hasSource =
+        !tlut.canonicalBytes.empty() || tlut.data != nullptr;
+    if (!hasSource) {
+        canonicalBytes.clear();
+        return true;
+    }
+
+    const size_t byteSize = static_cast<size_t>(tlut.entries) * 2u;
+    if (byteSize == 0u) {
+        canonicalBytes.clear();
+        return false;
+    }
+    if (!tlut.canonicalBytes.empty()) {
+        if (tlut.canonicalBytes.size() != byteSize) {
+            canonicalBytes.clear();
+            return false;
+        }
+        canonicalBytes = tlut.canonicalBytes;
+        return true;
+    }
+    if (tlut.sourceEncoding == TlutState::SourceEncoding::NativeU16) {
+        return CopyCanonicalNativeU16Bytes(
+            tlut.data,
+            byteSize,
+            canonicalBytes);
+    }
+    canonicalBytes.resize(byteSize);
+    std::memcpy(canonicalBytes.data(), tlut.data, byteSize);
+    return true;
 }
 
 }
@@ -159,23 +360,14 @@ bool CopyCanonicalTextureBytes(
         return false;
     }
 
-    canonicalBytes.resize(byteSize);
     if (texture.sourceEncoding ==
         TextureState::SourceEncoding::NativeU16) {
-        const auto* sourceWords =
-            static_cast<const u16*>(texture.data);
-        for (size_t word = 0; word < byteSize / 2u; ++word) {
-            const u16 value = sourceWords[word];
-            canonicalBytes[word * 2u] =
-                static_cast<u8>(value >> 8u);
-            canonicalBytes[word * 2u + 1u] =
-                static_cast<u8>(value);
-        }
-        if ((byteSize & 1u) != 0u) {
-            canonicalBytes.back() =
-                static_cast<const u8*>(texture.data)[byteSize - 1u];
-        }
+        return CopyCanonicalNativeU16Bytes(
+            texture.data,
+            byteSize,
+            canonicalBytes);
     } else {
+        canonicalBytes.resize(byteSize);
         std::memcpy(canonicalBytes.data(), texture.data, byteSize);
     }
     return true;
@@ -243,9 +435,7 @@ bool TextureContentSnapshot::Matches(
         return false;
     }
 
-    std::vector<u8> currentTextureBytes;
-    if (!CopyCanonicalTextureBytes(texture, currentTextureBytes) ||
-        currentTextureBytes != mTextureBytes) {
+    if (!MatchesCanonicalTextureBytes(texture, mTextureBytes)) {
         return false;
     }
 
@@ -261,19 +451,12 @@ bool TextureContentSnapshot::Matches(
         tlut != nullptr ? tlut->format : GX_TL_IA8;
     const u16 tlutEntries =
         tlut != nullptr ? tlut->entries : 0u;
-    const size_t tlutByteSize =
-        tlut != nullptr && tlut->CanonicalData() != nullptr
-            ? static_cast<size_t>(tlutEntries) * 2u
-            : 0u;
     return
         mTlutFormat == tlutFormat &&
         mTlutEntries == tlutEntries &&
-        mTlutBytes.size() == tlutByteSize &&
-        (tlutByteSize == 0u ||
-         std::memcmp(
-             mTlutBytes.data(),
-             tlut->CanonicalData(),
-             tlutByteSize) == 0);
+        (tlut == nullptr
+             ? mTlutBytes.empty()
+             : MatchesCanonicalTlutBytes(*tlut, mTlutBytes));
 }
 
 void TextureContentSnapshot::Capture(
@@ -292,11 +475,10 @@ void TextureContentSnapshot::Capture(
         usesTlut && tlut != nullptr ? tlut->format : GX_TL_IA8;
     mTlutEntries =
         usesTlut && tlut != nullptr ? tlut->entries : 0u;
-    if (usesTlut && tlut != nullptr && tlut->CanonicalData() != nullptr) {
-        const auto* bytes =
-            static_cast<const u8*>(tlut->CanonicalData());
-        const size_t byteSize = static_cast<size_t>(tlut->entries) * 2u;
-        mTlutBytes.assign(bytes, bytes + byteSize);
+    if (usesTlut && tlut != nullptr) {
+        mValid =
+            CopyCanonicalTlutBytes(*tlut, mTlutBytes) &&
+            mValid;
     } else {
         mTlutBytes.clear();
     }

@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <string_view>
 #include <vector>
 
@@ -558,7 +559,77 @@ bool TestTextureContentSnapshot() {
 
     snapshot.Capture(texture, &tlut);
     texture.wrapS = GX_REPEAT;
-    return snapshot.Matches(texture, &tlut);
+    if (!snapshot.Matches(texture, &tlut)) {
+        return false;
+    }
+
+    std::array<u16, 16> nativeTlutWords = {};
+    nativeTlutWords[0] = 0x1234u;
+    SIM::GX::TlutState nativeTlut;
+    nativeTlut.data = nativeTlutWords.data();
+    nativeTlut.format = GX_TL_RGB5A3;
+    nativeTlut.entries = 16u;
+    nativeTlut.sourceEncoding =
+        SIM::GX::TlutState::SourceEncoding::NativeU16;
+    SIM::GX::TextureContentSnapshot nativeTlutSnapshot;
+    nativeTlutSnapshot.Capture(texture, &nativeTlut);
+
+    std::array<u8, 32> canonicalTlutBytes = {};
+    canonicalTlutBytes[0] = 0x12u;
+    canonicalTlutBytes[1] = 0x34u;
+    SIM::GX::TlutState canonicalTlut = nativeTlut;
+    canonicalTlut.data = canonicalTlutBytes.data();
+    canonicalTlut.sourceEncoding =
+        SIM::GX::TlutState::SourceEncoding::CanonicalBigEndian;
+    if (!nativeTlutSnapshot.Matches(texture, &canonicalTlut)) {
+        return false;
+    }
+    SIM::GX::TextureContentSnapshot canonicalTlutSnapshot;
+    canonicalTlutSnapshot.Capture(texture, &canonicalTlut);
+    if (!canonicalTlutSnapshot.Matches(texture, &nativeTlut)) {
+        return false;
+    }
+    nativeTlutWords[0] = 0x3412u;
+    if (nativeTlutSnapshot.Matches(texture, &nativeTlut) ||
+        canonicalTlutSnapshot.Matches(texture, &nativeTlut)) {
+        return false;
+    }
+
+    std::array<u16, 16> nativeTextureWords = {};
+    nativeTextureWords[0] = 0x1234u;
+    SIM::GX::TextureState nativeTexture;
+    nativeTexture.data = nativeTextureWords.data();
+    nativeTexture.width = 8u;
+    nativeTexture.height = 8u;
+    nativeTexture.format = GX_TF_I4;
+    nativeTexture.sourceEncoding =
+        SIM::GX::TextureState::SourceEncoding::NativeU16;
+    SIM::GX::TextureContentSnapshot nativeSnapshot;
+    nativeSnapshot.Capture(nativeTexture);
+    if (!nativeSnapshot.Matches(nativeTexture)) {
+        return false;
+    }
+
+    std::array<u8, 32> canonicalTextureBytes = {};
+    canonicalTextureBytes[0] = 0x12u;
+    canonicalTextureBytes[1] = 0x34u;
+    SIM::GX::TextureState canonicalTexture = nativeTexture;
+    canonicalTexture.data = canonicalTextureBytes.data();
+    canonicalTexture.sourceEncoding =
+        SIM::GX::TextureState::SourceEncoding::CanonicalBigEndian;
+    if (!nativeSnapshot.Matches(canonicalTexture)) {
+        return false;
+    }
+
+    SIM::GX::TextureContentSnapshot canonicalSnapshot;
+    canonicalSnapshot.Capture(canonicalTexture);
+    if (!canonicalSnapshot.Matches(nativeTexture)) {
+        return false;
+    }
+    nativeTextureWords[0] = 0x3412u;
+    return
+        !nativeSnapshot.Matches(nativeTexture) &&
+        !canonicalSnapshot.Matches(nativeTexture);
 }
 
 bool TestTlutRevisionInvalidatesIndexedTexture() {
@@ -664,6 +735,216 @@ bool TestShaderUniformLocationCache() {
     return resolverCalls == locationCount * 3u;
 }
 
+bool TestShaderUniformValueCache() {
+    using SIM::GX::Detail::AllShaderUniformsMask;
+    using SIM::GX::Detail::ShaderUniform;
+    using SIM::GX::Detail::ShaderUniformMask;
+    using SIM::GX::Detail::ShaderUniformValueCache;
+    using SIM::GX::Detail::ShaderUniformValues;
+
+    ShaderUniformValueCache cache;
+    ShaderUniformValues values;
+    if (cache.Update(values) != AllShaderUniformsMask() ||
+        cache.Update(values) != 0u) {
+        return false;
+    }
+
+    values.projection[0] = 1.0f;
+    if (cache.Update(values) !=
+        ShaderUniformMask(ShaderUniform::Projection)) {
+        return false;
+    }
+    values.useTextures[3] = 1;
+    if (cache.Update(values) !=
+        ShaderUniformMask(ShaderUniform::UseTextures)) {
+        return false;
+    }
+    values.tevKonstColors[7] = 0.5f;
+    if (cache.Update(values) !=
+        ShaderUniformMask(ShaderUniform::TevKonstColors)) {
+        return false;
+    }
+    values.alphaReference0 = 0x7f;
+    if (cache.Update(values) !=
+        ShaderUniformMask(ShaderUniform::AlphaReference0)) {
+        return false;
+    }
+
+    values.fogXScale = 2.0f;
+    values.zTextureBias = 0x123456u;
+    const u64 expectedPair =
+        ShaderUniformMask(ShaderUniform::FogXScale) |
+        ShaderUniformMask(ShaderUniform::ZTextureBias);
+    if (cache.Update(values) != expectedPair) {
+        return false;
+    }
+
+    values.fogA = -0.0f;
+    if (cache.Update(values) != ShaderUniformMask(ShaderUniform::FogA) ||
+        cache.Update(values) != 0u) {
+        return false;
+    }
+    constexpr u32 nanBits = 0x7fc01234u;
+    float stableNan = 0.0f;
+    static_assert(sizeof(stableNan) == sizeof(nanBits));
+    std::memcpy(&stableNan, &nanBits, sizeof(stableNan));
+    values.fogB = stableNan;
+    if (cache.Update(values) != ShaderUniformMask(ShaderUniform::FogB) ||
+        cache.Update(values) != 0u) {
+        return false;
+    }
+
+    cache.Invalidate();
+    return
+        cache.Update(values) == AllShaderUniformsMask() &&
+        cache.Update(values) == 0u;
+}
+
+bool TestUniformStateRevision() {
+    SIM::GX::GlobalState state;
+    const u64 initial = state.GetUniformStateRevision();
+
+    // The reset BP general-mode mirror is 1. Repeating it is passive and
+    // should retain the generation, while a semantic value change advances
+    // it without suppressing BP command processing.
+    state.SetBpRegister(0x00000001u);
+    if (state.GetUniformStateRevision() != initial) {
+        return false;
+    }
+    state.SetBpRegister(0x00000401u);
+    const u64 afterBp = state.GetUniformStateRevision();
+    if (afterBp == initial) {
+        return false;
+    }
+    state.SetBpRegister(0x00000401u);
+    if (state.GetUniformStateRevision() != afterBp) {
+        return false;
+    }
+
+    // Some semantic BP defaults do not serialize as zero in the sparse raw
+    // mirror. A first zero write must still be visible, then deduplicate.
+    state.SetBpRegister(0xf3000000u);
+    const u64 afterFirstBpWrite = state.GetUniformStateRevision();
+    if (afterFirstBpWrite == afterBp) {
+        return false;
+    }
+    state.SetBpRegister(0xf3000000u);
+    if (state.GetUniformStateRevision() != afterFirstBpWrite) {
+        return false;
+    }
+
+    // CPU-side render state and vertex transforms do not feed the GLSL
+    // payload. Their normal per-primitive traffic must retain the uniform
+    // generation so the renderer can take its packing fast path.
+    state.SetBpRegister(0x40000000u);
+    if (state.GetUniformStateRevision() != afterFirstBpWrite) {
+        return false;
+    }
+    const u32 zeroPositionWord = 0u;
+    state.SetXfData(
+        0u,
+        reinterpret_cast<const u8*>(&zeroPositionWord),
+        1u);
+    if (state.GetUniformStateRevision() != afterFirstBpWrite) {
+        return false;
+    }
+
+    // A repeated BP copy-trigger word is command-like: it can derive a new
+    // viewport reference width from copy-source state written since the last
+    // trigger, and fog X scaling must observe that semantic change.
+    constexpr u32 copyTrigger = 0x52000000u | (1u << 14u);
+    state.SetBpRegister(0x4a000000u | 799u);
+    state.SetBpRegister(copyTrigger);
+    if (state.GetViewportState().referenceWidth != 800.0f) {
+        return false;
+    }
+    state.SetBpRegister(0x4a000000u | 639u);
+    const u64 beforeRepeatedCopyTrigger =
+        state.GetUniformStateRevision();
+    state.SetBpRegister(copyTrigger);
+    if (state.GetViewportState().referenceWidth != 640.0f ||
+        state.GetUniformStateRevision() == beforeRepeatedCopyTrigger) {
+        return false;
+    }
+
+    const u32 zeroXfWord = 0u;
+    const u64 beforeFirstXfWrite = state.GetUniformStateRevision();
+    state.SetXfData(
+        0x1020u,
+        reinterpret_cast<const u8*>(&zeroXfWord),
+        1u);
+    const u64 afterFirstXfWrite = state.GetUniformStateRevision();
+    if (afterFirstXfWrite == beforeFirstXfWrite) {
+        return false;
+    }
+    state.SetXfData(
+        0x1020u,
+        reinterpret_cast<const u8*>(&zeroXfWord),
+        1u);
+    if (state.GetUniformStateRevision() != afterFirstXfWrite) {
+        return false;
+    }
+    const u32 xfWord = 0x3f800000u;
+    state.SetXfData(
+        0x1020u,
+        reinterpret_cast<const u8*>(&xfWord),
+        1u);
+    const u64 afterXf = state.GetUniformStateRevision();
+    if (afterXf == afterFirstXfWrite) {
+        return false;
+    }
+    state.SetXfData(
+        0x1020u,
+        reinterpret_cast<const u8*>(&xfWord),
+        1u);
+    if (state.GetUniformStateRevision() != afterXf) {
+        return false;
+    }
+
+    std::array<u8, 32> textureBytes = {};
+    SIM::GX::TextureState texture;
+    texture.data = textureBytes.data();
+    texture.width = 8u;
+    texture.height = 8u;
+    state.LoadTexture(0u, texture);
+    const u64 afterTexture = state.GetUniformStateRevision();
+    if (afterTexture == afterXf) {
+        return false;
+    }
+    state.LoadTexture(0u, texture);
+    return state.GetUniformStateRevision() == afterTexture;
+}
+
+bool TestVertexStreamRing() {
+    using SIM::GX::Detail::VertexStreamAllocation;
+    using SIM::GX::Detail::VertexStreamRing;
+
+    VertexStreamRing ring(4u, 3u);
+    VertexStreamAllocation allocation;
+    if (!ring.Allocate(3u, allocation) || allocation.pageChanged ||
+        allocation.pageIndex != 0u || allocation.firstVertex != 0u) {
+        return false;
+    }
+    if (!ring.Allocate(1u, allocation) || allocation.pageChanged ||
+        allocation.pageIndex != 0u || allocation.firstVertex != 3u) {
+        return false;
+    }
+    if (!ring.Allocate(2u, allocation) || !allocation.pageChanged ||
+        allocation.pageIndex != 1u || allocation.firstVertex != 4u) {
+        return false;
+    }
+    if (!ring.Allocate(4u, allocation) || !allocation.pageChanged ||
+        allocation.pageIndex != 2u || allocation.firstVertex != 8u) {
+        return false;
+    }
+    if (!ring.Allocate(1u, allocation) || !allocation.pageChanged ||
+        allocation.pageIndex != 0u || allocation.firstVertex != 0u) {
+        return false;
+    }
+    return !ring.Allocate(0u, allocation) &&
+           !ring.Allocate(5u, allocation);
+}
+
 bool TestDecodeRebuildsReusableOutput() {
     SIM::GX::GlobalState state;
     state.SetVertexDescriptor(GX_VA_POS, GX_DIRECT);
@@ -740,17 +1021,26 @@ int main() {
     if (!TestShaderUniformLocationCache()) {
         return 15;
     }
-    if (!TestDecodeRebuildsReusableOutput()) {
+    if (!TestShaderUniformValueCache()) {
         return 16;
     }
-    if (!TestCanonicalBigEndianTlutDecode()) {
+    if (!TestUniformStateRevision()) {
         return 17;
     }
-    if (!TestTlutRevisionInvalidatesIndexedTexture()) {
+    if (!TestVertexStreamRing()) {
         return 18;
     }
-    if (!TestTexGenOriginalAndGeneratedSourcesRemainDistinct()) {
+    if (!TestDecodeRebuildsReusableOutput()) {
         return 19;
+    }
+    if (!TestCanonicalBigEndianTlutDecode()) {
+        return 20;
+    }
+    if (!TestTlutRevisionInvalidatesIndexedTexture()) {
+        return 21;
+    }
+    if (!TestTexGenOriginalAndGeneratedSourcesRemainDistinct()) {
+        return 22;
     }
     return 0;
 }

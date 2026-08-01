@@ -61,6 +61,21 @@ static ChannelControlState DecodeChannelControl(u32 word) {
     return control;
 }
 
+static bool BpRegisterAffectsShaderUniforms(u8 address) {
+    return
+        address == 0x00u ||
+        (address >= 0x28u && address <= 0x2fu) ||
+        (address >= 0xc0u && address <= 0xfdu);
+}
+
+static bool XfWordAffectsShaderUniforms(size_t address) {
+    // The GLSL payload only consumes the XF viewport and projection words.
+    // Position, normal, texture, channel, and light XF state is applied to
+    // decoded vertices on the CPU and must not force the full uniform payload
+    // to be rebuilt for every primitive.
+    return address >= 0x101au && address < 0x1027u;
+}
+
 void GlobalState::Reset() {
     mCurrentVertexFormat = GX_VTXFMT0;
     mCurrentPrimitive = GX_TRIANGLES;
@@ -69,6 +84,7 @@ void GlobalState::Reset() {
     mVertexFormats = {};
     mVertexArrays = {};
     mXfMemory.fill(0);
+    mXfWordWritten.fill(false);
     mPositionMatrixValid.fill(false);
     for (auto& matrix : mPositionMatrices) {
         matrix = IdentityMatrix();
@@ -122,6 +138,7 @@ void GlobalState::Reset() {
     mTevColors = {};
     mTevKonstColors = {};
     mBpRegisters.fill(0);
+    mBpRegisterWritten.fill(false);
     mBpWriteMask = 0x00ffffffu;
     mNumColorChannels = 0;
     mNumTexGens = 1;
@@ -138,11 +155,14 @@ void GlobalState::Reset() {
     // Keep the raw BP mirror consistent with the simulator's reset state so
     // that a masked write can preserve fields before their first full write.
     mBpRegisters[0x00] = 1u;
+    mBpRegisterWritten[0x00] = true;
     mBpRegisters[0x22] = 6u | (6u << 8u);
+    mBpRegisterWritten[0x22] = true;
     mBpRegisters[0x40] =
         1u |
         (static_cast<u32>(GX_LEQUAL) << 1u) |
         (1u << 4u);
+    mBpRegisterWritten[0x40] = true;
     mBpRegisters[0x41] =
         (1u << 2u) |
         (1u << 3u) |
@@ -150,6 +170,7 @@ void GlobalState::Reset() {
         (static_cast<u32>(GX_BL_ZERO) << 5u) |
         (static_cast<u32>(GX_BL_ONE) << 8u) |
         (static_cast<u32>(GX_LO_CLEAR) << 12u);
+    mBpRegisterWritten[0x41] = true;
     for (size_t registerIndex = 0; registerIndex < 8u; ++registerIndex) {
         const size_t tableIndex = registerIndex / 2u;
         const size_t componentOffset = (registerIndex & 1u) * 2u;
@@ -166,7 +187,9 @@ void GlobalState::Reset() {
                  mTevStages[firstStage + 1u].konstColorSelection) << 14u) |
             (static_cast<u32>(
                  mTevStages[firstStage + 1u].konstAlphaSelection) << 19u);
+        mBpRegisterWritten[0xf6u + registerIndex] = true;
     }
+    ++mUniformStateRevision;
 }
 
 size_t GlobalState::GetDescriptorSize(GXAttrType descriptorType, GXCompType dataType, bool isColorType) const {
@@ -623,6 +646,17 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
         (incomingValue & mBpWriteMask);
     mBpRegisters[address] = value;
     mBpWriteMask = 0x00ffffffu;
+    const bool registerStateChanged =
+        !mBpRegisterWritten[address] || value != previousValue;
+    mBpRegisterWritten[address] = true;
+    if (registerStateChanged && BpRegisterAffectsShaderUniforms(address)) {
+        ++mUniformStateRevision;
+    }
+
+    // BP copy triggers are commands rather than passive state. Reissuing the
+    // same raw command can derive a new reference size from viewport/scissor
+    // or copy-source state changed since the previous trigger.
+    const float previousReferenceWidth = mViewportState.referenceWidth;
 
     const auto field = [value](u32 width, u32 shift) {
         return (value >> shift) & ((1u << width) - 1u);
@@ -1072,11 +1106,21 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
             break;
     }
 
+
+    if (address == 0x52u &&
+        mViewportState.referenceWidth != previousReferenceWidth) {
+        ++mUniformStateRevision;
+    }
+
     return (static_cast<u32>(address) << 24u) | value;
 }
 
 u64 GlobalState::GetTextureInvalidationRevision() const {
     return mTextureInvalidationRevision;
+}
+
+u64 GlobalState::GetUniformStateRevision() const {
+    return mUniformStateRevision;
 }
 
 void GlobalState::SetCurrentPrimitive(GXPrimitive primitive) {
@@ -1148,6 +1192,7 @@ void GlobalState::LoadTexture(size_t index, const TextureState& texture) {
 
     mTextures[index] = texture;
     mTextures[index].revision = ++mTextureRevision;
+    ++mUniformStateRevision;
 }
 
 void GlobalState::LoadTlut(size_t index, const TlutState& tlut) {
@@ -1226,8 +1271,23 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
 
     const size_t writableWords =
         std::min(wordCount, mXfMemory.size() - static_cast<size_t>(address));
+    bool uniformStateChanged = false;
     for (size_t i = 0; i < writableWords; ++i) {
-        std::memcpy(&mXfMemory[address + i], data + i * sizeof(u32), sizeof(u32));
+        const size_t wordAddress = static_cast<size_t>(address) + i;
+        if (XfWordAffectsShaderUniforms(wordAddress)) {
+            uniformStateChanged =
+                uniformStateChanged ||
+                !mXfWordWritten[wordAddress] ||
+                std::memcmp(
+                    &mXfMemory[wordAddress],
+                    data + i * sizeof(u32),
+                    sizeof(u32)) != 0;
+            mXfWordWritten[wordAddress] = true;
+        }
+        std::memcpy(
+            &mXfMemory[wordAddress],
+            data + i * sizeof(u32),
+            sizeof(u32));
     }
 
     constexpr u32 textureMatrixStart = 30u * 4u;
@@ -1240,6 +1300,10 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
         if (slot < mTextureMatrix2x4.size()) {
             mTextureMatrix2x4[slot] = writableWords == 8u;
         }
+    }
+
+    if (uniformStateChanged) {
+        ++mUniformStateRevision;
     }
 
     const u32 endAddress = address + static_cast<u32>(writableWords);
