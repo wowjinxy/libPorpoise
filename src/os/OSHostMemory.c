@@ -286,6 +286,25 @@ const OSHostMemoryLayout* __OSHostMemoryGetLayout(void)
 	return HostMemoryInitialized ? &HostMemoryLayout : NULL;
 }
 
+BOOL __OSHostMemoryContainsAddress(const void* address)
+{
+	uintptr_t value;
+	uintptr_t cachedBase;
+	uintptr_t uncachedBase;
+
+	if (!HostMemoryInitialized || address == NULL) {
+		return FALSE;
+	}
+
+	value = (uintptr_t)address;
+	cachedBase = (uintptr_t)HostMemoryLayout.cachedBase;
+	uncachedBase = (uintptr_t)HostMemoryLayout.uncachedBase;
+	return (value >= cachedBase &&
+	        value - cachedBase < HostMemoryLayout.size) ||
+	       (value >= uncachedBase &&
+	        value - uncachedBase < HostMemoryLayout.size);
+}
+
 void* __OSHostMemoryResolveArenaHi(void* previous, void* requested)
 {
 	if (!HostMemoryInitialized ||

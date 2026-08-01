@@ -5,6 +5,8 @@
 #include <dolphin/os.h>
 #include <string.h>
 
+#include "EXIWire.h"
+
 // These formerly public interface functions got renamed when they became private implementation details.
 // This preprocessor block handles two issues stemming from that. If `OS_BUILD_VERSION >= 20011112L`, it
 // makes the functions static. If not, then it silently renames the functions for matching using macros.
@@ -120,7 +122,7 @@ BOOL EXIImm(s32 chan, void* buf, s32 len, u32 type, EXICallback callback)
 
 		data = 0;
 		for (i = 0; i < len; i++) {
-			data |= ((u8*)buf)[i] << ((3 - i) * 8);
+			data |= (u32)((u8*)buf)[i] << ((3 - i) * 8);
 		}
 		EXIREG(chan, 4) = data;
 	}
@@ -206,7 +208,16 @@ BOOL EXIDma(s32 chan, void* buf, s32 len, u32 type, EXICallback callback)
 BOOL EXISync(s32 chan)
 {
 	#ifdef LIBPORPOISE_PORT
-	// TODO: actually implement this
+	BOOL enabled;
+
+	OSAssertLine(0x1D7, 0 <= chan && chan < EXI_MAX_CHAN);
+	enabled = OSDisableInterrupts();
+	/* Host EXI transfers complete immediately. Mirror the hardware-observed
+	 * transition before reporting success so the next transfer is not left
+	 * permanently blocked by EXI_STATE_BUSY. */
+	EXIREG(chan, 3) &= ~1u;
+	CompleteTransfer(chan);
+	OSRestoreInterrupts(enabled);
 	return TRUE;
 	#else
 	EXIControl* exi;
@@ -811,7 +822,8 @@ s32 EXIGetID(s32 chan, u32 dev, u32* id)
 #if OS_BUILD_VERSION >= 20011112L
 	EXIControl* exi;
 	BOOL err;
-	u32 cmd;
+	u8 command[2];
+	u8 response[4];
 	s32 startTime;
 	BOOL enabled;
 
@@ -838,12 +850,15 @@ s32 EXIGetID(s32 chan, u32 dev, u32* id)
 	if (!err) {
 		err = !EXISelect(chan, dev, EXI_FREQ_1M);
 		if (!err) {
-			cmd = 0;
-			err |= !EXIImm(chan, &cmd, 2, EXI_WRITE, NULL);
+			EXIWireMakeGetIDCommand(command);
+			err |= !EXIImm(chan, command, sizeof(command), EXI_WRITE, NULL);
 			err |= !EXISync(chan);
-			err |= !EXIImm(chan, id, 4, EXI_READ, NULL);
+			err |= !EXIImm(chan, response, sizeof(response), EXI_READ, NULL);
 			err |= !EXISync(chan);
 			err |= !EXIDeselect(chan);
+			if (!err) {
+				*id = EXIWireRead32(response);
+			}
 		}
 		EXIUnlock(chan);
 	}

@@ -1,6 +1,8 @@
 #include <dolphin/card.h>
 #include <string.h>
 
+#include "CARDWire.h"
+
 /**
  * @TODO: Documentation
  */
@@ -69,7 +71,7 @@ s32 CARDRenameAsync(s32 channel, const char* oldName, const char* newName, CARDC
 	}
 
 	strncpy((char*)ent->fileName, newName, CARD_FILENAME_MAX);
-	ent->time = (u32)OSTicksToSeconds(OSGetTime());
+	CARDWireWrite32(&ent->time, (u32)OSTicksToSeconds(OSGetTime()));
 
 	result = __CARDUpdateDir(channel, callback);
 	if (result < CARD_RESULT_READY) {

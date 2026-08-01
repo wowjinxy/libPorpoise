@@ -25,6 +25,21 @@ static u8 DSPInitCode[] = {
 
 #define __DSPWorkBuffer (void*)0x81000000
 
+#ifdef LIBPORPOISE_PORT
+/* The DSP exposes consecutive high/low 16-bit registers.  A 32-bit store
+ * produces the desired pair on big-endian PowerPC, but reverses the two
+ * native u16 elements in the host register model. */
+#define WRITE_DSP_REGISTER_PAIR(highRegister, value)                  \
+	do {                                                             \
+		u32 pairValue = (u32)(value);                                \
+		__DSPRegs[(highRegister)] = (u16)(pairValue >> 16);          \
+		__DSPRegs[(highRegister) + 1] = (u16)pairValue;              \
+	} while (0)
+#else
+#define WRITE_DSP_REGISTER_PAIR(highRegister, value) \
+	(*(u32*)&__DSPRegs[(highRegister)] = (u32)(value))
+#endif
+
 /**
  * @TODO: Documentation
  */
@@ -53,9 +68,9 @@ void __OSInitAudioSystem(void)
 	__DSPRegs[DSP_MAILBOX_IN_HI] = 0;
 	while (((__DSPRegs[DSP_MAILBOX_OUT_HI] << 16) | __DSPRegs[DSP_MAILBOX_OUT_LO]) & 0x80000000)
 		;
-	*(u32*)&__DSPRegs[DSP_ARAM_DMA_MM_HI]   = 0x1000000;
-	*(u32*)&__DSPRegs[DSP_ARAM_DMA_ARAM_HI] = 0;
-	*(u32*)&__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = 0x20;
+	WRITE_DSP_REGISTER_PAIR(DSP_ARAM_DMA_MM_HI, 0x1000000);
+	WRITE_DSP_REGISTER_PAIR(DSP_ARAM_DMA_ARAM_HI, 0);
+	WRITE_DSP_REGISTER_PAIR(DSP_ARAM_DMA_SIZE_HI, 0x20);
 
 	r3 = __DSPRegs[DSP_CONTROL_STATUS];
 	while (!(r3 & 0x20))
@@ -66,9 +81,9 @@ void __OSInitAudioSystem(void)
 	while ((s32)(OSGetTick() - r28) < 0x892)
 		;
 
-	*(u32*)&__DSPRegs[DSP_ARAM_DMA_MM_HI]   = 0x1000000;
-	*(u32*)&__DSPRegs[DSP_ARAM_DMA_ARAM_HI] = 0;
-	*(u32*)&__DSPRegs[DSP_ARAM_DMA_SIZE_HI] = 0x20;
+	WRITE_DSP_REGISTER_PAIR(DSP_ARAM_DMA_MM_HI, 0x1000000);
+	WRITE_DSP_REGISTER_PAIR(DSP_ARAM_DMA_ARAM_HI, 0);
+	WRITE_DSP_REGISTER_PAIR(DSP_ARAM_DMA_SIZE_HI, 0x20);
 
 	r3 = __DSPRegs[DSP_CONTROL_STATUS];
 	while (!(r3 & 0x20))
@@ -101,6 +116,8 @@ void __OSInitAudioSystem(void)
 #endif
 #endif
 }
+
+#undef WRITE_DSP_REGISTER_PAIR
 
 /**
  * @TODO: Documentation

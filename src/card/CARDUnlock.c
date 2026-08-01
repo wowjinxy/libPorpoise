@@ -2,6 +2,8 @@
 #include <dolphin/exi.h>
 #include <string.h>
 
+#include "CARDWire.h"
+
 // This file doesn't exist in earlier releases, where jaudio has a dsp_cardunlock.c file instead
 
 static u8 CardData[352] ATTRIBUTE_ALIGN(32) = {
@@ -198,7 +200,6 @@ int __CARDUnlock(int chan, u8 flashID[12])
 	u32 wk, wk1;
 	u32 Ans1 = 0;
 	u32 Ans2 = 0;
-	u32* dp;
 	u8 rbuf[64];
 	u32 para1A = 0;
 	u32 para1B = 0;
@@ -239,12 +240,11 @@ int __CARDUnlock(int chan, u8 flashID[12])
 	if (ReadArrayUnlock(chan, data, rbuf, rlen, 1) < 0)
 		return CARD_RESULT_NOCARD;
 
-	dp             = (u32*)rbuf;
-	para1A         = *dp++;
-	para1B         = *dp++;
-	Ans1           = *dp++;
-	para2A         = *dp++;
-	para2B         = *dp++;
+	para1A         = CARDWireRead32(rbuf + 0);
+	para1B         = CARDWireRead32(rbuf + 4);
+	Ans1           = CARDWireRead32(rbuf + 8);
+	para2A         = CARDWireRead32(rbuf + 12);
+	para2B         = CARDWireRead32(rbuf + 16);
 	para1A         = (para1A ^ card->scramble);
 	rshift         = 32;
 	wk             = exnor(card->scramble, rshift);
@@ -275,8 +275,8 @@ int __CARDUnlock(int chan, u8 flashID[12])
 	wk1            = ~(wk ^ (wk << 7) ^ (wk << 15) ^ (wk << 23));
 	card->scramble = (wk | ((wk1 >> 31) & 0x00000001));
 
-	*(u32*)&input[0] = para2A;
-	*(u32*)&input[4] = para2B;
+	CARDWireWrite32(&input[0], para2A);
+	CARDWireWrite32(&input[4], para2B);
 
 	param->inputAddr   = input;
 	param->inputLength = 8;
@@ -298,10 +298,9 @@ int __CARDUnlock(int chan, u8 flashID[12])
 	task->req_cb          = NULL;
 	DSPAddTask(task);
 
-	dp    = (u32*)flashID;
-	*dp++ = para1A;
-	*dp++ = para1B;
-	*dp   = Ans1;
+	CARDWireWrite32(&flashID[0], para1A);
+	CARDWireWrite32(&flashID[4], para1B);
+	CARDWireWrite32(&flashID[8], Ans1);
 
 	return CARD_RESULT_READY;
 }
@@ -367,7 +366,7 @@ static void DoneCallback(void* _task)
 	input  = (u8*)OSRoundUp32B(input);
 	output = input + 32;
 
-	Ans2  = *(u32*)output;
+	Ans2  = CARDWireRead32(output);
 	dummy = DummyLen();
 	rlen  = dummy;
 	data  = ((Ans2 ^ card->scramble) & 0xffff0000);

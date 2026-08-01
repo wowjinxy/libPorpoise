@@ -10,6 +10,7 @@
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
 #include <simulator/sim_gx_Geometry.hpp>
+#include <simulator/sim_host_Allocator.hpp>
 #include <simulator/sim_gx_State.hpp>
 
 extern "C" void __VIHostOnDraw(void) __attribute__((weak));
@@ -604,6 +605,24 @@ GLenum ToGlWrap(GXTexWrapMode wrap) {
         default:
             return GL_CLAMP_TO_EDGE;
     }
+}
+
+GLenum ToGlMinFilter(GXTexFilter filter) {
+    const auto selection =
+        SIM::GX::Detail::SelectTextureFilter(filter);
+    if (selection.mipmapFilter ==
+        SIM::GX::Detail::TextureMipmapFilter::Nearest) {
+        return selection.linearTexels
+            ? GL_LINEAR_MIPMAP_NEAREST
+            : GL_NEAREST_MIPMAP_NEAREST;
+    }
+    if (selection.mipmapFilter ==
+        SIM::GX::Detail::TextureMipmapFilter::Linear) {
+        return selection.linearTexels
+            ? GL_LINEAR_MIPMAP_LINEAR
+            : GL_NEAREST_MIPMAP_LINEAR;
+    }
+    return selection.linearTexels ? GL_LINEAR : GL_NEAREST;
 }
 
 void DecodeI4(
@@ -1243,6 +1262,96 @@ u32 RenderStateCache::Update(
     return dirty;
 }
 
+TextureFilterSelection SelectTextureFilter(GXTexFilter filter) {
+    switch (filter) {
+        case GX_LINEAR:
+            return {true, TextureMipmapFilter::None};
+        case GX_NEAR_MIP_NEAR:
+            return {false, TextureMipmapFilter::Nearest};
+        case GX_LIN_MIP_NEAR:
+            return {true, TextureMipmapFilter::Nearest};
+        case GX_NEAR_MIP_LIN:
+            return {false, TextureMipmapFilter::Linear};
+        case GX_LIN_MIP_LIN:
+            return {true, TextureMipmapFilter::Linear};
+        case GX_NEAR:
+        default:
+            return {false, TextureMipmapFilter::None};
+    }
+}
+
+bool DecodeCanonicalTextureMipLevelToRgba(
+    const TextureState& texture,
+    const u8* canonicalBytes,
+    size_t canonicalByteSize,
+    size_t level,
+    const std::vector<u8>& palette,
+    std::vector<u8>& rgba) {
+    TextureMipLevelLayout layout;
+    if (canonicalBytes == nullptr ||
+        !GetTextureMipLevelLayout(texture, level, layout) ||
+        layout.offset > canonicalByteSize ||
+        layout.byteSize > canonicalByteSize - layout.offset) {
+        rgba.clear();
+        return false;
+    }
+
+    const u8* source = canonicalBytes + layout.offset;
+    if (texture.format == GX_TF_RGBA8 ||
+        texture.format == GX_TF_Z24X8) {
+        DecodeRGBA8(source, rgba, layout.width, layout.height);
+    } else if (texture.format == GX_TF_RGB565) {
+        DecodeRGB565(source, rgba, layout.width, layout.height);
+    } else if (texture.format == GX_TF_RGB5A3) {
+        DecodeRGB5A3(source, rgba, layout.width, layout.height);
+    } else if (texture.format == GX_TF_I8) {
+        DecodeI8(source, rgba, layout.width, layout.height);
+    } else if (texture.format == GX_TF_IA4) {
+        DecodeIA4(source, rgba, layout.width, layout.height);
+    } else if (texture.format == GX_TF_IA8) {
+        DecodeIA8(source, rgba, layout.width, layout.height);
+    } else if (texture.format == GX_TF_C4) {
+        DecodeC4(
+            source, rgba, layout.width, layout.height, palette);
+    } else if (texture.format == GX_TF_C8) {
+        DecodeC8(
+            source, rgba, layout.width, layout.height, palette);
+    } else if (texture.format == GX_TF_C14X2) {
+        DecodeC14X2(
+            source, rgba, layout.width, layout.height, palette);
+    } else if (texture.format == GX_TF_Z8) {
+        DecodeI8(source, rgba, layout.width, layout.height);
+    } else if (texture.format == GX_TF_Z16) {
+        DecodeIA8(source, rgba, layout.width, layout.height);
+    } else if (texture.format == GX_TF_CMPR) {
+        DecodeCMPR(source, rgba, layout.width, layout.height);
+    } else if (texture.format == GX_TF_I4) {
+        DecodeI4(source, rgba, layout.width, layout.height);
+    } else {
+        rgba.clear();
+        return false;
+    }
+    return true;
+}
+
+bool DecodeTextureToRgba(
+    const TextureState& texture,
+    const std::vector<u8>& palette,
+    std::vector<u8>& rgba) {
+    std::vector<u8> canonicalBytes;
+    if (!CopyCanonicalTextureBytes(texture, canonicalBytes)) {
+        rgba.clear();
+        return false;
+    }
+    return DecodeCanonicalTextureMipLevelToRgba(
+        texture,
+        canonicalBytes.data(),
+        canonicalBytes.size(),
+        0u,
+        palette,
+        rgba);
+}
+
 }
 
 u8 ConvertRgbToCopyIntensity(u8 red, u8 green, u8 blue) {
@@ -1750,104 +1859,47 @@ void GlRenderer::Draw(std::vector<RenderVertex>& vertices, GXPrimitive primitive
             validateTexture &&
             !mTextureSnapshots[textureIndex].Matches(texture, tlut);
         if (uploadTexture) {
-            std::vector<u8> rgba;
+            std::vector<u8> canonicalBytes;
             std::vector<u8> palette;
             if (usesTlut) {
                 palette = DecodeTlut(*tlut);
             }
-            if (texture.format == GX_TF_RGBA8 ||
-                texture.format == GX_TF_Z24X8) {
-                DecodeRGBA8(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height);
-            } else if (texture.format == GX_TF_RGB565) {
-                DecodeRGB565(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height);
-            } else if (texture.format == GX_TF_RGB5A3) {
-                DecodeRGB5A3(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height);
-            } else if (texture.format == GX_TF_I8) {
-                DecodeI8(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height);
-            } else if (texture.format == GX_TF_IA4) {
-                DecodeIA4(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height);
-            } else if (texture.format == GX_TF_IA8) {
-                DecodeIA8(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height);
-            } else if (texture.format == GX_TF_C4) {
-                DecodeC4(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height,
-                    palette);
-            } else if (texture.format == GX_TF_C8) {
-                DecodeC8(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height,
-                    palette);
-            } else if (texture.format == GX_TF_C14X2) {
-                DecodeC14X2(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height,
-                    palette);
-            } else if (texture.format == GX_TF_Z8) {
-                DecodeI8(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height);
-            } else if (texture.format == GX_TF_Z16) {
-                DecodeIA8(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height);
-            } else if (texture.format == GX_TF_CMPR) {
-                DecodeCMPR(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height);
-            } else {
-                DecodeI4(
-                    static_cast<const u8*>(texture.data),
-                    rgba,
-                    texture.width,
-                    texture.height);
+            if (!CopyCanonicalTextureBytes(texture, canonicalBytes)) {
+                continue;
             }
-            glTexImage2D(
-                GL_TEXTURE_2D,
-                0,
-                GL_RGBA8,
-                texture.width,
-                texture.height,
-                0,
-                GL_RGBA,
-                GL_UNSIGNED_BYTE,
-                rgba.data());
+            const size_t levelCount =
+                GetTextureMipLevelCount(texture);
+            bool decodedAllLevels = levelCount != 0u;
+            for (size_t level = 0u;
+                 level < levelCount;
+                 ++level) {
+                TextureMipLevelLayout layout;
+                std::vector<u8> rgba;
+                if (!GetTextureMipLevelLayout(texture, level, layout) ||
+                    !Detail::DecodeCanonicalTextureMipLevelToRgba(
+                        texture,
+                        canonicalBytes.data(),
+                        canonicalBytes.size(),
+                        level,
+                        palette,
+                        rgba)) {
+                    decodedAllLevels = false;
+                    break;
+                }
+                glTexImage2D(
+                    GL_TEXTURE_2D,
+                    static_cast<GLint>(level),
+                    GL_RGBA8,
+                    layout.width,
+                    layout.height,
+                    0,
+                    GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    rgba.data());
+            }
+            if (!decodedAllLevels) {
+                continue;
+            }
             mTextureSnapshots[textureIndex].Capture(texture, tlut);
         }
         if (textureObjectCreated || textureStateChanged) {
@@ -1862,15 +1914,47 @@ void GlRenderer::Draw(std::vector<RenderVertex>& vertices, GXPrimitive primitive
             glTexParameteri(
                 GL_TEXTURE_2D,
                 GL_TEXTURE_MIN_FILTER,
-                texture.minFilter == GX_LINEAR
-                    ? GL_LINEAR
-                    : GL_NEAREST);
+                ToGlMinFilter(texture.minFilter));
             glTexParameteri(
                 GL_TEXTURE_2D,
                 GL_TEXTURE_MAG_FILTER,
                 texture.magFilter == GX_LINEAR
                     ? GL_LINEAR
                     : GL_NEAREST);
+            const size_t levelCount =
+                GetTextureMipLevelCount(texture);
+            const GLint maximumLevel =
+                levelCount == 0u
+                    ? 0
+                    : static_cast<GLint>(levelCount - 1u);
+            const GLfloat maximumLod =
+                static_cast<GLfloat>(maximumLevel);
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_BASE_LEVEL,
+                0);
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_MAX_LEVEL,
+                maximumLevel);
+            glTexParameterf(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_MIN_LOD,
+                std::clamp(
+                    texture.minLod,
+                    0.0f,
+                    maximumLod));
+            glTexParameterf(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_MAX_LOD,
+                std::clamp(
+                    texture.maxLod,
+                    0.0f,
+                    maximumLod));
+            glTexParameterf(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_LOD_BIAS,
+                texture.lodBias);
         }
         if (validateTexture) {
             mTextureRevisions[textureIndex] =
@@ -2165,6 +2249,7 @@ extern "C" void __GXHostCopyTex(
     u16 destinationHeight,
     u32 destinationFormat,
     GXBool clear) {
+    SIM::HostAllocationScope hostAllocations;
     if (destination == nullptr ||
         sourceWidth == 0 ||
         sourceHeight == 0 ||

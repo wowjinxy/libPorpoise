@@ -74,6 +74,19 @@ sim_gx_color_channel_test = executable(
 
 test('sim-gx-color-channel', sim_gx_color_channel_test)
 
+sim_host_allocator_test = executable(
+    'sim-host-allocator-test',
+    sources: files(
+        'sim_HostAllocatorTests.cpp',
+        '../src/sim/sim_host_Allocator.cpp',
+    ),
+    include_directories: libporpoise_includes,
+    dependencies: dependency('threads'),
+    native: true,
+)
+
+test('sim-host-allocator', sim_host_allocator_test)
+
 gx_fifo_color_endian_test = executable(
     'gx-fifo-color-endian-test',
     sources: files('gx_FifoColorEndianTests.cpp'),
@@ -148,6 +161,15 @@ dvd_host_filesystem_test = executable(
 )
 
 test('dvd-host-filesystem', dvd_host_filesystem_test)
+
+dvd_bb2_wire_test = executable(
+    'dvd-bb2-wire-test',
+    sources: files('dvd_BB2WireTests.cpp'),
+    include_directories: libporpoise_includes,
+    native: true,
+)
+
+test('dvd-bb2-wire', dvd_bb2_wire_test)
 
 vi_host_retrace_test = executable(
     'vi-host-retrace-test',
@@ -468,6 +490,26 @@ ai_host_stub_test = executable(
 
 test('ai-host-stub', ai_host_stub_test, timeout: 10)
 
+hio_host_no_device_test = executable(
+    'hio-host-no-device-test',
+    sources: files('hio_HostNoDeviceTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [libhio],
+    native: true,
+)
+
+test('hio-host-no-device', hio_host_no_device_test, timeout: 10)
+
+base_api_test = executable(
+    'base-api-test',
+    sources: files('base_ApiTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [libbase],
+    native: true,
+)
+
+test('base-api', base_api_test, timeout: 10)
+
 dsp_override_test = executable(
     'dsp-override-test',
     sources: files('dsp_OverrideTests.cpp'),
@@ -497,6 +539,15 @@ card_api_completion_test = executable(
 )
 
 test('card-api-completion', card_api_completion_test, timeout: 10)
+
+card_wire_endian_test = executable(
+    'card-wire-endian-test',
+    sources: files('card_WireEndianTests.cpp'),
+    include_directories: libporpoise_includes,
+    native: true,
+)
+
+test('card-wire-endian', card_wire_endian_test, timeout: 10)
 
 native_module_fixture = shared_module(
     'porpoise-native-module-fixture',
@@ -539,6 +590,43 @@ os_host_endian_test = executable(
 )
 
 test('os-host-endian', os_host_endian_test)
+
+os_rtc_wire_endian_test = executable(
+    'os-rtc-wire-endian-test',
+    sources: files('os_RtcWireEndianTests.cpp'),
+    include_directories: libporpoise_includes,
+    native: true,
+)
+
+test('os-rtc-wire-endian', os_rtc_wire_endian_test)
+
+si_host_wire_test = executable(
+    'si-host-wire-test',
+    sources: files('si_HostWireTests.cpp'),
+    include_directories: libporpoise_includes,
+    native: true,
+)
+
+test('si-host-wire', si_host_wire_test)
+
+mem_bitfield_endian_test = executable(
+    'mem-bitfield-endian-test',
+    sources: files('mem_BitfieldEndianTests.cpp'),
+    include_directories: libporpoise_includes,
+    native: true,
+)
+
+test('mem-bitfield-endian', mem_bitfield_endian_test)
+
+gd_file_endian_test = executable(
+    'gd-file-endian-test',
+    sources: files('gd_FileEndianTests.cpp'),
+    include_directories: libporpoise_includes,
+    link_with: [libgd, libos],
+    native: true,
+)
+
+test('gd-file-endian', gd_file_endian_test)
 
 os_host_mutex_test = executable(
     'os-host-mutex-test',

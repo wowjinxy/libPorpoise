@@ -6,6 +6,8 @@
 #include <dolphin/vi.h>
 #include <stddef.h>
 
+#include "SIWire.h"
+
 // For ease of implementing multiple revisions, this function that was renamed goes by its final
 // name everywhere in this file and is silently renamed for older revisions via the below macro.
 #if OS_BUILD_VERSION >= 20011002L
@@ -25,6 +27,28 @@ static u32 Type[SI_MAX_CHAN] = {
 	SI_ERROR_NO_RESPONSE,
 	SI_ERROR_NO_RESPONSE,
 };
+
+#ifdef LIBPORPOISE_PORT
+/* The console stores a three-byte type response in the high end of a u32.
+ * Host SITransfer buffers are canonical wire bytes, so stage those partial
+ * scalar transfers explicitly and commit them before the SDK callback logic
+ * observes Type. */
+static const u8 TypeAndStatusCommand[1] = { 0x00 };
+static u8 TypeResponseWire[SI_MAX_CHAN][3];
+static u8 FixDeviceCommandWire[SI_MAX_CHAN][3];
+
+static void CommitTypeResponse(s32 chan)
+{
+	u32 status = Type[chan] & 0xffu;
+	Type[chan] = __SIDecodeHostU32Prefix(TypeResponseWire[chan], 3) | status;
+}
+
+static void* EncodeFixDeviceCommand(s32 chan, u32 command)
+{
+	__SIEncodeHostU32Prefix(FixDeviceCommandWire[chan], 3, command);
+	return FixDeviceCommandWire[chan];
+}
+#endif
 
 static OSTime TypeTime[SI_MAX_CHAN];
 static OSTime XferTime[SI_MAX_CHAN];
@@ -86,7 +110,7 @@ static u32 CompleteTransfer(void)
 	u32 i;
 	u32 rLen;
 	u8* input;
-	u32 temp;
+	u32 byteCount;
 
 	sr = __SIRegs[SI_STAT];
 
@@ -102,18 +126,15 @@ static u32 CompleteTransfer(void)
 #endif
 
 		input = Si.input;
-		rLen  = Si.inputBytes / 4;
-		for (i = 0; i < rLen; i++) {
-			*(u32*)input = __SIRegs[SI_IO_BUFFER + i];
-			input += 4;
-		}
-
-		rLen = Si.inputBytes & 3;
-		if (rLen != 0) {
-			temp = __SIRegs[SI_IO_BUFFER + i];
-			for (i = 0; i < rLen; i++) {
-				*input++ = temp >> (8 * (SI_MAX_CHAN - 1 - i));
+		rLen = (Si.inputBytes + 3u) / 4u;
+		for (i = 0; i < rLen; ++i) {
+			byteCount = Si.inputBytes - i * 4u;
+			if (byteCount > 4u) {
+				byteCount = 4u;
 			}
+			__SIUnpackWireWord(
+			    input, byteCount, __SIRegs[SI_IO_BUFFER + i]);
+			input += byteCount;
 		}
 
 #if OS_BUILD_VERSION >= 20011002L
@@ -202,8 +223,14 @@ static void SIInterruptHandler(__OSInterrupt interrupt, OSContext* context)
 		__SIRegs[SI_STAT] = sr;
 
 		if (Type[chan] == SI_ERROR_BUSY && !SIIsChanBusy(chan)) {
+#ifdef LIBPORPOISE_PORT
+			SITransfer(chan, (void*)TypeAndStatusCommand, 1,
+			           TypeResponseWire[chan], 3, GetTypeCallback,
+			           OSMicrosecondsToTicks(65));
+#else
 			static u32 cmdTypeAndStatus = 0 << 24;
 			SITransfer(chan, &cmdTypeAndStatus, 1, &Type[chan], 3, GetTypeCallback, OSMicrosecondsToTicks(65));
+#endif
 		}
 	}
 
@@ -361,8 +388,6 @@ void SIInit(void)
 #endif
 }
 
-#define ROUND(n, a) (((u32)(n) + (a) - 1) & ~((a) - 1))
-
 /**
  * @TODO: Documentation
  */
@@ -372,7 +397,8 @@ static BOOL __SITransfer(s32 chan, void* output, u32 outputBytes, void* input, u
 	u32 rLen;
 	u32 i;
 	u32 sr;
-	SIComm comcsr;
+	u32 byteCount;
+	u32 comcsr;
 
 	enabled = OSDisableInterrupts();
 	if (Si.chan != -1) {
@@ -389,23 +415,23 @@ static BOOL __SITransfer(s32 chan, void* output, u32 outputBytes, void* input, u
 	Si.inputBytes = inputBytes;
 	Si.input      = input;
 
-	rLen = ROUND(outputBytes, 4) / 4;
-	for (i = 0; i < rLen; i++) {
-		__SIRegs[SI_IO_BUFFER + i] = ((u32*)output)[i];
+	rLen = (outputBytes + 3u) / 4u;
+	for (i = 0; i < rLen; ++i) {
+		byteCount = outputBytes - i * 4u;
+		if (byteCount > 4u) {
+			byteCount = 4u;
+		}
+		__SIRegs[SI_IO_BUFFER + i] =
+		    __SIPackWireWord((const u8*)output + i * 4u, byteCount);
 	}
 
 #if OS_BUILD_VERSION >= 20011002L
-	comcsr.val = __SIRegs[SI_CC_STAT];
+	comcsr = __SIRegs[SI_CC_STAT];
 #else
-	comcsr.val = 0;
+	comcsr = 0;
 #endif
-	comcsr.flags.tcint    = 1;
-	comcsr.flags.tcintmsk = callback ? 1 : 0;
-	comcsr.flags.outlngth = (outputBytes == SI_MAX_COMCSR_OUTLNGTH) ? 0 : outputBytes;
-	comcsr.flags.inlngth  = (inputBytes == SI_MAX_COMCSR_INLNGTH) ? 0 : inputBytes;
-	comcsr.flags.channel  = chan;
-	comcsr.flags.tstart   = 1;
-	__SIRegs[SI_CC_STAT]  = comcsr.val;
+	__SIRegs[SI_CC_STAT] = __SIBuildComcsr(
+	    comcsr, (u32)chan, outputBytes, inputBytes, callback != NULL);
 
 	OSRestoreInterrupts(enabled);
 
@@ -608,6 +634,9 @@ void SIGetResponse(s32 chan, void* data)
 	rc                     = InputBufferValid[chan];
 	InputBufferValid[chan] = FALSE;
 	if (rc) {
+		/* SIGetResponse is the scalar polling-register API, unlike the raw
+		 * byte buffers accepted by SITransfer.  InputBuffer already contains
+		 * host-native register values, so these words must not be byte-swapped. */
 		((u32*)data)[0] = InputBuffer[chan][0];
 		((u32*)data)[1] = InputBuffer[chan][1];
 	}
@@ -726,12 +755,17 @@ static void CallTypeAndStatusCallback(s32 chan, u32 type)
  */
 static void GetTypeCallback(s32 chan, u32 error, OSContext* context)
 {
+#ifndef LIBPORPOISE_PORT
 	static u32 cmdFixDevice[SI_MAX_CHAN];
+#endif
 	u32 type;
 	u32 chanBit;
 	BOOL fix;
 	u32 id;
 
+#ifdef LIBPORPOISE_PORT
+	CommitTypeResponse(chan);
+#endif
 	Type[chan] &= ~SI_ERROR_BUSY;
 	Type[chan] |= error;
 	TypeTime[chan] = __OSGetSystemTime();
@@ -752,9 +786,16 @@ static void GetTypeCallback(s32 chan, u32 error, OSContext* context)
 	id = (u32)(OSGetWirelessID(chan) << 8);
 
 	if (fix && (id & SI_WIRELESS_FIX_ID)) {
-		cmdFixDevice[chan] = 0x4Eu << 24 | (id & SI_WIRELESS_TYPE_ID) | SI_WIRELESS_FIX_ID;
 		Type[chan]         = SI_ERROR_BUSY;
+#ifdef LIBPORPOISE_PORT
+		SITransfer(chan, EncodeFixDeviceCommand(
+		                     chan, 0x4Eu << 24 | (id & SI_WIRELESS_TYPE_ID)
+		                               | SI_WIRELESS_FIX_ID), 3,
+		           TypeResponseWire[chan], 3, GetTypeCallback, 0);
+#else
+		cmdFixDevice[chan] = 0x4Eu << 24 | (id & SI_WIRELESS_TYPE_ID) | SI_WIRELESS_FIX_ID;
 		SITransfer(chan, &cmdFixDevice[chan], 3, &Type[chan], 3, GetTypeCallback, 0);
+#endif
 		return;
 	}
 
@@ -766,9 +807,14 @@ static void GetTypeCallback(s32 chan, u32 error, OSContext* context)
 				OSSetWirelessID(chan, (u16)((id >> 8) & 0xffff));
 			}
 
-			cmdFixDevice[chan] = 0x4E << 24 | id;
 			Type[chan]         = SI_ERROR_BUSY;
+#ifdef LIBPORPOISE_PORT
+			SITransfer(chan, EncodeFixDeviceCommand(chan, 0x4E << 24 | id), 3,
+			           TypeResponseWire[chan], 3, GetTypeCallback, 0);
+#else
+			cmdFixDevice[chan] = 0x4E << 24 | id;
 			SITransfer(chan, &cmdFixDevice[chan], 3, &Type[chan], 3, GetTypeCallback, 0);
+#endif
 			return;
 		}
 	} else if (type & SI_WIRELESS_RECEIVED) {
@@ -777,9 +823,14 @@ static void GetTypeCallback(s32 chan, u32 error, OSContext* context)
 
 		OSSetWirelessID(chan, (u16)((id >> 8) & 0xffff));
 
-		cmdFixDevice[chan] = 0x4E << 24 | id;
 		Type[chan]         = SI_ERROR_BUSY;
+#ifdef LIBPORPOISE_PORT
+		SITransfer(chan, EncodeFixDeviceCommand(chan, 0x4E << 24 | id), 3,
+		           TypeResponseWire[chan], 3, GetTypeCallback, 0);
+#else
+		cmdFixDevice[chan] = 0x4E << 24 | id;
 		SITransfer(chan, &cmdFixDevice[chan], 3, &Type[chan], 3, GetTypeCallback, 0);
+#endif
 		return;
 	} else {
 		OSSetWirelessID(chan, 0);
@@ -793,7 +844,9 @@ static void GetTypeCallback(s32 chan, u32 error, OSContext* context)
  */
 u32 SIGetType(s32 chan)
 {
+#ifndef LIBPORPOISE_PORT
 	static u32 cmdTypeAndStatus;
+#endif
 	BOOL enabled;
 	u32 type;
 	OSTime diff;
@@ -820,7 +873,14 @@ u32 SIGetType(s32 chan)
 	}
 	TypeTime[chan] = __OSGetSystemTime();
 
-	SITransfer(chan, &cmdTypeAndStatus, 1, &Type[chan], 3, GetTypeCallback, OSMicrosecondsToTicks(65));
+#ifdef LIBPORPOISE_PORT
+	SITransfer(chan, (void*)TypeAndStatusCommand, 1,
+	           TypeResponseWire[chan], 3, GetTypeCallback,
+	           OSMicrosecondsToTicks(65));
+#else
+	SITransfer(chan, &cmdTypeAndStatus, 1, &Type[chan], 3,
+	           GetTypeCallback, OSMicrosecondsToTicks(65));
+#endif
 
 	OSRestoreInterrupts(enabled);
 	return type;

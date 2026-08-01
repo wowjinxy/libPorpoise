@@ -2,6 +2,8 @@
 #include <dolphin/exi.h>
 #include <stddef.h>
 
+#include "CARDWire.h"
+
 #if OS_BUILD_VERSION >= 20011112L
 #else
 DVDDiskID* __CARDDiskID;
@@ -163,23 +165,25 @@ void __CARDUnlockedHandler(s32 chan, OSContext* context)
 int __CARDReadNintendoID(s32 chan, u32* id)
 {
 	BOOL err;
-	u32 cmd;
+	u8 command[2];
+	u8 response[4];
 
 	if (!EXISelect(chan, 0, 0)) {
 		return CARD_RESULT_NOCARD;
 	}
 
-	cmd = 0;
+	CARDWireMakeReadNintendoIDCommand(command);
 	err = 0;
-	err |= !EXIImm(chan, &cmd, 2, EXI_WRITE, NULL);
+	err |= !EXIImm(chan, command, sizeof(command), EXI_WRITE, NULL);
 	err |= !EXISync(chan);
-	err |= !EXIImm(chan, id, 4, EXI_READ, NULL);
+	err |= !EXIImm(chan, response, sizeof(response), EXI_READ, NULL);
 	err |= !EXISync(chan);
 	err |= !EXIDeselect(chan);
 
 	if (err) {
 		return CARD_RESULT_NOCARD;
 	}
+	*id = CARDWireRead32(response);
 
 	if ((*id & 0xFFFF0000) || (*id & 3)) {
 		return CARD_RESULT_WRONGDEVICE;
@@ -194,15 +198,15 @@ int __CARDReadNintendoID(s32 chan, u32* id)
 s32 __CARDEnableInterrupt(s32 chan, BOOL enable)
 {
 	BOOL err;
-	u32 cmd;
+	u8 command[2];
 
 	if (!EXISelect(chan, 0, 4)) {
 		return CARD_RESULT_NOCARD;
 	}
 
-	cmd = enable ? 0x81010000 : 0x81000000;
+	CARDWireMakeEnableInterruptCommand(command, enable);
 	err = FALSE;
-	err |= !EXIImm(chan, &cmd, 2, 1, NULL);
+	err |= !EXIImm(chan, command, sizeof(command), 1, NULL);
 	err |= !EXISync(chan);
 	err |= !EXIDeselect(chan);
 	return err ? CARD_RESULT_NOCARD : CARD_RESULT_READY;
@@ -214,15 +218,15 @@ s32 __CARDEnableInterrupt(s32 chan, BOOL enable)
 s32 __CARDReadStatus(s32 chan, u8* status)
 {
 	BOOL err;
-	u32 cmd;
+	u8 command[2];
 
 	if (!EXISelect(chan, 0, 4)) {
 		return CARD_RESULT_NOCARD;
 	}
 
-	cmd = 0x83000000;
+	CARDWireMakeReadStatusCommand(command);
 	err = FALSE;
-	err |= !EXIImm(chan, &cmd, 2, 1, NULL);
+	err |= !EXIImm(chan, command, sizeof(command), 1, NULL);
 	err |= !EXISync(chan);
 	err |= !EXIImm(chan, status, 1, 0, NULL);
 	err |= !EXISync(chan);
@@ -236,15 +240,15 @@ s32 __CARDReadStatus(s32 chan, u8* status)
 s32 __CARDClearStatus(s32 chan)
 {
 	BOOL err;
-	u32 cmd;
+	u8 command;
 
 	if (!EXISelect(chan, 0, 4)) {
 		return CARD_RESULT_NOCARD;
 	}
 
-	cmd = 0x89000000;
+	command = CARDWireMakeClearStatusCommand();
 	err = FALSE;
-	err |= !EXIImm(chan, &cmd, 1, 1, NULL);
+	err |= !EXIImm(chan, &command, sizeof(command), 1, NULL);
 	err |= !EXISync(chan);
 	err |= !EXIDeselect(chan);
 
@@ -773,7 +777,7 @@ s32 CARDFreeBlocks(s32 chan, s32* byteNotUsed, s32* filesNotUsed)
 	}
 
 	if (byteNotUsed) {
-		*byteNotUsed = (s32)(card->sectorSize * fat->freeBlocks);
+		*byteNotUsed = (s32)(card->sectorSize * CARDWireRead16(&fat->freeBlocks));
 	}
 
 	if (filesNotUsed) {

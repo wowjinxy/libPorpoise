@@ -1,10 +1,12 @@
 #include <dolphin/dvd.h>
 #include <dolphin/os.h>
 #include <ctype.h>
+#include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef LIBPORPOISE_PORT
 #include <sys/stat.h>
 
 #ifdef _WIN32
@@ -13,6 +15,7 @@
 #else
 #include <dirent.h>
 #include <unistd.h>
+#endif
 #endif
 
 typedef struct FSTEntry FSTEntry;
@@ -36,6 +39,11 @@ u32 __DVDLongFileNameFlag = FALSE;
 #define HOST_DVD_MAX_OPEN_FILES 64
 #define HOST_DVD_MAX_OPEN_DIRS 32
 #define HOST_DVD_MAX_ENTRIES 512
+#define HOST_DVD_FST_DIR_FLAG 0x01000000u
+#define HOST_DVD_FST_STRING_MASK 0x00ffffffu
+#define HOST_DVD_STRING_TABLE_MAX ((HOST_DVD_MAX_ENTRIES * 256) + 1)
+
+typedef char HostDVDFSTEntryMustBe12Bytes[(sizeof(FSTEntry) == 12) ? 1 : -1];
 
 typedef struct HostDVDFile {
 	BOOL used;
@@ -52,31 +60,32 @@ typedef struct HostDVDEntry {
 typedef struct HostDVDDir {
 	BOOL used;
 	DVDDir* dir;
-	char dvdPath[HOST_DVD_PATH_MAX];
-	char name[HOST_DVD_PATH_MAX];
-#ifdef _WIN32
-	HANDLE findHandle;
-	WIN32_FIND_DATAA findData;
-	BOOL firstPending;
-#else
-	DIR* handle;
-#endif
 } HostDVDDir;
+
+typedef struct HostDVDChild {
+	char name[HOST_DVD_PATH_MAX];
+	BOOL isDir;
+	u32 length;
+} HostDVDChild;
 
 static char HostDVDRoot[HOST_DVD_PATH_MAX] = "files";
 static char HostDVDCurrentDir[HOST_DVD_PATH_MAX] = "/";
 static HostDVDFile HostDVDFiles[HOST_DVD_MAX_OPEN_FILES];
 static HostDVDDir HostDVDDirs[HOST_DVD_MAX_OPEN_DIRS];
 static HostDVDEntry HostDVDEntries[HOST_DVD_MAX_ENTRIES];
+static FSTEntry HostDVDFSTEntries[HOST_DVD_MAX_ENTRIES];
+static char HostDVDStringTable[HOST_DVD_STRING_TABLE_MAX];
+static u32 HostDVDFSTEntryCount;
+static u32 HostDVDStringTableLength;
+static void* HostDVDFSTSnapshot;
 
 static BOOL hostDVDNormalizePath(const char* path, char* normalized, size_t normalizedSize);
 static BOOL hostDVDBuildPath(const char* dvdPath, char* hostPath, size_t hostPathSize);
 static BOOL hostDVDPathInfo(const char* dvdPath, BOOL* isDir, u32* length);
-static s32 hostDVDRegisterEntry(const char* dvdPath, BOOL isDir);
+static BOOL hostDVDBuildFSTSnapshot(void);
+static s32 hostDVDLookupEntry(const char* dvdPath);
 static HostDVDFile* hostDVDFindFile(DVDFileInfo* fileInfo);
 static HostDVDDir* hostDVDFindDir(DVDDir* dir);
-static BOOL hostDVDOpenDirHandle(HostDVDDir* slot);
-static void hostDVDCloseDirHandle(HostDVDDir* slot);
 #endif
 
 static void cbForReadAsync(s32 result, DVDCommandBlock* block);
@@ -208,34 +217,320 @@ static BOOL hostDVDPathInfo(const char* dvdPath, BOOL* isDir, u32* length)
 	return TRUE;
 }
 
-static s32 hostDVDRegisterEntry(const char* dvdPath, BOOL isDir)
+static BOOL hostDVDNamesEqual(const char* left, const char* right)
+{
+	while (*left != '\0' && *right != '\0') {
+		if (tolower((unsigned char)*left) != tolower((unsigned char)*right)) {
+			return FALSE;
+		}
+		left++;
+		right++;
+	}
+	return *left == *right ? TRUE : FALSE;
+}
+
+static s32 hostDVDLookupEntry(const char* dvdPath)
 {
 	char normalized[HOST_DVD_PATH_MAX];
-	s32 freeEntry = -1;
-	s32 i;
+	u32 i;
 
 	if (!hostDVDNormalizePath(dvdPath, normalized, sizeof(normalized))) {
 		return -1;
 	}
 
-	for (i = 0; i < HOST_DVD_MAX_ENTRIES; i++) {
-		if (HostDVDEntries[i].used) {
-			if (HostDVDEntries[i].isDir == isDir && strcmp(HostDVDEntries[i].path, normalized) == 0) {
-				return i;
+	for (i = 0; i < MaxEntryNum; i++) {
+		if (HostDVDEntries[i].used &&
+		    hostDVDNamesEqual(HostDVDEntries[i].path, normalized)) {
+			return (s32)i;
+		}
+	}
+	return -1;
+}
+
+static BOOL hostDVDMakeChildPath(
+	const char* directoryPath,
+	const char* name,
+	char* childPath,
+	size_t childPathSize)
+{
+	int result;
+	if (strcmp(directoryPath, "/") == 0) {
+		result = snprintf(childPath, childPathSize, "/%s", name);
+	} else {
+		result = snprintf(childPath, childPathSize, "%s/%s", directoryPath, name);
+	}
+	return (0 <= result && result < (int)childPathSize) ? TRUE : FALSE;
+}
+
+static BOOL hostDVDAppendChild(
+	HostDVDChild** children,
+	u32* childCount,
+	u32* childCapacity,
+	const char* directoryPath,
+	const char* name)
+{
+	HostDVDChild* resized;
+	HostDVDChild* child;
+	char childPath[HOST_DVD_PATH_MAX];
+	u32 newCapacity;
+
+	if (*childCount >= HOST_DVD_MAX_ENTRIES ||
+	    !hostDVDMakeChildPath(
+	        directoryPath, name, childPath, sizeof(childPath))) {
+		return FALSE;
+	}
+
+	if (*childCount == *childCapacity) {
+		newCapacity = *childCapacity == 0 ? 8 : *childCapacity * 2;
+		if (newCapacity > HOST_DVD_MAX_ENTRIES) {
+			newCapacity = HOST_DVD_MAX_ENTRIES;
+		}
+		resized = (HostDVDChild*)realloc(
+		    *children, (size_t)newCapacity * sizeof(**children));
+		if (resized == NULL) {
+			return FALSE;
+		}
+		*children = resized;
+		*childCapacity = newCapacity;
+	}
+
+	child = &(*children)[*childCount];
+	if (snprintf(child->name, sizeof(child->name), "%s", name) >=
+	    (int)sizeof(child->name) ||
+	    !hostDVDPathInfo(childPath, &child->isDir, &child->length)) {
+		return FALSE;
+	}
+	(*childCount)++;
+	return TRUE;
+}
+
+static int hostDVDCompareChildren(const void* left, const void* right)
+{
+	const HostDVDChild* leftChild = (const HostDVDChild*)left;
+	const HostDVDChild* rightChild = (const HostDVDChild*)right;
+	return strcmp(leftChild->name, rightChild->name);
+}
+
+static BOOL hostDVDCollectChildren(
+	const char* directoryPath,
+	HostDVDChild** children,
+	u32* childCount)
+{
+	char hostPath[HOST_DVD_PATH_MAX];
+	u32 childCapacity = 0;
+	BOOL success = TRUE;
+
+	*children = NULL;
+	*childCount = 0;
+	if (!hostDVDBuildPath(directoryPath, hostPath, sizeof(hostPath))) {
+		return FALSE;
+	}
+
+#ifdef _WIN32
+	{
+		char pattern[HOST_DVD_PATH_MAX];
+		WIN32_FIND_DATAA findData;
+		HANDLE findHandle;
+		DWORD lastError;
+
+		if (snprintf(pattern, sizeof(pattern), "%s\\*", hostPath) >=
+		    (int)sizeof(pattern)) {
+			return FALSE;
+		}
+		findHandle = FindFirstFileA(pattern, &findData);
+		if (findHandle == INVALID_HANDLE_VALUE) {
+			lastError = GetLastError();
+			return (lastError == ERROR_FILE_NOT_FOUND ||
+			        lastError == ERROR_NO_MORE_FILES)
+			    ? TRUE
+			    : FALSE;
+		}
+
+		do {
+			if (strcmp(findData.cFileName, ".") == 0 ||
+			    strcmp(findData.cFileName, "..") == 0) {
+				continue;
 			}
-		} else if (freeEntry < 0) {
-			freeEntry = i;
+			if (!hostDVDAppendChild(
+			        children,
+			        childCount,
+			        &childCapacity,
+			        directoryPath,
+			        findData.cFileName)) {
+				success = FALSE;
+				break;
+			}
+		} while (FindNextFileA(findHandle, &findData));
+
+		lastError = GetLastError();
+		if (success && lastError != ERROR_NO_MORE_FILES) {
+			success = FALSE;
+		}
+		FindClose(findHandle);
+	}
+#else
+	{
+		DIR* handle = opendir(hostPath);
+		if (handle == NULL) {
+			return FALSE;
+		}
+		while (success) {
+			struct dirent* entry;
+			errno = 0;
+			entry = readdir(handle);
+			if (entry == NULL) {
+				if (errno != 0) {
+					success = FALSE;
+				}
+				break;
+			}
+			if (strcmp(entry->d_name, ".") == 0 ||
+			    strcmp(entry->d_name, "..") == 0) {
+				continue;
+			}
+			success = hostDVDAppendChild(
+			    children,
+			    childCount,
+			    &childCapacity,
+			    directoryPath,
+			    entry->d_name);
+		}
+		closedir(handle);
+	}
+#endif
+
+	if (!success) {
+		free(*children);
+		*children = NULL;
+		*childCount = 0;
+		return FALSE;
+	}
+	if (*childCount > 1) {
+		qsort(
+		    *children,
+		    (size_t)*childCount,
+		    sizeof(**children),
+		    hostDVDCompareChildren);
+	}
+	return TRUE;
+}
+
+static BOOL hostDVDAppendFSTName(const char* name, u32* stringOffset)
+{
+	size_t nameLength = strlen(name) + 1;
+	if (HostDVDStringTableLength > HOST_DVD_FST_STRING_MASK ||
+	    nameLength >
+	        (size_t)HOST_DVD_STRING_TABLE_MAX - HostDVDStringTableLength) {
+		return FALSE;
+	}
+	*stringOffset = HostDVDStringTableLength;
+	memcpy(
+	    HostDVDStringTable + HostDVDStringTableLength,
+	    name,
+	    nameLength);
+	HostDVDStringTableLength += (u32)nameLength;
+	return TRUE;
+}
+
+static BOOL hostDVDBuildFSTDirectory(u32 directoryEntry, u32 depth)
+{
+	HostDVDChild* children;
+	u32 childCount;
+	u32 childIndex;
+
+	if (depth >= HOST_DVD_MAX_ENTRIES ||
+	    !hostDVDCollectChildren(
+	        HostDVDEntries[directoryEntry].path, &children, &childCount)) {
+		return FALSE;
+	}
+
+	for (childIndex = 0; childIndex < childCount; childIndex++) {
+		HostDVDChild* child = &children[childIndex];
+		HostDVDEntry* entry;
+		FSTEntry* fstEntry;
+		char childPath[HOST_DVD_PATH_MAX];
+		u32 entryNum;
+		u32 stringOffset;
+
+		if (HostDVDFSTEntryCount >= HOST_DVD_MAX_ENTRIES ||
+		    !hostDVDMakeChildPath(
+		        HostDVDEntries[directoryEntry].path,
+		        child->name,
+		        childPath,
+		        sizeof(childPath)) ||
+		    !hostDVDAppendFSTName(child->name, &stringOffset)) {
+			free(children);
+			return FALSE;
+		}
+
+		entryNum = HostDVDFSTEntryCount++;
+		entry = &HostDVDEntries[entryNum];
+		fstEntry = &HostDVDFSTEntries[entryNum];
+		entry->used = TRUE;
+		entry->isDir = child->isDir;
+		snprintf(entry->path, sizeof(entry->path), "%s", childPath);
+
+		fstEntry->isDirAndStringOff = stringOffset;
+		if (child->isDir) {
+			fstEntry->isDirAndStringOff |= HOST_DVD_FST_DIR_FLAG;
+			fstEntry->parentOrPosition = directoryEntry;
+			if (!hostDVDBuildFSTDirectory(entryNum, depth + 1)) {
+				free(children);
+				return FALSE;
+			}
+		} else {
+			/* Extracted host files have no meaningful physical disc offset. */
+			fstEntry->parentOrPosition = 0;
+			fstEntry->nextEntryOrLength = child->length;
 		}
 	}
 
-	if (freeEntry < 0) {
-		return -1;
+	HostDVDFSTEntries[directoryEntry].nextEntryOrLength =
+	    HostDVDFSTEntryCount;
+	free(children);
+	return TRUE;
+}
+
+static BOOL hostDVDBuildFSTSnapshot(void)
+{
+	void* snapshot;
+	size_t entryBytes;
+	size_t snapshotBytes;
+
+	memset(HostDVDEntries, 0, sizeof(HostDVDEntries));
+	memset(HostDVDFSTEntries, 0, sizeof(HostDVDFSTEntries));
+	memset(HostDVDStringTable, 0, sizeof(HostDVDStringTable));
+	HostDVDFSTEntryCount = 1;
+	HostDVDStringTableLength = 1;
+
+	HostDVDEntries[0].used = TRUE;
+	HostDVDEntries[0].isDir = TRUE;
+	snprintf(HostDVDEntries[0].path, sizeof(HostDVDEntries[0].path), "/");
+	HostDVDFSTEntries[0].isDirAndStringOff = HOST_DVD_FST_DIR_FLAG;
+	HostDVDFSTEntries[0].parentOrPosition = 0;
+
+	if (!hostDVDBuildFSTDirectory(0, 0)) {
+		return FALSE;
 	}
 
-	HostDVDEntries[freeEntry].used = TRUE;
-	HostDVDEntries[freeEntry].isDir = isDir;
-	snprintf(HostDVDEntries[freeEntry].path, sizeof(HostDVDEntries[freeEntry].path), "%s", normalized);
-	return freeEntry;
+	entryBytes = (size_t)HostDVDFSTEntryCount * sizeof(FSTEntry);
+	snapshotBytes = entryBytes + HostDVDStringTableLength;
+	snapshot = malloc(snapshotBytes);
+	if (snapshot == NULL) {
+		return FALSE;
+	}
+	memcpy(snapshot, HostDVDFSTEntries, entryBytes);
+	memcpy(
+	    (char*)snapshot + entryBytes,
+	    HostDVDStringTable,
+	    HostDVDStringTableLength);
+
+	free(HostDVDFSTSnapshot);
+	HostDVDFSTSnapshot = snapshot;
+	FstStart = (FSTEntry*)snapshot;
+	MaxEntryNum = HostDVDFSTEntryCount;
+	FstStringStart = (char*)&FstStart[MaxEntryNum];
+	return TRUE;
 }
 
 static HostDVDFile* hostDVDFindFile(DVDFileInfo* fileInfo)
@@ -260,53 +555,6 @@ static HostDVDDir* hostDVDFindDir(DVDDir* dir)
 	return NULL;
 }
 
-static BOOL hostDVDOpenDirHandle(HostDVDDir* slot)
-{
-	char hostPath[HOST_DVD_PATH_MAX];
-	if (slot == NULL || !hostDVDBuildPath(slot->dvdPath, hostPath, sizeof(hostPath))) {
-		return FALSE;
-	}
-
-#ifdef _WIN32
-	{
-		char pattern[HOST_DVD_PATH_MAX];
-		if (snprintf(pattern, sizeof(pattern), "%s\\*", hostPath) >= (int)sizeof(pattern)) {
-			return FALSE;
-		}
-		slot->findHandle = FindFirstFileA(pattern, &slot->findData);
-		if (slot->findHandle == INVALID_HANDLE_VALUE) {
-			return FALSE;
-		}
-		slot->firstPending = TRUE;
-	}
-#else
-	slot->handle = opendir(hostPath);
-	if (slot->handle == NULL) {
-		return FALSE;
-	}
-#endif
-	return TRUE;
-}
-
-static void hostDVDCloseDirHandle(HostDVDDir* slot)
-{
-	if (slot == NULL) {
-		return;
-	}
-#ifdef _WIN32
-	if (slot->findHandle != NULL && slot->findHandle != INVALID_HANDLE_VALUE) {
-		FindClose(slot->findHandle);
-	}
-	slot->findHandle = INVALID_HANDLE_VALUE;
-	slot->firstPending = FALSE;
-#else
-	if (slot->handle != NULL) {
-		closedir(slot->handle);
-	}
-	slot->handle = NULL;
-#endif
-}
-
 BOOL DVDSetRootDirectory(const char* path)
 {
 	size_t length;
@@ -322,6 +570,7 @@ BOOL DVDSetRootDirectory(const char* path)
 		HostDVDRoot[--length] = '\0';
 	}
 	snprintf(HostDVDCurrentDir, sizeof(HostDVDCurrentDir), "/");
+	currentDirectory = 0;
 	return TRUE;
 }
 #endif
@@ -335,11 +584,8 @@ void __DVDFSInit()
 	struct stat status;
 	memset(HostDVDFiles, 0, sizeof(HostDVDFiles));
 	memset(HostDVDDirs, 0, sizeof(HostDVDDirs));
-	memset(HostDVDEntries, 0, sizeof(HostDVDEntries));
-	HostDVDEntries[0].used = TRUE;
-	HostDVDEntries[0].isDir = TRUE;
-	snprintf(HostDVDEntries[0].path, sizeof(HostDVDEntries[0].path), "/");
 	snprintf(HostDVDCurrentDir, sizeof(HostDVDCurrentDir), "/");
+	currentDirectory = 0;
 
 	if (stat(HostDVDRoot, &status) != 0) {
 #ifdef _WIN32
@@ -348,7 +594,19 @@ void __DVDFSInit()
 		mkdir(HostDVDRoot, 0755);
 #endif
 	}
-	OSReport("DVD: host root is '%s'\n", HostDVDRoot);
+	if (!hostDVDBuildFSTSnapshot()) {
+		free(HostDVDFSTSnapshot);
+		HostDVDFSTSnapshot = NULL;
+		FstStart = NULL;
+		FstStringStart = NULL;
+		MaxEntryNum = 0;
+		OSReport("DVD: failed to build host FST snapshot for '%s'\n", HostDVDRoot);
+	} else {
+		OSReport(
+		    "DVD: host root is '%s' (%u FST entries)\n",
+		    HostDVDRoot,
+		    MaxEntryNum);
+	}
 #else
 	BootInfo = (OSBootInfo*)OSPhysicalToCached(0);
 	FstStart = (FSTEntry*)BootInfo->FSTLocation;
@@ -403,10 +661,25 @@ s32 DVDConvertPathToEntrynum(const char* pathPtr)
 	BOOL extention;
 
 #ifdef LIBPORPOISE_PORT
-	if (!hostDVDPathInfo(pathPtr, &isDir, NULL)) {
-		return -1;
+	{
+		s32 hostEntry;
+		size_t pathLength;
+		if (pathPtr == NULL || FstStart == NULL || MaxEntryNum == 0) {
+			return -1;
+		}
+		hostEntry = hostDVDLookupEntry(pathPtr);
+		if (hostEntry < 0) {
+			return -1;
+		}
+		pathLength = strlen(pathPtr);
+		if (pathLength != 0 &&
+		    (pathPtr[pathLength - 1] == '/' ||
+		     pathPtr[pathLength - 1] == '\\') &&
+		    !HostDVDEntries[hostEntry].isDir) {
+			return -1;
+		}
+		return hostEntry;
 	}
-	return hostDVDRegisterEntry(pathPtr, isDir);
 #endif
 
 	if (pathPtr == NULL || FstStart == NULL || FstStringStart == NULL ||
@@ -515,7 +788,7 @@ s32 DVDConvertPathToEntrynum(const char* pathPtr)
 BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo)
 {
 #ifdef LIBPORPOISE_PORT
-	if (entrynum < 0 || entrynum >= HOST_DVD_MAX_ENTRIES ||
+	if (fileInfo == NULL || entrynum < 0 || entrynum >= (s32)MaxEntryNum ||
 	    !HostDVDEntries[entrynum].used || HostDVDEntries[entrynum].isDir) {
 		return FALSE;
 	}
@@ -546,23 +819,20 @@ BOOL DVDOpen(const char* fileName, DVDFileInfo* fileInfo)
 #ifdef LIBPORPOISE_PORT
 	char hostPath[HOST_DVD_PATH_MAX];
 	FILE* file;
-	long size;
+	s32 entry;
 	s32 i;
 
 	OSCheckAlarmQueue();
-	if (fileName == NULL || fileInfo == NULL ||
-	    !hostDVDBuildPath(fileName, hostPath, sizeof(hostPath))) {
+	entry = DVDConvertPathToEntrynum(fileName);
+	if (fileInfo == NULL || entry < 0 || entryIsDir(entry) ||
+	    !hostDVDBuildPath(
+	        HostDVDEntries[entry].path, hostPath, sizeof(hostPath))) {
 		return FALSE;
 	}
 
 	file = fopen(hostPath, "rb");
 	if (file == NULL) {
 		OSReport("Warning: DVDOpen(): host file '%s' was not found.\n", hostPath);
-		return FALSE;
-	}
-	if (fseek(file, 0, SEEK_END) != 0 || (size = ftell(file)) < 0 ||
-	    fseek(file, 0, SEEK_SET) != 0) {
-		fclose(file);
 		return FALSE;
 	}
 	OSCheckAlarmQueue();
@@ -573,11 +843,10 @@ BOOL DVDOpen(const char* fileName, DVDFileInfo* fileInfo)
 			HostDVDFiles[i].used = TRUE;
 			HostDVDFiles[i].info = fileInfo;
 			HostDVDFiles[i].file = file;
-			fileInfo->startAddr = 0;
-			fileInfo->length = (u32)size;
+			fileInfo->startAddr = filePosition(entry);
+			fileInfo->length = fileLength(entry);
 			fileInfo->callback = NULL;
 			fileInfo->cBlock.state = DVD_STATE_END;
-			hostDVDRegisterEntry(fileName, FALSE);
 			return TRUE;
 		}
 	}
@@ -740,14 +1009,16 @@ BOOL DVDGetCurrentDir(char* path, u32 maxlen)
 BOOL DVDChangeDir(const char* dirName)
 {
 #ifdef LIBPORPOISE_PORT
-	char normalized[HOST_DVD_PATH_MAX];
-	BOOL isDir;
-	if (!hostDVDNormalizePath(dirName, normalized, sizeof(normalized)) ||
-	    !hostDVDPathInfo(dirName, &isDir, NULL) || !isDir) {
+	s32 entry = DVDConvertPathToEntrynum(dirName);
+	if (entry < 0 || !HostDVDEntries[entry].isDir) {
 		return FALSE;
 	}
-	snprintf(HostDVDCurrentDir, sizeof(HostDVDCurrentDir), "%s", normalized);
-	hostDVDRegisterEntry(normalized, TRUE);
+	currentDirectory = (u32)entry;
+	snprintf(
+	    HostDVDCurrentDir,
+	    sizeof(HostDVDCurrentDir),
+	    "%s",
+	    HostDVDEntries[entry].path);
 	return TRUE;
 #else
 	s32 entry;
@@ -822,11 +1093,25 @@ s32 DVDReadPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset, s32 p
 {
 #ifdef LIBPORPOISE_PORT
 	HostDVDFile* slot = hostDVDFindFile(fileInfo);
+	u64 endOffset;
+	size_t fileBytes;
 	size_t bytesRead;
 	(void)prio;
 	OSCheckAlarmQueue();
-	if (slot == NULL || addr == NULL || length < 0 || offset < 0 ||
-	    (u32)offset > fileInfo->length) {
+	if (slot == NULL || addr == NULL || length < 0 || offset < 0) {
+		return DVD_RESULT_FATAL_ERROR;
+	}
+
+	/*
+	 * DVD reads transfer whole 32-byte DMA units. The SDK consequently allows
+	 * the final request to extend less than DVD_MIN_TRANSFER_SIZE bytes beyond
+	 * the FST file length, while still requiring its starting offset to be in
+	 * the file. Extracted host files do not retain those disc padding bytes, so
+	 * supply deterministic zero padding and account for the complete transfer.
+	 */
+	endOffset = (u64)(u32)offset + (u64)(u32)length;
+	if ((u32)offset >= fileInfo->length ||
+	    endOffset >= (u64)fileInfo->length + DVD_MIN_TRANSFER_SIZE) {
 		return DVD_RESULT_FATAL_ERROR;
 	}
 	if (fseek(slot->file, offset, SEEK_SET) != 0) {
@@ -834,16 +1119,26 @@ s32 DVDReadPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset, s32 p
 		return DVD_RESULT_FATAL_ERROR;
 	}
 	fileInfo->cBlock.state = DVD_STATE_BUSY;
-	bytesRead = fread(addr, 1, (size_t)length, slot->file);
+	fileBytes = (size_t)length;
+	if (endOffset > fileInfo->length) {
+		fileBytes = (size_t)(fileInfo->length - (u32)offset);
+	}
+	bytesRead = fread(addr, 1, fileBytes, slot->file);
 	OSCheckAlarmQueue();
-	fileInfo->cBlock.currTransferSize = (u32)bytesRead;
-	fileInfo->cBlock.transferredSize = (u32)bytesRead;
-	fileInfo->cBlock.state = DVD_STATE_END;
-	if (bytesRead < (size_t)length && ferror(slot->file)) {
+	if (bytesRead != fileBytes) {
+		fileInfo->cBlock.currTransferSize = (u32)bytesRead;
+		fileInfo->cBlock.transferredSize = (u32)bytesRead;
+		fileInfo->cBlock.state = DVD_STATE_FATAL_ERROR;
 		clearerr(slot->file);
 		return DVD_RESULT_FATAL_ERROR;
 	}
-	return (s32)bytesRead;
+	if (fileBytes < (size_t)length) {
+		memset((u8*)addr + fileBytes, 0, (size_t)length - fileBytes);
+	}
+	fileInfo->cBlock.currTransferSize = (u32)length;
+	fileInfo->cBlock.transferredSize = (u32)length;
+	fileInfo->cBlock.state = DVD_STATE_END;
+	return length;
 #else
 	BOOL result;
 	DVDCommandBlock* block;
@@ -999,18 +1294,11 @@ s32 DVDGetFileInfoStatus(DVDFileInfo* fileInfo)
 BOOL DVDOpenDir(const char* dirName, DVDDir* dir)
 {
 #ifdef LIBPORPOISE_PORT
-	BOOL isDir;
-	char normalized[HOST_DVD_PATH_MAX];
 	s32 entry;
 	s32 i;
 
-	if (dir == NULL || !hostDVDNormalizePath(dirName, normalized, sizeof(normalized)) ||
-	    !hostDVDPathInfo(dirName, &isDir, NULL) || !isDir) {
-		return FALSE;
-	}
-
-	entry = hostDVDRegisterEntry(normalized, TRUE);
-	if (entry < 0) {
+	if (dir == NULL || (entry = DVDConvertPathToEntrynum(dirName)) < 0 ||
+	    !HostDVDEntries[entry].isDir) {
 		return FALSE;
 	}
 
@@ -1020,14 +1308,9 @@ BOOL DVDOpenDir(const char* dirName, DVDDir* dir)
 			memset(slot, 0, sizeof(*slot));
 			slot->used = TRUE;
 			slot->dir = dir;
-			snprintf(slot->dvdPath, sizeof(slot->dvdPath), "%s", normalized);
-			if (!hostDVDOpenDirHandle(slot)) {
-				memset(slot, 0, sizeof(*slot));
-				return FALSE;
-			}
 			dir->entryNum = (u32)entry;
-			dir->location = 0;
-			dir->next = 0;
+			dir->location = (u32)entry + 1;
+			dir->next = nextDir(entry);
 			return TRUE;
 		}
 	}
@@ -1070,58 +1353,20 @@ BOOL DVDReadDir(DVDDir* dir, DVDDirEntry* dirent)
 {
 #ifdef LIBPORPOISE_PORT
 	HostDVDDir* slot = hostDVDFindDir(dir);
+	u32 location;
 	if (slot == NULL || dirent == NULL) {
 		return FALSE;
 	}
-
-	while (TRUE) {
-		const char* name;
-		BOOL isDir;
-		char childPath[HOST_DVD_PATH_MAX];
-#ifdef _WIN32
-		if (slot->firstPending) {
-			slot->firstPending = FALSE;
-		} else if (!FindNextFileA(slot->findHandle, &slot->findData)) {
-			return FALSE;
-		}
-		name = slot->findData.cFileName;
-		isDir = (slot->findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? TRUE : FALSE;
-#else
-		struct dirent* entry = readdir(slot->handle);
-		if (entry == NULL) {
-			return FALSE;
-		}
-		name = entry->d_name;
-		if (snprintf(childPath, sizeof(childPath), "%s/%s", slot->dvdPath, name) >= (int)sizeof(childPath) ||
-		    !hostDVDPathInfo(childPath, &isDir, NULL)) {
-			continue;
-		}
-#endif
-		if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-			continue;
-		}
-
-		if (strcmp(slot->dvdPath, "/") == 0) {
-			snprintf(childPath, sizeof(childPath), "/%s", name);
-		} else {
-			snprintf(childPath, sizeof(childPath), "%s/%s", slot->dvdPath, name);
-		}
-		{
-			s32 entryNum = hostDVDRegisterEntry(childPath, isDir);
-			const char* stableName;
-			if (entryNum < 0) {
-				return FALSE;
-			}
-			stableName = strrchr(HostDVDEntries[entryNum].path, '/');
-			dirent->entryNum = (u32)entryNum;
-			dirent->name = stableName != NULL
-				? stableName + 1
-				: HostDVDEntries[entryNum].path;
-		}
-		dirent->isDir = isDir;
-		dir->location++;
-		return TRUE;
+	location = dir->location;
+	if (location <= dir->entryNum || dir->next <= location ||
+	    location >= MaxEntryNum) {
+		return FALSE;
 	}
+	dirent->entryNum = location;
+	dirent->isDir = entryIsDir(location);
+	dirent->name = FstStringStart + stringOff(location);
+	dir->location = entryIsDir(location) ? nextDir(location) : location + 1;
+	return TRUE;
 #else
 	TRAP_UNIMPLEMENTED;
 #endif
@@ -1138,7 +1383,6 @@ BOOL DVDCloseDir(DVDDir* dir)
 	if (slot == NULL) {
 		return FALSE;
 	}
-	hostDVDCloseDirHandle(slot);
 	memset(slot, 0, sizeof(*slot));
 	return TRUE;
 #else
@@ -1153,9 +1397,7 @@ void DVDRewindDir(DVDDir* dir)
 	if (slot == NULL) {
 		return;
 	}
-	hostDVDCloseDirHandle(slot);
-	hostDVDOpenDirHandle(slot);
-	dir->location = 0;
+	dir->location = dir->entryNum + 1;
 #else
 	if (dir != NULL) {
 		dir->location = dir->entryNum + 1;
@@ -1166,7 +1408,7 @@ void DVDRewindDir(DVDDir* dir)
 BOOL DVDFastOpenDir(s32 entryNum, DVDDir* dir)
 {
 #ifdef LIBPORPOISE_PORT
-	if (entryNum < 0 || entryNum >= HOST_DVD_MAX_ENTRIES ||
+	if (dir == NULL || entryNum < 0 || entryNum >= (s32)MaxEntryNum ||
 	    !HostDVDEntries[entryNum].used || !HostDVDEntries[entryNum].isDir) {
 		return FALSE;
 	}
@@ -1189,7 +1431,7 @@ BOOL DVDFastOpenDir(s32 entryNum, DVDDir* dir)
 void* DVDGetFSTLocation()
 {
 #ifdef LIBPORPOISE_PORT
-	return HostDVDEntries;
+	return FstStart;
 #else
 	TRAP_UNIMPLEMENTED;
 #endif

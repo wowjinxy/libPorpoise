@@ -13,7 +13,7 @@ import argparse
 import json
 import re
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, NamedTuple
 
 
 FUNCTION_DECLARATION = re.compile(
@@ -47,6 +47,38 @@ STATIC_OBJECT_DEFINITION = re.compile(
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
     r"(?P<arrays>(?:[ \t]*\[[^\]\n]*\])*)[ \t]*=)"
 )
+
+BYTE_SCALAR_TYPE = r"(?:u8|char|signed[ \t]+char|unsigned[ \t]+char)"
+BYTE_POINTER_QUALIFIER = r"(?:const|volatile|immut)"
+BYTE_POINTER_TYPE = (
+    rf"(?:{BYTE_POINTER_QUALIFIER}[ \t]+)*"
+    rf"{BYTE_SCALAR_TYPE}"
+    rf"(?:[ \t]+{BYTE_POINTER_QUALIFIER})*[ \t]*\*[ \t]*"
+    rf"(?:{BYTE_POINTER_QUALIFIER}[ \t]*)*"
+)
+BYTE_POINTER_DECLARATION = re.compile(
+    rf"(?<![A-Za-z0-9_])(?P<type>{BYTE_POINTER_TYPE})"
+    rf"(?P<name>[A-Za-z_][A-Za-z0-9_]*)[ \t]*(?P<tail>=|;)"
+)
+BIG_ENDIAN_BYTE_VIEW_DECLARATION = re.compile(
+    rf"(?<![A-Za-z0-9_])(?P<type>{BYTE_POINTER_TYPE})"
+    rf"(?P<name>[A-Za-z_][A-Za-z0-9_]*)[ \t\r\n]*=[ \t\r\n]*"
+    rf"reinterpret_cast[ \t\r\n]*<[ \t\r\n]*"
+    rf"(?P<cast_type>{BYTE_POINTER_TYPE})>[ \t\r\n]*"
+    rf"\([ \t\r\n]*&[ \t\r\n]*"
+    rf"(?P<scalar>[A-Za-z_][A-Za-z0-9_]*"
+    rf"(?:[ \t\r\n]*(?:\.|->)[ \t\r\n]*[A-Za-z_][A-Za-z0-9_]*)*)"
+    rf"[ \t\r\n]*\)[ \t\r\n]*;"
+)
+
+
+class BytePointerDeclaration(NamedTuple):
+    name: str
+    start: int
+    end: int
+    scope_depth: int
+    scope_end: int
+    scalar: str | None = None
 
 
 def external_symbol_names(include_roots: Iterable[Path]) -> tuple[set[str], set[str], list[Path]]:
@@ -226,6 +258,151 @@ def apply_replacements(text: str, replacements: Iterable[tuple[int, int, str]]) 
     return text
 
 
+def lexical_scope_end(
+    masked: str,
+    depths: list[int],
+    position: int,
+    scope_depth: int,
+) -> int:
+    """Find the closing brace for the scope containing ``position``."""
+
+    if scope_depth == 0:
+        return len(masked)
+    for index in range(position, len(masked)):
+        if masked[index] == "}" and depths[index] == scope_depth:
+            return index
+    return len(masked)
+
+
+def matching_subscript_end(masked: str, opening: int) -> int | None:
+    """Return the closing bracket for a subscript in already-masked code."""
+
+    depth = 1
+    for index in range(opening + 1, len(masked)):
+        if masked[index] == "[":
+            depth += 1
+        elif masked[index] == "]":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def is_adapted_byte_subscript(index_text: str, scalar: str) -> bool:
+    """Recognize this pass's output so adapting a generated view is stable."""
+
+    compact_index = re.sub(r"\s+", "", index_text)
+    compact_scalar = re.sub(r"\s+", "", scalar)
+    prefix = f"(sizeof({compact_scalar})-1)-("
+    return compact_index.startswith(prefix) and compact_index.endswith(")")
+
+
+def adapt_big_endian_scalar_byte_views(text: str) -> str:
+    """Emulate CodeWarrior's big-endian byte view of local scalar objects.
+
+    Legacy code commonly takes a byte pointer to a scalar and then addresses
+    that scalar by byte index.  The index denotes a big-endian target-memory
+    byte, not a serialized file byte, so the same source selects the opposite
+    host-memory byte on a little-endian PC.  For explicitly recognizable byte
+    views, rewrite ``bytes[index]`` as
+    ``bytes[(sizeof(scalar) - 1) - (index)]`` until the declaration's lexical
+    scope ends.
+
+    This deliberately handles only declarations initialized directly from
+    ``reinterpret_cast<byte-type*>(&scalar)``.  It does not infer provenance
+    through assignments or function calls.
+    """
+
+    masked = mask_non_code(text)
+    depths = brace_depths(masked)
+    adapted_declarations: dict[tuple[int, str], tuple[int, str]] = {}
+    for declaration in BIG_ENDIAN_BYTE_VIEW_DECLARATION.finditer(masked):
+        key = (declaration.start(), declaration.group("name"))
+        scalar = text[
+            declaration.start("scalar") : declaration.end("scalar")
+        ].strip()
+        adapted_declarations[key] = (declaration.end(), scalar)
+
+    if not adapted_declarations:
+        return text
+
+    declarations: list[BytePointerDeclaration] = []
+    for declaration in BYTE_POINTER_DECLARATION.finditer(masked):
+        name = declaration.group("name")
+        key = (declaration.start(), name)
+        adapted = adapted_declarations.get(key)
+        declaration_end = adapted[0] if adapted is not None else declaration.end()
+        scope_depth = depths[declaration.start()]
+        declarations.append(
+            BytePointerDeclaration(
+                name=name,
+                start=declaration.start(),
+                end=declaration_end,
+                scope_depth=scope_depth,
+                scope_end=lexical_scope_end(
+                    masked,
+                    depths,
+                    declaration_end,
+                    scope_depth,
+                ),
+                scalar=adapted[1] if adapted is not None else None,
+            )
+        )
+
+    names = sorted(
+        {declaration.name for declaration in declarations},
+        key=len,
+        reverse=True,
+    )
+    if not names:
+        return text
+    subscript = re.compile(
+        rf"(?<![A-Za-z0-9_.>:])(?P<name>{'|'.join(map(re.escape, names))})"
+        rf"[ \t\r\n]*(?P<opening>\[)"
+    )
+
+    insertions: list[tuple[int, int, str]] = []
+    for use in subscript.finditer(masked):
+        use_start = use.start("name")
+        visible = [
+            declaration
+            for declaration in declarations
+            if declaration.name == use.group("name")
+            and declaration.end <= use_start < declaration.scope_end
+        ]
+        if not visible:
+            continue
+        declaration = max(
+            visible,
+            key=lambda candidate: (candidate.scope_depth, candidate.start),
+        )
+        if declaration.scalar is None:
+            # A nested ordinary byte pointer shadows an adapted outer view.
+            continue
+
+        opening = use.start("opening")
+        closing = matching_subscript_end(masked, opening)
+        if closing is None or closing >= declaration.scope_end:
+            continue
+        index_text = masked[opening + 1 : closing]
+        if not index_text.strip() or is_adapted_byte_subscript(
+            index_text,
+            declaration.scalar,
+        ):
+            continue
+
+        insertions.append(
+            (
+                opening + 1,
+                opening + 1,
+                f"(sizeof({declaration.scalar}) - 1) - (",
+            )
+        )
+        insertions.append((closing, closing, ")"))
+
+    return apply_replacements(text, insertions)
+
+
 def adapt_same_tu_function_linkage(text: str) -> str:
     """Make same-TU prototypes local when a later file-scope definition is local."""
 
@@ -327,6 +504,8 @@ def adapt_source(
     search_roots: list[Path],
     external_functions: set[str],
     external_variables: set[str],
+    *,
+    big_endian_scalar_byte_views: bool = False,
 ) -> tuple[str, str, set[Path]]:
     source = source.resolve()
     dependencies = {source}
@@ -343,6 +522,8 @@ def adapt_source(
         r"((OSMessage)(uintptr_t)\g<value>)",
         adapted,
     )
+    if big_endian_scalar_byte_views:
+        adapted = adapt_big_endian_scalar_byte_views(adapted)
     return expanded, adapted, dependencies
 
 
@@ -385,6 +566,11 @@ def command_adapt(args: argparse.Namespace) -> int:
         source_search_roots(args.source_root),
         external_functions,
         external_variables,
+        big_endian_scalar_byte_views=getattr(
+            args,
+            "big_endian_scalar_byte_views",
+            False,
+        ),
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     source_name = args.input.resolve().as_posix().replace('"', '\\"')
@@ -417,6 +603,11 @@ def command_discover_splits(args: argparse.Namespace) -> int:
             search_roots,
             external_functions,
             external_variables,
+            big_endian_scalar_byte_views=getattr(
+                args,
+                "big_endian_scalar_byte_views",
+                False,
+            ),
         )
         # Expansion alone does not require a generated compatibility view;
         # the compiler already expands the same fragment.  Select only files
@@ -442,6 +633,7 @@ def build_parser() -> argparse.ArgumentParser:
     adapt.add_argument("--source-root", type=Path, required=True)
     adapt.add_argument("--symbols", type=Path, required=True)
     adapt.add_argument("--depfile", type=Path)
+    adapt.add_argument("--big-endian-scalar-byte-views", action="store_true")
     adapt.set_defaults(func=command_adapt)
 
     discover = subparsers.add_parser("discover-splits")
@@ -449,6 +641,7 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--source-root", type=Path, required=True)
     discover.add_argument("--include-root", type=Path, action="append", required=True)
     discover.add_argument("--prefix", action="append", default=[])
+    discover.add_argument("--big-endian-scalar-byte-views", action="store_true")
     discover.set_defaults(func=command_discover_splits)
     return parser
 

@@ -1,6 +1,17 @@
 #ifndef DOLPHIN_TYPES_H
 #define DOLPHIN_TYPES_H
 
+/* MSL's stddef.h includes this header back and uses these scope macros.  They
+ * must exist before the include below so the GameCube toolchain does not see
+ * a stray BEGIN_SCOPE_EXTERN_C token during that include cycle. */
+#ifdef __cplusplus
+#define BEGIN_SCOPE_EXTERN_C extern "C" {
+#define END_SCOPE_EXTERN_C }
+#else
+#define BEGIN_SCOPE_EXTERN_C
+#define END_SCOPE_EXTERN_C
+#endif
+
 #include <stddef.h>
 
 // For compiling code copy-pasted from Ghidra (TODO: remove this)
@@ -9,11 +20,17 @@ typedef unsigned int uint;
 // Standard types
 typedef signed char s8;
 typedef signed short s16;
+/* Win32/Win64 use LLP64, so long remains the SDK-compatible 32-bit type.
+ * LP64 host ports need int to retain the console width. */
+#if defined(LIBPORPOISE_PORT) && !defined(_WIN32)
+typedef signed int s32;
+#else
 typedef signed long s32;
+#endif
 typedef signed long long s64;
 typedef unsigned char u8;
 typedef unsigned short u16;
-#ifdef LIBPORPOISE_BUILD_LINUX
+#if defined(LIBPORPOISE_PORT) && !defined(_WIN32)
 typedef unsigned int u32;
 #else
 typedef unsigned long u32;
@@ -98,19 +115,6 @@ typedef char* Ptr;
 #define END_ENUM_TYPE \
 	Type;             \
 	}
-
-// Do you ever get tired of typing this?  Well do I have good news for you:
-#ifdef __cplusplus
-#define BEGIN_SCOPE_EXTERN_C extern "C" {
-#else
-#define BEGIN_SCOPE_EXTERN_C
-#endif
-
-#ifdef __cplusplus
-#define END_SCOPE_EXTERN_C }
-#else
-#define END_SCOPE_EXTERN_C
-#endif
 
 // For bugfixes that can fit sub-statement, use this instead of a clunky #if #else #endif.
 #if defined(BUGFIX)

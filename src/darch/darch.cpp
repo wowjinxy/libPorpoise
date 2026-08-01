@@ -85,6 +85,17 @@ bool SplitPath(const char* pathName, std::vector<std::string>& parts)
     return !parts.empty();
 }
 
+std::string FoldAsciiName(const std::string& name)
+{
+    std::string folded = name;
+    for (char& character : folded) {
+        if (character >= 'A' && character <= 'Z') {
+            character = static_cast<char>(character - 'A' + 'a');
+        }
+    }
+    return folded;
+}
+
 bool InsertFile(Node& root, const DARCHFileInfo& file)
 {
     if (file.length != 0 && file.fileStart == nullptr) {
@@ -98,7 +109,8 @@ bool InsertFile(Node& root, const DARCHFileInfo& file)
 
     Node* parent = &root;
     for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
-        const auto found = parent->childByName.find(parts[i]);
+        const std::string foldedName = FoldAsciiName(parts[i]);
+        const auto found = parent->childByName.find(foldedName);
         if (found != parent->childByName.end()) {
             if (!found->second->isDirectory) {
                 return false;
@@ -111,12 +123,14 @@ bool InsertFile(Node& root, const DARCHFileInfo& file)
         directory->name = parts[i];
         Node* directoryPtr = directory.get();
         parent->children.push_back(std::move(directory));
-        parent->childByName.emplace(parts[i], directoryPtr);
+        parent->childByName.emplace(foldedName, directoryPtr);
         parent = directoryPtr;
     }
 
     const std::string& fileName = parts.back();
-    if (parent->childByName.find(fileName) != parent->childByName.end()) {
+    const std::string foldedFileName = FoldAsciiName(fileName);
+    if (parent->childByName.find(foldedFileName) !=
+        parent->childByName.end()) {
         return false;
     }
 
@@ -127,7 +141,7 @@ bool InsertFile(Node& root, const DARCHFileInfo& file)
     newFile->length = file.length;
     Node* filePtr = newFile.get();
     parent->children.push_back(std::move(newFile));
-    parent->childByName.emplace(fileName, filePtr);
+    parent->childByName.emplace(foldedFileName, filePtr);
     return true;
 }
 
@@ -154,8 +168,16 @@ bool FlattenTree(
     layout.strings.push_back('\0');
 
     if (node.isDirectory) {
+        /* The SDK FST order lists a directory's files before child dirs. */
         for (const auto& child : node.children) {
-            if (!FlattenTree(*child, current, layout, nodeIndex)) {
+            if (!child->isDirectory &&
+                !FlattenTree(*child, current, layout, nodeIndex)) {
+                return false;
+            }
+        }
+        for (const auto& child : node.children) {
+            if (child->isDirectory &&
+                !FlattenTree(*child, current, layout, nodeIndex)) {
                 return false;
             }
         }

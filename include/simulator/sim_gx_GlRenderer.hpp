@@ -20,6 +20,13 @@ struct DecodedTlutColor {
   u8 alpha = 0;
 };
 
+struct TextureMipLevelLayout {
+  size_t offset = 0;
+  size_t byteSize = 0;
+  u16 width = 0;
+  u16 height = 0;
+};
+
 // GX texture invalidation makes in-place source-memory changes visible, but
 // does not imply that the source bytes actually changed. This exact snapshot
 // lets the host renderer validate invalidated texture memory without decoding
@@ -44,7 +51,15 @@ class TextureContentSnapshot {
   std::vector<u8> mTlutBytes;
 };
 
+size_t GetTextureMipLevelCount(const TextureState& texture);
+bool GetTextureMipLevelLayout(
+    const TextureState& texture,
+    size_t level,
+    TextureMipLevelLayout& layout);
 size_t GetTextureSourceByteSize(const TextureState& texture);
+bool CopyCanonicalTextureBytes(
+    const TextureState& texture,
+    std::vector<u8>& canonicalBytes);
 DecodedTlutColor DecodeTlutEntry(
     GXTlutFmt format,
     const u8* canonicalBigEndianBytes);
@@ -76,6 +91,30 @@ void EncodeDepthTextureCopy(
     u8* encoded);
 
 namespace Detail {
+
+enum class TextureMipmapFilter {
+  None,
+  Nearest,
+  Linear,
+};
+
+struct TextureFilterSelection {
+  bool linearTexels = false;
+  TextureMipmapFilter mipmapFilter = TextureMipmapFilter::None;
+};
+
+TextureFilterSelection SelectTextureFilter(GXTexFilter filter);
+bool DecodeCanonicalTextureMipLevelToRgba(
+    const TextureState& texture,
+    const u8* canonicalBytes,
+    size_t canonicalByteSize,
+    size_t level,
+    const std::vector<u8>& palette,
+    std::vector<u8>& rgba);
+bool DecodeTextureToRgba(
+    const TextureState& texture,
+    const std::vector<u8>& palette,
+    std::vector<u8>& rgba);
 
 enum RenderStateDirty : u32 {
   RenderStateViewport = 1u << 0u,

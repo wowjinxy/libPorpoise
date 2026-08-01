@@ -2,6 +2,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "CARDWire.h"
+
 /**
  * @TODO: Documentation
  */
@@ -88,6 +90,8 @@ s32 __CARDUpdateDir(s32 channel, CARDCallback callback)
 	CARDDirCheck* check;
 	u32 addr;
 	CARDDirectoryBlock* dir;
+	u16 checkSum;
+	u16 checkSumInv;
 	STACK_PAD_VAR(2);
 
 	card = &__CARDBlock[channel];
@@ -97,8 +101,10 @@ s32 __CARDUpdateDir(s32 channel, CARDCallback callback)
 
 	dir   = __CARDGetDirBlock(card);
 	check = &dir->check;
-	++check->checkCode;
-	__CARDCheckSum(dir, CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &check->checkSum, &check->checkSumInv);
+	CARDWireWrite16(&check->checkCode, (u16)(CARDWireRead16(&check->checkCode) + 1));
+	__CARDCheckSum(dir, CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &checkSum, &checkSumInv);
+	CARDWireWrite16(&check->checkSum, checkSum);
+	CARDWireWrite16(&check->checkSumInv, checkSumInv);
 	DCStoreRange(dir, CARD_SYSTEM_BLOCK_SIZE);
 
 	card->eraseCallback = callback;

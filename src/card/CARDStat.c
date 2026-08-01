@@ -1,16 +1,18 @@
 #include <dolphin/card.h>
 #include <string.h>
 
+#include "CARDWire.h"
+
 /**
  * @TODO: Documentation
  */
-static void UpdateIconOffsets(CARDDir* entry, CARDStat* state)
+static void UpdateIconOffsets(CARDStat* state)
 {
 	u32 offset;
 	BOOL iconTlut;
 	int i;
 
-	offset = entry->iconAddr;
+	offset = state->iconAddr;
 	if (offset == 0xffffffff) {
 		state->bannerFormat = 0;
 		state->iconFormat   = 0;
@@ -19,7 +21,7 @@ static void UpdateIconOffsets(CARDDir* entry, CARDStat* state)
 	}
 
 	iconTlut = FALSE;
-	switch (CARDGetBannerFormat(entry)) {
+	switch (CARDGetBannerFormat(state)) {
 	case CARD_STAT_BANNER_C8:
 	{
 		state->offsetBanner = offset;
@@ -43,7 +45,7 @@ static void UpdateIconOffsets(CARDDir* entry, CARDStat* state)
 	}
 	}
 	for (i = 0; i < CARD_ICON_MAX; ++i) {
-		switch (CARDGetIconFormat(entry, i)) {
+		switch (CARDGetIconFormat(state, i)) {
 		case CARD_STAT_ICON_C8:
 		{
 			state->offsetIcon[i] = offset;
@@ -105,17 +107,17 @@ s32 CARDGetStatus(s32 channel, s32 fileNo, CARDStat* state)
 	if (result >= CARD_RESULT_READY) {
 		memcpy(state->gameName, ent->gameName, sizeof(state->gameName));
 		memcpy(state->company, ent->company, sizeof(state->company));
-		state->length = (u32)ent->length * card->sectorSize;
+		state->length = (u32)CARDWireRead16(&ent->length) * card->sectorSize;
 		memcpy(state->fileName, ent->fileName, CARD_FILENAME_MAX);
-		state->time = ent->time;
+		state->time = CARDWireRead32(&ent->time);
 
 		state->bannerFormat = ent->bannerFormat;
-		state->iconAddr     = ent->iconAddr;
-		state->iconFormat   = ent->iconFormat;
-		state->iconSpeed    = ent->iconSpeed;
-		state->commentAddr  = ent->commentAddr;
+		state->iconAddr     = CARDWireRead32(&ent->iconAddr);
+		state->iconFormat   = CARDWireRead16(&ent->iconFormat);
+		state->iconSpeed    = CARDWireRead16(&ent->iconSpeed);
+		state->commentAddr  = CARDWireRead32(&ent->commentAddr);
 
-		UpdateIconOffsets(ent, state);
+		UpdateIconOffsets(state);
 	}
 	return __CARDPutControlBlock(card, result);
 }
@@ -151,17 +153,19 @@ s32 CARDSetStatusAsync(s32 channel, s32 fileNo, CARDStat* state, CARDCallback ca
 	}
 
 	ent->bannerFormat = state->bannerFormat;
-	ent->iconAddr     = state->iconAddr;
-	ent->iconFormat   = state->iconFormat;
-	ent->iconSpeed    = state->iconSpeed;
-	ent->commentAddr  = state->commentAddr;
-	UpdateIconOffsets(ent, state);
+	CARDWireWrite32(&ent->iconAddr, state->iconAddr);
+	CARDWireWrite16(&ent->iconFormat, state->iconFormat);
+	CARDWireWrite16(&ent->iconSpeed, state->iconSpeed);
+	CARDWireWrite32(&ent->commentAddr, state->commentAddr);
+	UpdateIconOffsets(state);
 
-	if (ent->iconAddr == 0xffffffff) {
-		CARDSetIconSpeed(ent, 0, CARD_STAT_SPEED_FAST);
+	if (CARDWireRead32(&ent->iconAddr) == 0xffffffff) {
+		u16 iconSpeed = CARDWireRead16(&ent->iconSpeed);
+		iconSpeed      = (u16)((iconSpeed & ~CARD_STAT_SPEED_MASK) | CARD_STAT_SPEED_FAST);
+		CARDWireWrite16(&ent->iconSpeed, iconSpeed);
 	}
 
-	ent->time = (u32)OSTicksToSeconds(OSGetTime());
+	CARDWireWrite32(&ent->time, (u32)OSTicksToSeconds(OSGetTime()));
 	result    = __CARDUpdateDir(channel, callback);
 	if (result < CARD_RESULT_READY) {
 		__CARDPutControlBlock(card, result);

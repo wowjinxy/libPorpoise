@@ -41,6 +41,7 @@ typedef struct OSHostMemoryLayout {
 const OSHostMemoryLayout* __OSHostMemoryInit(
 	OSHostMemoryProfile profile);
 const OSHostMemoryLayout* __OSHostMemoryGetLayout(void);
+BOOL __OSHostMemoryContainsAddress(const void* address);
 void* __OSHostMemoryResolveArenaHi(void* previous, void* requested);
 
 #endif

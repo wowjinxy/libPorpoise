@@ -259,6 +259,19 @@ BEGIN_SCOPE_EXTERN_C
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/////////////// Performance Monitor event selections used by PPCPm.c /////////////////////////////////////////////////////////////////////
+
+#define MMCR0_PMC1_HOLD          0x00000000
+#define MMCR0_PMC1_CYCLE         0x00000040
+#define MMCR0_PMC2_HOLD          0x00000000
+#define MMCR0_PMC2_IC_FETCH_MISS 0x0000000F
+#define MMCR1_PMC3_HOLD          0x00000000
+#define MMCR1_PMC3_L1_MISS_CYCLE 0x78000000
+#define MMCR1_PMC4_HOLD          0x00000000
+#define MMCR1_PMC4_INSTRUCTION   0x00800000
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 /////////////// Floating-Point Status and Control Register (FPSCR) bit settings ///////////////////////////////////////////////////////////
 
 #define FPSCR_FX     0x80000000 // Exception summary
@@ -296,9 +309,9 @@ void PPCHalt(void);  // Spins infinitely
 
 u32 PPCMfmsr(void);         // Get Machine State Register (MSR)
 void PPCMtmsr(u32 value);   // Set Machine State Register (MSR)
-void PPCOrMsr(void);        // TODO
-void PPCAndMsr(void);       // TODO
-void PPCAndCMsr(void);      // TODO
+u32 PPCOrMsr(u32 value);    // Return MSR | value
+u32 PPCAndMsr(u32 value);   // Return MSR & value
+u32 PPCAndCMsr(u32 value);  // Return MSR & ~value
 u32 PPCMfhid0(void);        // Get Hardware Implementation-Dependent Register 0 (HID0)
 void PPCMthid0(u32 value);  // Set Hardware Implementation-Dependent Register 0 (HID0)
 u32 PPCMfhid1(void);        // Get Hardware Implementation-Dependent Register 1 (HID1)

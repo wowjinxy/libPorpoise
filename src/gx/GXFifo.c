@@ -2,6 +2,12 @@
 #include <dolphin/gx.h>
 #include <dolphin/hw_regs.h>
 #include <dolphin/os.h>
+#ifdef LIBPORPOISE_PORT
+#include <dolphin/vi.h>
+#if defined(__GNUC__)
+extern BOOL __VIHostAdoptRenderThread(void) __attribute__((weak));
+#endif
+#endif
 #include <stddef.h>
 
 #if OS_BUILD_VERSION >= 20011002L
@@ -631,11 +637,35 @@ OSThread* GXSetCurrentGXThread(void)
 {
 	BOOL enabled;
 	struct OSThread* prev;
+	struct OSThread* current;
+
+	current = OSGetCurrentThread();
+#ifdef LIBPORPOISE_PORT
+	/*
+	 * GX command ownership and the native renderer context are the same lease on
+	 * the host.  The SDK uses this call when a loading thread takes over GX, so
+	 * transfer VI/context ownership before publishing the new GX thread.  The
+	 * handoff may block and manages interrupts internally; it must remain outside
+	 * the short scheduler critical section below.
+	 */
+#if defined(__GNUC__)
+	if (__VIHostAdoptRenderThread != NULL &&
+	    !__VIHostAdoptRenderThread()) {
+#else
+	if (!__VIHostAdoptRenderThread()) {
+#endif
+		enabled = OSDisableInterrupts();
+		prev = __GXCurrentThread;
+		OSRestoreInterrupts(enabled);
+		OSReport("libPorpoise GX: could not transfer renderer ownership to the current GX thread.\n");
+		return prev;
+	}
+#endif
 
 	enabled = OSDisableInterrupts();
 	prev    = __GXCurrentThread;
 	OSAssertMsgLine(0x532, !GXOverflowSuspendInProgress, "GXSetCurrentGXThread: Two threads cannot generate GX commands at the same time!");
-	__GXCurrentThread = OSGetCurrentThread();
+	__GXCurrentThread = current;
 	OSRestoreInterrupts(enabled);
 	return prev;
 }

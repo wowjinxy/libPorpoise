@@ -54,6 +54,9 @@ void __OSThreadInit(void)
 #ifdef LIBPORPOISE_PORT
 	HostCurrentThread = thread;
 	__OSHostRegisterAlarmThread();
+	thread->stackBase = NULL;
+	thread->stackEnd = &thread->hostStackMagic;
+	thread->hostStackMagic = OS_THREAD_STACK_MAGIC;
 #endif
 
 	OSClearContext(&thread->context);
@@ -662,6 +665,10 @@ BOOL OSCreateThread(OSThread* thread, OSThreadStartFunction func, void* param, v
 	thread->stackBase      = stack;
 	thread->stackEnd       = (u32*)((u32)stack - stackSize);
 	*(thread->stackEnd)    = OS_THREAD_STACK_MAGIC;
+	#else
+	thread->stackBase      = stack;
+	thread->stackEnd       = &thread->hostStackMagic;
+	thread->hostStackMagic = OS_THREAD_STACK_MAGIC;
 	#endif
 
 	enable = OSDisableInterrupts();

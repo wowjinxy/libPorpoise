@@ -19,6 +19,50 @@ typedef GXTlutRegion* (*GXTlutRegionCallback)(u32 idx);
 // Init functions.
 extern void GXInitTexObj(GXTexObj* obj, void* imagePtr, u16 width, u16 height, GXTexFmt format, GXTexWrapMode sWrap, GXTexWrapMode tWrap,
                          GXBool useMIPmap);
+#ifdef LIBPORPOISE_PORT
+/* Texture files and byte-oriented buffers remain canonical GameCube memory.
+ * Use this initializer when host code instead built the texture as native
+ * u16 scalar words. The void pointer keeps the explicit path available after
+ * middleware has erased the source's element type. */
+extern void GXInitTexObjHostNativeU16(
+    GXTexObj* obj, void* imagePtr, u16 width, u16 height, GXTexFmt format,
+    GXTexWrapMode sWrap, GXTexWrapMode tWrap, GXBool useMIPmap);
+
+/* Preserve SDK source compatibility for direct u16 texture arrays while
+ * leaving u8, void, and serialized TPL pointers in canonical byte order. */
+#if defined(__cplusplus)
+#define LIBPORPOISE_GX_TEX_IS_NATIVE_U16(imagePtr) \
+    (__is_same(decltype((imagePtr) + 0), u16*) || \
+     __is_same(decltype((imagePtr) + 0), const u16*) || \
+     __is_same(decltype((imagePtr) + 0), volatile u16*) || \
+     __is_same(decltype((imagePtr) + 0), const volatile u16*))
+#define GXInitTexObj(obj, imagePtr, width, height, format, sWrap, tWrap, useMIPmap) \
+    (LIBPORPOISE_GX_TEX_IS_NATIVE_U16(imagePtr) \
+         ? GXInitTexObjHostNativeU16( \
+               (obj), (void*)(imagePtr), (width), (height), (format), \
+               (sWrap), (tWrap), (useMIPmap)) \
+         : GXInitTexObj( \
+               (obj), (void*)(imagePtr), (width), (height), (format), \
+               (sWrap), (tWrap), (useMIPmap)))
+#elif defined(__GNUC__) || defined(__clang__)
+#define LIBPORPOISE_GX_TEX_IS_NATIVE_U16(imagePtr) \
+    (__builtin_types_compatible_p(__typeof__((imagePtr) + 0), u16*) || \
+     __builtin_types_compatible_p( \
+         __typeof__((imagePtr) + 0), const u16*) || \
+     __builtin_types_compatible_p( \
+         __typeof__((imagePtr) + 0), volatile u16*) || \
+     __builtin_types_compatible_p( \
+         __typeof__((imagePtr) + 0), const volatile u16*))
+#define GXInitTexObj(obj, imagePtr, width, height, format, sWrap, tWrap, useMIPmap) \
+    (LIBPORPOISE_GX_TEX_IS_NATIVE_U16(imagePtr) \
+         ? GXInitTexObjHostNativeU16( \
+               (obj), (void*)(imagePtr), (width), (height), (format), \
+               (sWrap), (tWrap), (useMIPmap)) \
+         : GXInitTexObj( \
+               (obj), (void*)(imagePtr), (width), (height), (format), \
+               (sWrap), (tWrap), (useMIPmap)))
+#endif
+#endif
 extern void GXInitTexObjCI(GXTexObj* obj, void* imagePtr, u16 width, u16 height, GXCITexFmt format, GXTexWrapMode sWrap,
                            GXTexWrapMode tWrap, GXBool useMIPmap, u32 tlutName);
 extern void GXInitTexObjLOD(GXTexObj* obj, GXTexFilter minFilter, GXTexFilter maxFilter, f32 minLOD, f32 maxLOD, f32 lodBias,
@@ -69,6 +113,38 @@ extern void GXInitTlutObj(GXTlutObj* obj, void* table, GXTlutFmt format, u16 num
  * mistaken for canonical GameCube big-endian TLUT memory. */
 extern void GXInitTlutObjHostNativeU16(GXTlutObj* obj, u16* table,
                                       GXTlutFmt format, u16 numEntries);
+
+/* Preserve source compatibility with SDK code that passes a u16 palette
+ * directly to GXInitTlutObj. On GameCube those scalar values reside in
+ * big-endian memory; on a little-endian host they need canonicalizing when
+ * the simulated TLUT DMA occurs. Byte-oriented pointers continue to mean an
+ * already-serialized GameCube buffer (for example, data from a TPL file). */
+#if defined(__cplusplus)
+#define LIBPORPOISE_GX_TLUT_IS_NATIVE_U16(table) \
+    (__is_same(decltype((table) + 0), u16*) || \
+     __is_same(decltype((table) + 0), const u16*) || \
+     __is_same(decltype((table) + 0), volatile u16*) || \
+     __is_same(decltype((table) + 0), const volatile u16*))
+#define GXInitTlutObj(obj, table, format, numEntries) \
+    (LIBPORPOISE_GX_TLUT_IS_NATIVE_U16(table) \
+         ? GXInitTlutObjHostNativeU16( \
+               (obj), (u16*)(table), (format), (numEntries)) \
+         : GXInitTlutObj( \
+               (obj), (void*)(table), (format), (numEntries)))
+#elif defined(__GNUC__) || defined(__clang__)
+#define LIBPORPOISE_GX_TLUT_IS_NATIVE_U16(table) \
+    (__builtin_types_compatible_p(__typeof__((table) + 0), u16*) || \
+     __builtin_types_compatible_p(__typeof__((table) + 0), const u16*) || \
+     __builtin_types_compatible_p(__typeof__((table) + 0), volatile u16*) || \
+     __builtin_types_compatible_p( \
+         __typeof__((table) + 0), const volatile u16*))
+#define GXInitTlutObj(obj, table, format, numEntries) \
+    (LIBPORPOISE_GX_TLUT_IS_NATIVE_U16(table) \
+         ? GXInitTlutObjHostNativeU16( \
+               (obj), (u16*)(table), (format), (numEntries)) \
+         : GXInitTlutObj( \
+               (obj), (void*)(table), (format), (numEntries)))
+#endif
 #endif
 extern void GXLoadTlut(GXTlutObj* obj, u32 tlutName);
 extern void GXGetTlutObjAll(const GXTlutObj* obj, void** table,

@@ -2,6 +2,9 @@
 #include <dolphin/hw_regs.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
+
+#include "../exi/EXIWire.h"
 
 static u8 ucEXI2InputPending;
 static u8* pucEXI2InputPending = &ucEXI2InputPending;
@@ -51,9 +54,10 @@ static s32 EXI2_Select(s32 freq, s32)
  */
 static void EXI2_ToWriteMode(void)
 {
-	u32 buf = 0x80000000;
+	u8 command[2];
 
-	AmcEXIImm(&buf, 2, 1, 0);
+	EXIWireWrite16(command, 0x8000u);
+	AmcEXIImm(command, sizeof(command), 1, 0);
 	AmcEXISync();
 }
 
@@ -63,9 +67,10 @@ static void EXI2_ToWriteMode(void)
  */
 static void EXI2_ToReadMode(u16 bufAddr)
 {
-	u32 buf = (bufAddr << 16);
+	u8 command[2];
 
-	AmcEXIImm(&buf, 2, 1, 0);
+	EXIWireWrite16(command, bufAddr);
+	AmcEXIImm(command, sizeof(command), 1, 0);
 	AmcEXISync();
 }
 
@@ -75,7 +80,7 @@ static void EXI2_ToReadMode(u16 bufAddr)
  */
 static s32 EXI2_StartRead(void)
 {
-	u32 buf;
+	u8 response[2];
 	s32 status;
 
 	if (fExi2Selected != 0) {
@@ -88,7 +93,7 @@ static s32 EXI2_StartRead(void)
 		}
 		fExi2Selected = 1;
 		EXI2_ToReadMode(0);
-		AmcEXIImm(&buf, 2, 0, 0);
+		AmcEXIImm(response, sizeof(response), 0, 0);
 		AmcEXISync();
 	}
 
@@ -113,17 +118,22 @@ static void EXI2_FinishRead(void)
 static s32 EXI2_SendCmd(u8 bufAddrHi, u32 bufAddrLo, s32 bufAddr2, u32 p4)
 {
 	s32 status;
-	s32 buf1 = (bufAddrHi << 24) | (bufAddrLo & 0xFFFFFF);
-	s32 buf2 = bufAddr2;
+	u8 command1[4];
+	u8 command2[4];
+	u32 buf1 = ((u32)bufAddrHi << 24) | (bufAddrLo & 0xFFFFFFu);
+
+	(void)p4;
+	EXIWireWrite32(command1, buf1);
+	EXIWireWrite32(command2, (u32)bufAddr2);
 
 	status = EXI2_Select(5, 0);
 
 	EXI2_ToWriteMode();
 
-	AmcEXIImm(&buf1, 4, 1, NULL);
+	AmcEXIImm(command1, sizeof(command1), 1, NULL);
 	AmcEXISync();
 
-	AmcEXIImm(&buf2, 4, 1, NULL);
+	AmcEXIImm(command2, sizeof(command2), 1, NULL);
 	AmcEXISync();
 
 	AmcEXIDeselect();
@@ -156,8 +166,10 @@ void EXI2_EnableInterrupts(void)
 int EXI2_Poll(void)
 {
 	u32 bufAddr;
-	u32 bufAddr2;
+	u8 response[4];
 	u32 stackPad;
+
+	(void)stackPad;
 
 	if (!(__PIRegs[PI_INTRPT_SRC] & PI_INTRPT_DEBUG) && (*pucEXI2InputPending == 0)) {
 		bufAddr = 0;
@@ -174,12 +186,13 @@ int EXI2_Poll(void)
 			} else {
 				fExi2Selected = 1;
 				EXI2_ToReadMode(0);
-				AmcEXIImm(&bufAddr2, 2, 0, 0);
+				AmcEXIImm(response, 2, 0, 0);
 				AmcEXISync();
 			}
 		}
-		AmcEXIImm(&bufAddr, 4, 0, 0);
+		AmcEXIImm(response, sizeof(response), 0, 0);
 		AmcEXISync();
+		bufAddr = EXIWireRead32(response);
 		if (*pucEXI2InputPending == 0) {
 			__PIRegs[PI_INTRPT_SRC] &= PI_INTRPT_DEBUG;
 			*pucEXI2InputPending = 1;
@@ -199,7 +212,7 @@ AmcExiError EXI2_ReadN(void* dest, u32 len)
 	int i, j;
 	s32 size;
 	int bytesInWord;
-	u32 bufAddr;
+	u8 response[4];
 
 	readStatus = EXI2_StartRead();
 	if (readStatus == 0) {
@@ -209,7 +222,7 @@ AmcExiError EXI2_ReadN(void* dest, u32 len)
 	size = (wordCount / 4) + ((wordCount % 4) ? 1 : 0);
 
 	for (i = 0; i < wordCount; i += 4) {
-		AmcEXIImm(&bufAddr, ((u32)(i / 4) < (size - 1)) ? 4 : ((wordCount & 3) + (wordCount & 1)) == 2 ? 2 : 4, 0, 0);
+		AmcEXIImm(response, ((u32)(i / 4) < (size - 1)) ? 4 : ((wordCount & 3) + (wordCount & 1)) == 2 ? 2 : 4, 0, 0);
 		AmcEXISync();
 
 		if ((wordCount - i) >= 4) {
@@ -219,7 +232,7 @@ AmcExiError EXI2_ReadN(void* dest, u32 len)
 		}
 
 		for (j = 0; j < bytesInWord; j++) {
-			outputBytes[i + j] = (bufAddr >> ((3 - j) * 8));
+			outputBytes[i + j] = response[j];
 		}
 	}
 
@@ -233,12 +246,15 @@ AmcExiError EXI2_ReadN(void* dest, u32 len)
 AmcExiError EXI2_WriteN(const void* src, u32 len)
 {
 	u32 size;
-	u32 bufAddr;
 	s32 res;
 	u32 i;
 	u32 unusedStack;
-	u32* inputWords = (u32*)src;
+	const u8* inputBytes = (const u8*)src;
 	u32 max;
+	u8 sizeCommand[4];
+	u8 response[2];
+
+	(void)unusedStack;
 
 	size = len;
 	if ((res = EXI2_Select(5, 0)) == 0) {
@@ -246,13 +262,21 @@ AmcExiError EXI2_WriteN(const void* src, u32 len)
 	}
 
 	EXI2_ToWriteMode();
-	AmcEXIImm(&size, 4, 1, 0);
+	EXIWireWrite32(sizeCommand, size);
+	AmcEXIImm(sizeCommand, sizeof(sizeCommand), 1, 0);
 	AmcEXISync();
 
 	max = ((size >> 2) + ((size & 3) ? 1 : 0));
 
 	for (i = 0; i < max; i++) {
-		AmcEXIImm(inputWords++, (i < (max - 1)) ? 4 : ((u32)((size & 3) + (size & 1)) == 2 ? 2 : 4), 1, 0);
+		u8 word[4] = { 0, 0, 0, 0 };
+		u32 sourceOffset = i * 4;
+		u32 sourceBytes = size - sourceOffset;
+		if (sourceBytes > 4) {
+			sourceBytes = 4;
+		}
+		memcpy(word, inputBytes + sourceOffset, sourceBytes);
+		AmcEXIImm(word, (i < (max - 1)) ? 4 : ((u32)((size & 3) + (size & 1)) == 2 ? 2 : 4), 1, 0);
 		AmcEXISync();
 	}
 	AmcEXIDeselect();
@@ -263,13 +287,13 @@ AmcExiError EXI2_WriteN(const void* src, u32 len)
 	}
 
 	EXI2_ToReadMode(1);
-	AmcEXIImm(&bufAddr, 2, 0, 0);
+	AmcEXIImm(response, sizeof(response), 0, 0);
 	AmcEXISync();
 
 	do {
-		AmcEXIImm(&bufAddr, 2, 0, 0);
+		AmcEXIImm(response, sizeof(response), 0, 0);
 		AmcEXISync();
-	} while (!((bufAddr >> 16) & 1));
+	} while (!(EXIWireRead16(response) & 1));
 
 	AmcEXIDeselect();
 	return AMC_EXI_NO_ERROR;

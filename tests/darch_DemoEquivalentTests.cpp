@@ -130,14 +130,86 @@ int main()
         {"same.bin", hero.data(), static_cast<u32>(hero.size())},
         {"same.bin", rival.data(), static_cast<u32>(rival.size())},
     }};
+    const std::array<DARCHFileInfo, 2> caseOnlyDuplicatePaths{{
+        {"Case/Save.bin", hero.data(), static_cast<u32>(hero.size())},
+        {"case/save.BIN", rival.data(), static_cast<u32>(rival.size())},
+    }};
     if (!Check(
             DARCHGetArcSize(
                 duplicatePaths.data(),
                 static_cast<u32>(duplicatePaths.size())
             ) == 0,
             "duplicate path was accepted"
+        ) ||
+        !Check(
+            DARCHGetArcSize(
+                caseOnlyDuplicatePaths.data(),
+                static_cast<u32>(caseOnlyDuplicatePaths.size())
+            ) == 0,
+            "ASCII case-insensitive duplicate path was accepted"
         )) {
         return 1;
+    }
+
+    /*
+     * Insert directories before files to make the expected SDK ordering
+     * observable: every directory emits its files first, then child dirs.
+     */
+    const std::array<DARCHFileInfo, 5> orderFiles{{
+        {"zdir/sub/deep.bin", hero.data(), static_cast<u32>(hero.size())},
+        {"root.bin", rival.data(), static_cast<u32>(rival.size())},
+        {"zdir/direct.bin", city.data(), static_cast<u32>(city.size())},
+        {"adir/leaf.bin", readme.data(), static_cast<u32>(readme.size())},
+        {"second.bin", nullptr, 0},
+    }};
+    const u32 orderArchiveSize = DARCHGetArcSize(
+        orderFiles.data(),
+        static_cast<u32>(orderFiles.size())
+    );
+    std::vector<std::uint8_t> orderArchive(orderArchiveSize);
+    if (!Check(orderArchiveSize != 0, "ordered archive sizing failed") ||
+        !Check(
+            DARCHCreate(
+                orderArchive.data(),
+                static_cast<u32>(orderArchive.size()),
+                orderFiles.data(),
+                static_cast<u32>(orderFiles.size())
+            ),
+            "ordered archive creation failed"
+        )) {
+        return 1;
+    }
+
+    const std::array<const char*, 9> expectedNames{{
+        "", "root.bin", "second.bin", "zdir", "direct.bin",
+        "sub", "deep.bin", "adir", "leaf.bin",
+    }};
+    const std::array<bool, 9> expectedDirectories{{
+        true, false, false, true, false, true, false, true, false,
+    }};
+    const std::uint32_t orderFstOffset = ReadBe32(orderArchive.data() + 4);
+    const std::uint8_t* orderFst = orderArchive.data() + orderFstOffset;
+    const std::uint32_t orderNodeCount = ReadBe32(orderFst + 8);
+    if (!Check(
+            orderNodeCount == expectedNames.size(),
+            "SDK-ordered archive has the wrong node count"
+        )) {
+        return 1;
+    }
+    const char* orderStrings = reinterpret_cast<const char*>(
+        orderFst + orderNodeCount * 12u
+    );
+    for (std::uint32_t i = 0; i < orderNodeCount; ++i) {
+        const std::uint32_t typeAndName = ReadBe32(orderFst + i * 12u);
+        const bool isDirectory = (typeAndName & 0xFF000000u) != 0;
+        const char* name = orderStrings + (typeAndName & 0x00FFFFFFu);
+        if (!Check(
+                isDirectory == expectedDirectories[i] &&
+                    std::strcmp(name, expectedNames[i]) == 0,
+                "DARCH node order differs from SDK files-before-dirs order"
+            )) {
+            return 1;
+        }
     }
 
     std::cout << "DARCH archive construction round-trip passed\n";

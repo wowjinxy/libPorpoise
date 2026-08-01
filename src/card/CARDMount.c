@@ -2,6 +2,8 @@
 #include <dolphin/exi.h>
 #include <stddef.h>
 
+#include "CARDWire.h"
+
 static u32 SectorSizeTable[8] = {
 	8 * 1024, 16 * 1024, 32 * 1024, 64 * 1024, 128 * 1024, 256 * 1024, 0, 0,
 };
@@ -236,7 +238,7 @@ static s32 DoMount(s32 channel)
 			u16 vendorID;
 
 			sram     = __OSLockSramEx();
-			vendorID = *(u16*)sram->flashID[channel];
+			vendorID = CARDWireRead16(sram->flashID[channel]);
 			__OSUnlockSramEx(FALSE);
 
 			if (__CARDVendorID == 0xFFFF || vendorID != __CARDVendorID) {

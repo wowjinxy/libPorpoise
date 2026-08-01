@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "CARDWire.h"
+
 /**
  * @TODO: Documentation
  */
@@ -68,11 +70,11 @@ s32 __CARDFormatRegionAsync(s32 chan, u16 encode, CARDCallback callback)
 	memset(id, 0xff, CARD_SYSTEM_BLOCK_SIZE);
 	viDTVStatus = __VIRegs[VI_DTV_STAT];
 
-	id->encode = encode;
+	CARDWireWrite16(&id->encode, encode);
 
 	sram                   = __OSLockSram();
-	*(u32*)&id->serial[20] = sram->counterBias;
-	*(u32*)&id->serial[24] = sram->language;
+	CARDWireWrite32(&id->serial[20], sram->counterBias);
+	CARDWireWrite32(&id->serial[24], sram->language);
 	__OSUnlockSram(FALSE);
 
 	rand = time = OSGetTime();
@@ -85,29 +87,43 @@ s32 __CARDFormatRegionAsync(s32 chan, u16 encode, CARDCallback callback)
 	}
 	__OSUnlockSramEx(FALSE);
 
-	*(u32*)&id->serial[28]    = viDTVStatus;
-	*(OSTime*)&id->serial[12] = time;
+	CARDWireWrite32(&id->serial[28], viDTVStatus);
+	CARDWireWrite64(&id->serial[12], (u64)time);
 
-	id->deviceID = 0;
-	id->size     = card->size;
-	__CARDCheckSum(id, sizeof(CARDID) - sizeof(u32), &id->checkSum, &id->checkSumInv);
+	CARDWireWrite16(&id->deviceID, 0);
+	CARDWireWrite16(&id->size, card->size);
+	{
+		u16 checkSum;
+		u16 checkSumInv;
+		__CARDCheckSum(id, sizeof(CARDID) - sizeof(u32), &checkSum, &checkSumInv);
+		CARDWireWrite16(&id->checkSum, checkSum);
+		CARDWireWrite16(&id->checkSumInv, checkSumInv);
+	}
 
 	for (i = 0; i < 2; i++) {
 		CARDDirCheck* check;
+		u16 checkSum;
+		u16 checkSumInv;
 
 		dir = (CARDDir*)((u8*)card->workArea + (1 + i) * CARD_SYSTEM_BLOCK_SIZE);
 		memset(dir, 0xff, CARD_SYSTEM_BLOCK_SIZE);
 		check            = __CARDGetDirCheck(dir);
-		check->checkCode = i;
-		__CARDCheckSum(dir, CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &check->checkSum, &check->checkSumInv);
+		CARDWireWrite16(&check->checkCode, (u16)i);
+		__CARDCheckSum(dir, CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &checkSum, &checkSumInv);
+		CARDWireWrite16(&check->checkSum, checkSum);
+		CARDWireWrite16(&check->checkSumInv, checkSumInv);
 	}
 	for (i = 0; i < 2; i++) {
+		u16 checkSum;
+		u16 checkSumInv;
 		fat = (u16*)((u8*)card->workArea + (3 + i) * CARD_SYSTEM_BLOCK_SIZE);
 		memset(fat, 0x00, CARD_SYSTEM_BLOCK_SIZE);
-		fat[CARD_FAT_CHECKCODE]  = (u16)i;
-		fat[CARD_FAT_FREEBLOCKS] = (u16)(card->cBlock - CARD_NUM_SYSTEM_BLOCK);
-		fat[CARD_FAT_LASTSLOT]   = CARD_NUM_SYSTEM_BLOCK - 1;
-		__CARDCheckSum(&fat[CARD_FAT_CHECKCODE], CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &fat[CARD_FAT_CHECKSUM], &fat[CARD_FAT_CHECKSUMINV]);
+		CARDWireWrite16(&fat[CARD_FAT_CHECKCODE], (u16)i);
+		CARDWireWrite16(&fat[CARD_FAT_FREEBLOCKS], (u16)(card->cBlock - CARD_NUM_SYSTEM_BLOCK));
+		CARDWireWrite16(&fat[CARD_FAT_LASTSLOT], CARD_NUM_SYSTEM_BLOCK - 1);
+		__CARDCheckSum(&fat[CARD_FAT_CHECKCODE], CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &checkSum, &checkSumInv);
+		CARDWireWrite16(&fat[CARD_FAT_CHECKSUM], checkSum);
+		CARDWireWrite16(&fat[CARD_FAT_CHECKSUMINV], checkSumInv);
 	}
 
 	card->apiCallback = callback ? callback : __CARDDefaultApiCallback;
@@ -150,11 +166,11 @@ s32 CARDFormatAsync(s32 channel, CARDCallback callback)
 	memset(id, 0xff, CARD_SYSTEM_BLOCK_SIZE);
 	viDTVStatus = __VIRegs[VI_DTV_STAT];
 
-	id->encode = OSGetFontEncode();
+	CARDWireWrite16(&id->encode, OSGetFontEncode());
 
 	sram                   = __OSLockSram();
-	*(u32*)&id->serial[20] = sram->counterBias;
-	*(u32*)&id->serial[24] = sram->language;
+	CARDWireWrite32(&id->serial[20], sram->counterBias);
+	CARDWireWrite32(&id->serial[24], sram->language);
 	__OSUnlockSram(FALSE);
 
 	rand = time = OSGetTime();
@@ -167,29 +183,43 @@ s32 CARDFormatAsync(s32 channel, CARDCallback callback)
 	}
 	__OSUnlockSramEx(FALSE);
 
-	*(u32*)&id->serial[28]    = viDTVStatus;
-	*(OSTime*)&id->serial[12] = time;
+	CARDWireWrite32(&id->serial[28], viDTVStatus);
+	CARDWireWrite64(&id->serial[12], (u64)time);
 
-	id->deviceID = 0;
-	id->size     = card->size;
-	__CARDCheckSum(id, sizeof(CARDID) - sizeof(u32), &id->checkSum, &id->checkSumInv);
+	CARDWireWrite16(&id->deviceID, 0);
+	CARDWireWrite16(&id->size, card->size);
+	{
+		u16 checkSum;
+		u16 checkSumInv;
+		__CARDCheckSum(id, sizeof(CARDID) - sizeof(u32), &checkSum, &checkSumInv);
+		CARDWireWrite16(&id->checkSum, checkSum);
+		CARDWireWrite16(&id->checkSumInv, checkSumInv);
+	}
 
 	for (i = 0; i < 2; i++) {
 		CARDDirCheck* check;
+		u16 checkSum;
+		u16 checkSumInv;
 
 		dir = CARDGetDirectoryBlock(card, i);
 		memset(dir, 0xff, CARD_SYSTEM_BLOCK_SIZE);
 		check            = &dir->check;
-		check->checkCode = i;
-		__CARDCheckSum(dir, CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &check->checkSum, &check->checkSumInv);
+		CARDWireWrite16(&check->checkCode, (u16)i);
+		__CARDCheckSum(dir, CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &checkSum, &checkSumInv);
+		CARDWireWrite16(&check->checkSum, checkSum);
+		CARDWireWrite16(&check->checkSumInv, checkSumInv);
 	}
 	for (i = 0; i < 2; i++) {
+		u16 checkSum;
+		u16 checkSumInv;
 		fat = CARDGetFatBlock(card, i);
 		memset(fat, 0x00, CARD_SYSTEM_BLOCK_SIZE);
-		fat->checkCode      = (u16)i;
-		fat->freeBlocks     = (u16)(card->cBlock - CARD_NUM_SYSTEM_BLOCK);
-		fat->lastAllocBlock = CARD_NUM_SYSTEM_BLOCK - 1;
-		__CARDCheckSum(&fat->checkCode, CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &fat->checkSum, &fat->checkSumInv);
+		CARDWireWrite16(&fat->checkCode, (u16)i);
+		CARDWireWrite16(&fat->freeBlocks, (u16)(card->cBlock - CARD_NUM_SYSTEM_BLOCK));
+		CARDWireWrite16(&fat->lastAllocBlock, CARD_NUM_SYSTEM_BLOCK - 1);
+		__CARDCheckSum(&fat->checkCode, CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &checkSum, &checkSumInv);
+		CARDWireWrite16(&fat->checkSum, checkSum);
+		CARDWireWrite16(&fat->checkSumInv, checkSumInv);
 	}
 
 	card->apiCallback = callback ? callback : __CARDDefaultApiCallback;

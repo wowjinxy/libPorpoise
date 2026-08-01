@@ -33,6 +33,12 @@ void SIM_GX_CommandProcessor_LoadTlutNativeU16(
 void SIM_GX_CommandProcessor_LoadTexture(
     u32 id, const void* data, u16 width, u16 height, u32 format,
     u32 wrap_s, u32 wrap_t, u32 min_filter, u32 mag_filter,
+    u32 mipmap, f32 min_lod, f32 max_lod, f32 lod_bias,
+    u32 tlut_name);
+void SIM_GX_CommandProcessor_LoadTextureNativeU16(
+    u32 id, const void* data, u16 width, u16 height, u32 format,
+    u32 wrap_s, u32 wrap_t, u32 min_filter, u32 mag_filter,
+    u32 mipmap, f32 min_lod, f32 max_lod, f32 lod_bias,
     u32 tlut_name);
 
 #ifdef __cplusplus

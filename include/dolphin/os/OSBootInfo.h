@@ -8,7 +8,10 @@
 BEGIN_SCOPE_EXTERN_C
 
 //////// BOOT INFO TYPES /////////
-// Struct for boot information (size 0x40).
+/* Native view of boot information (size 0x40 on GameCube). On 64-bit hosts
+ * this is a decoded shadow with native pointers; mapped low memory contains
+ * the fixed 0x40-byte big-endian boot-ROM wire layout and must not be cast to
+ * this type. */
 typedef struct OSBootInfo {
 	DVDDiskID DVDDiskID; // _00
 	u32 magic;           // _20

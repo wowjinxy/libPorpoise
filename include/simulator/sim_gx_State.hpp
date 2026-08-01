@@ -119,6 +119,11 @@ struct ScissorState {
 };
 
 struct TextureState {
+    enum class SourceEncoding {
+        CanonicalBigEndian,
+        NativeU16,
+    };
+
     const void* data = nullptr;
     u16 width = 0;
     u16 height = 0;
@@ -127,8 +132,13 @@ struct TextureState {
     GXTexWrapMode wrapT = GX_CLAMP;
     GXTexFilter minFilter = GX_NEAR;
     GXTexFilter magFilter = GX_NEAR;
+    bool mipmap = false;
+    float minLod = 0.0f;
+    float maxLod = 0.0f;
+    float lodBias = 0.0f;
     u32 tlutName = GX_TLUT0;
     u64 revision = 0;
+    SourceEncoding sourceEncoding = SourceEncoding::CanonicalBigEndian;
 };
 
 struct TlutState {

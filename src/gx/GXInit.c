@@ -216,18 +216,18 @@ GXFifoObj* GXInit(void* base, u32 size)
 
 	__cpReg[CP_PERF_SELECT] = 0;
 	SET_REG_FIELD(0, gx->perfSel, 4, 4, 0);
-	GXWGFifo.u8  = 8;
-	GXWGFifo.u8  = 0x20;
-	GXWGFifo.s32 = gx->perfSel;
-	GXWGFifo.u8  = 0x10;
-	GXWGFifo.s32 = 0x1006;
-	GXWGFifo.s32 = 0;
-	GXWGFifo.u8  = 0x61;
-	GXWGFifo.s32 = 0x23000000;
-	GXWGFifo.u8  = 0x61;
-	GXWGFifo.s32 = 0x24000000;
-	GXWGFifo.u8  = 0x61;
-	GXWGFifo.s32 = 0x67000000;
+	GX_WRITE_U8(8);
+	GX_WRITE_U8(0x20);
+	GX_WRITE_U32(gx->perfSel);
+	GX_WRITE_U8(0x10);
+	GX_WRITE_U32(0x1006);
+	GX_WRITE_U32(0);
+	GX_WRITE_U8(0x61);
+	GX_WRITE_U32(0x23000000);
+	GX_WRITE_U8(0x61);
+	GX_WRITE_U32(0x24000000);
+	GX_WRITE_U8(0x61);
+	GX_WRITE_U32(0x67000000);
 
 	__GXSetTmemConfig(0);
 	__GXInitGX();

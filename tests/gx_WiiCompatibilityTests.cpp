@@ -1,12 +1,15 @@
 #include <dolphin/gx/GXData.h>
 #include <dolphin/hw_regs.h>
+#include <dolphin/exi.h>
 #include <dolphin/pad.h>
+#include <dolphin/tpl.h>
 #include <revolution/gx.h>
 #include <simulator/sim_gx_CommandProcessor.h>
 #include <simulator/sim_gx_Geometry.hpp>
 #include <simulator/sim_gx_GlRenderer.hpp>
 #include <simulator/sim_gx_State.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -33,6 +36,14 @@ namespace {
 static_assert(sizeof(GXTexObj) == 0x20);
 static_assert(sizeof(GXTexObjPriv) == 0x20);
 static_assert(sizeof(GXTlutObj) == 0x0c);
+static_assert(GX_CC_CPREV == 0);
+static_assert(GX_CC_APREV == 1);
+static_assert(GX_CC_C0 == 2);
+static_assert(GX_CC_A0 == 3);
+static_assert(GX_CC_C1 == 4);
+static_assert(GX_CC_A1 == 5);
+static_assert(GX_CC_C2 == 6);
+static_assert(GX_CC_A2 == 7);
 
 bool NearlyEqual(float left, float right, float tolerance = 0.0001f) {
     return std::fabs(left - right) <= tolerance;
@@ -103,6 +114,434 @@ bool TestDepthTextureCopyEncoding() {
     return
         encodedZ16[0] == 0x00 && encodedZ16[1] == 0x80 &&
         encodedZ16[2] == 0xff && encodedZ16[3] == 0xff;
+}
+
+bool TestGXCompressZ16Vectors() {
+    struct CompressionVector {
+        u32 z24;
+        std::array<u32, 4> expected;
+    };
+    constexpr std::array<GXZFmt16, 4> formats = {
+        GX_ZC_LINEAR,
+        GX_ZC_NEAR,
+        GX_ZC_MID,
+        GX_ZC_FAR,
+    };
+    constexpr std::array<CompressionVector, 9> vectors = {{
+        {0x000000u, {0x0000u, 0x0000u, 0x0000u, 0x0000u}},
+        {0x123456u, {0x1234u, 0x091au, 0x048du, 0x0246u}},
+        {0x7fffffu, {0x7fffu, 0x3fffu, 0x1fffu, 0x0fffu}},
+        {0x800000u, {0x8000u, 0x4000u, 0x2000u, 0x1000u}},
+        {0xc00000u, {0xc000u, 0x8000u, 0x4000u, 0x2000u}},
+        {0xf00000u, {0xf000u, 0xe000u, 0x8000u, 0x4000u}},
+        {0xff0000u, {0xff00u, 0xfe00u, 0xf000u, 0x8000u}},
+        {0xffff00u, {0xffffu, 0xfffeu, 0xfff0u, 0xcf00u}},
+        {0xffffffu, {0xffffu, 0xffffu, 0xffffu, 0xcfffu}},
+    }};
+
+    for (const CompressionVector& vector : vectors) {
+        for (size_t format = 0; format < formats.size(); ++format) {
+            if (GXCompressZ16(vector.z24, formats[format]) !=
+                vector.expected[format]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool TestIa8TlutTypedU16Dispatch() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    // SDK code constructs an IA8 entry numerically as I | (A << 8). On a
+    // little-endian host the standard GXInitTlutObj call must recognize this
+    // typed u16 source and canonicalize it to the GameCube's [A, I] bytes.
+    alignas(32) std::array<u16, 2> nativePalette = {
+        0x20e0u,
+        0x8010u,
+    };
+    GXInitTlutRegion(&TestTlutRegion, 0x80000u, GX_TLUT_256);
+    const GXTlutRegionCallback previousTlutCallback =
+        GXSetTlutRegionCallback(GetTestTlutRegion);
+    GXTlutObj tlutObject = {};
+    GXInitTlutObj(
+        &tlutObject,
+        nativePalette.data(),
+        GX_TL_IA8,
+        static_cast<u16>(nativePalette.size()));
+    GXLoadTlut(&tlutObject, 6);
+    GXSetTlutRegionCallback(previousTlutCallback);
+
+    const auto& tlut = SIM::GX::GetGlobalState().GetTlutState(6);
+    const std::array<u8, 4> expectedCanonical = {
+        0x20u, 0xe0u, 0x80u, 0x10u,
+    };
+    if (tlut.canonicalBytes != std::vector<u8>(
+            expectedCanonical.begin(), expectedCanonical.end())) {
+        return false;
+    }
+
+    const SIM::GX::DecodedTlutColor first =
+        SIM::GX::DecodeTlutEntry(GX_TL_IA8, tlut.canonicalBytes.data());
+    const SIM::GX::DecodedTlutColor second =
+        SIM::GX::DecodeTlutEntry(
+            GX_TL_IA8, tlut.canonicalBytes.data() + 2);
+    return
+        first.red == 0xe0u && first.green == 0xe0u &&
+        first.blue == 0xe0u && first.alpha == 0x20u &&
+        second.red == 0x10u && second.green == 0x10u &&
+        second.blue == 0x10u && second.alpha == 0x80u;
+}
+
+bool TestPreloadEntireMipChain() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    alignas(32) std::array<u8, 128> image = {};
+    GXTexObj texture = {};
+    GXTexRegion region = {};
+    GXInitTexObj(
+        &texture,
+        image.data(),
+        8,
+        4,
+        GX_TF_I4,
+        GX_CLAMP,
+        GX_CLAMP,
+        GX_TRUE);
+    GXInitTexPreLoadRegion(
+        &region,
+        0,
+        0x80000u,
+        0x80000u,
+        0x80000u);
+
+    const u32 previousDirtyState = gx->dirtyState;
+    const u32 previousBpMask = gx->bpMask;
+    const u8 previousDlSaveContext = gx->dlSaveContext;
+    const u8 previousBpSent = gx->bpSent;
+    gx->dirtyState = 0;
+    gx->bpMask = 0xfe000000u;
+    gx->dlSaveContext = 0;
+
+    alignas(32) std::array<u8, 128> commands = {};
+    GXBeginDisplayList(commands.data(), static_cast<u32>(commands.size()));
+    GXPreLoadEntireTexture(&texture, &region);
+    const u32 recordedSize = GXEndDisplayList();
+
+    gx->dirtyState = previousDirtyState;
+    gx->bpMask = previousBpMask;
+    gx->dlSaveContext = previousDlSaveContext;
+    gx->bpSent = previousBpSent;
+
+    // There are two BP-mask flushes, four base-level image commands, and
+    // four commands for each of the three lower mip levels. The 90 command
+    // bytes are padded to the SDK-mandated 32-byte display-list boundary.
+    if (recordedSize != 96u) {
+        return false;
+    }
+    size_t commandBytes = 0;
+    size_t loadImage3Count = 0;
+    while (commandBytes + 5u <= recordedSize &&
+           commands[commandBytes] == 0x61u) {
+        if (commands[commandBytes + 1u] == 0x63u) {
+            ++loadImage3Count;
+        }
+        commandBytes += 5u;
+    }
+    if (commandBytes != 90u || loadImage3Count != 4u) {
+        return false;
+    }
+    for (size_t offset = commandBytes; offset < recordedSize; ++offset) {
+        if (commands[offset] != 0u) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TestNativeU16TextureSourceEncoding() {
+    using SourceEncoding =
+        SIM::GX::TextureState::SourceEncoding;
+
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    // One 8x8 CMPR tile contains four 4x4 sub-blocks. Each sub-block uses a
+    // native RGB565 red endpoint followed by green and selects endpoint zero
+    // for every pixel. Reading the little-endian u16 storage as canonical
+    // bytes would turn F800 into 00F8 instead of red.
+    alignas(32) std::array<u16, 16> nativeCmpr = {};
+    for (size_t subBlock = 0; subBlock < 4u; ++subBlock) {
+        nativeCmpr[subBlock * 4u] = 0xf800u;
+        nativeCmpr[subBlock * 4u + 1u] = 0x07e0u;
+    }
+
+    GXTexRegion region = {};
+    GXInitTexPreLoadRegion(
+        &region,
+        0,
+        0x80000u,
+        0x80000u,
+        0x80000u);
+
+    GXTexObj typedObject = {};
+    GXInitTexObj(
+        &typedObject,
+        nativeCmpr.data(),
+        8,
+        8,
+        GX_TF_CMPR,
+        GX_CLAMP,
+        GX_CLAMP,
+        GX_FALSE);
+    GXLoadTexObjPreLoaded(&typedObject, &region, GX_TEXMAP0);
+
+    const auto& state = SIM::GX::GetGlobalState();
+    const auto& nativeTexture = state.GetTextureState(0);
+    if (nativeTexture.data != nativeCmpr.data() ||
+        nativeTexture.sourceEncoding != SourceEncoding::NativeU16) {
+        return false;
+    }
+
+    std::vector<u8> rgba;
+    if (!SIM::GX::Detail::DecodeTextureToRgba(
+            nativeTexture, {}, rgba) ||
+        rgba.size() != 8u * 8u * 4u ||
+        rgba[0] != 255u || rgba[1] != 0u ||
+        rgba[2] != 0u || rgba[3] != 255u) {
+        return false;
+    }
+
+    SIM::GX::TextureContentSnapshot snapshot;
+    snapshot.Capture(nativeTexture);
+    if (!snapshot.Matches(nativeTexture)) {
+        return false;
+    }
+
+    const u64 textureRevision = nativeTexture.revision;
+    const u64 invalidationRevision =
+        state.GetTextureInvalidationRevision();
+    nativeCmpr[0] = 0x001fu;
+    if (SIM::GX::Detail::ShouldValidateTexture(
+            false,
+            false,
+            textureRevision,
+            nativeTexture.revision,
+            invalidationRevision,
+            state.GetTextureInvalidationRevision(),
+            0,
+            0)) {
+        return false;
+    }
+
+    GXInvalidateTexAll();
+    if (!SIM::GX::Detail::ShouldValidateTexture(
+            false,
+            false,
+            textureRevision,
+            nativeTexture.revision,
+            invalidationRevision,
+            state.GetTextureInvalidationRevision(),
+            0,
+            0) ||
+        snapshot.Matches(nativeTexture) ||
+        !SIM::GX::Detail::DecodeTextureToRgba(
+            nativeTexture, {}, rgba) ||
+        rgba[0] != 0u || rgba[1] != 0u || rgba[2] != 255u) {
+        return false;
+    }
+
+    // Byte-oriented and pointer-erased standard calls stay canonical.
+    alignas(32) std::array<u8, 32> canonicalCmpr = {};
+    for (size_t subBlock = 0; subBlock < 4u; ++subBlock) {
+        canonicalCmpr[subBlock * 8u] = 0xf8u;
+        canonicalCmpr[subBlock * 8u + 2u] = 0x07u;
+        canonicalCmpr[subBlock * 8u + 3u] = 0xe0u;
+    }
+    GXTexObj byteObject = {};
+    GXInitTexObj(
+        &byteObject,
+        canonicalCmpr.data(),
+        8,
+        8,
+        GX_TF_CMPR,
+        GX_CLAMP,
+        GX_CLAMP,
+        GX_FALSE);
+    GXLoadTexObjPreLoaded(&byteObject, &region, GX_TEXMAP1);
+    if (state.GetTextureState(1).sourceEncoding !=
+        SourceEncoding::CanonicalBigEndian) {
+        return false;
+    }
+
+    void* erasedCanonical = canonicalCmpr.data();
+    GXTexObj erasedCanonicalObject = {};
+    GXInitTexObj(
+        &erasedCanonicalObject,
+        erasedCanonical,
+        8,
+        8,
+        GX_TF_CMPR,
+        GX_CLAMP,
+        GX_CLAMP,
+        GX_FALSE);
+    GXLoadTexObjPreLoaded(
+        &erasedCanonicalObject, &region, GX_TEXMAP2);
+    if (state.GetTextureState(2).sourceEncoding !=
+        SourceEncoding::CanonicalBigEndian) {
+        return false;
+    }
+
+    TPLHeader tplHeader = {};
+    tplHeader.height = 8;
+    tplHeader.width = 8;
+    tplHeader.format = GX_TF_CMPR;
+    tplHeader.data = reinterpret_cast<Ptr>(canonicalCmpr.data());
+    tplHeader.wrapS = GX_CLAMP;
+    tplHeader.wrapT = GX_CLAMP;
+    tplHeader.minFilter = GX_NEAR;
+    tplHeader.magFilter = GX_NEAR;
+    TPLDescriptor tplDescriptor = {&tplHeader, nullptr};
+    TPLPalette tplPalette = {0x0020af30u, 1, &tplDescriptor};
+    GXTexObj tplObject = {};
+    TPLGetGXTexObjFromPalette(&tplPalette, &tplObject, 0);
+    GXLoadTexObjPreLoaded(&tplObject, &region, GX_TEXMAP4);
+    if (state.GetTextureState(4).sourceEncoding !=
+        SourceEncoding::CanonicalBigEndian) {
+        return false;
+    }
+
+    // Once middleware has erased the u16 type, the explicit API still
+    // records the intended scalar-word encoding without relying on dispatch.
+    void* erasedNative = nativeCmpr.data();
+    GXTexObj explicitObject = {};
+    GXInitTexObjHostNativeU16(
+        &explicitObject,
+        erasedNative,
+        8,
+        8,
+        GX_TF_CMPR,
+        GX_CLAMP,
+        GX_CLAMP,
+        GX_FALSE);
+    GXLoadTexObjPreLoaded(&explicitObject, &region, GX_TEXMAP3);
+    return
+        state.GetTextureState(3).data == erasedNative &&
+        state.GetTextureState(3).sourceEncoding ==
+            SourceEncoding::NativeU16;
+}
+
+bool TestMipPayloadLayoutDecodeAndFiltering() {
+    using SIM::GX::Detail::TextureMipmapFilter;
+    using SIM::GX::TextureMipLevelLayout;
+
+    SIM::GX::TextureState texture;
+    texture.width = 8;
+    texture.height = 8;
+    texture.format = GX_TF_CMPR;
+    texture.mipmap = true;
+    texture.maxLod = 3.0f;
+
+    constexpr std::array<u16, 4> endpoints = {
+        0xf800u,
+        0x07e0u,
+        0x001fu,
+        0xffffu,
+    };
+    constexpr std::array<std::array<u8, 4>, 4> expectedColors = {{
+        {255u, 0u, 0u, 255u},
+        {0u, 255u, 0u, 255u},
+        {0u, 0u, 255u, 255u},
+        {255u, 255u, 255u, 255u},
+    }};
+    alignas(32) std::array<u8, 128> canonical = {};
+    for (size_t level = 0u; level < endpoints.size(); ++level) {
+        for (size_t subBlock = 0u; subBlock < 4u; ++subBlock) {
+            const size_t offset = level * 32u + subBlock * 8u;
+            canonical[offset] = static_cast<u8>(endpoints[level] >> 8u);
+            canonical[offset + 1u] = static_cast<u8>(endpoints[level]);
+        }
+    }
+    texture.data = canonical.data();
+
+    if (GXGetTexBufferSize(8, 8, GX_TF_CMPR, GX_TRUE, 3) != 96u ||
+        GXGetTexBufferSize(8, 8, GX_TF_CMPR, GX_TRUE, 4) != 128u ||
+        SIM::GX::GetTextureMipLevelCount(texture) != 4u ||
+        SIM::GX::GetTextureSourceByteSize(texture) != canonical.size()) {
+        return false;
+    }
+
+    constexpr std::array<u16, 4> expectedWidths = {8, 4, 2, 1};
+    for (size_t level = 0u; level < endpoints.size(); ++level) {
+        TextureMipLevelLayout layout;
+        std::vector<u8> rgba;
+        if (!SIM::GX::GetTextureMipLevelLayout(texture, level, layout) ||
+            layout.offset != level * 32u || layout.byteSize != 32u ||
+            layout.width != expectedWidths[level] ||
+            layout.height != expectedWidths[level] ||
+            !SIM::GX::Detail::DecodeCanonicalTextureMipLevelToRgba(
+                texture,
+                canonical.data(),
+                canonical.size(),
+                level,
+                {},
+                rgba) ||
+            rgba.size() != static_cast<size_t>(layout.width) *
+                               static_cast<size_t>(layout.height) * 4u ||
+            !std::equal(
+                expectedColors[level].begin(),
+                expectedColors[level].end(),
+                rgba.begin())) {
+            return false;
+        }
+    }
+
+    alignas(32) std::array<u16, 64> nativeWords = {};
+    for (size_t word = 0u; word < nativeWords.size(); ++word) {
+        nativeWords[word] = static_cast<u16>(
+            (static_cast<u16>(canonical[word * 2u]) << 8u) |
+            canonical[word * 2u + 1u]);
+    }
+    texture.data = nativeWords.data();
+    texture.sourceEncoding =
+        SIM::GX::TextureState::SourceEncoding::NativeU16;
+    std::vector<u8> recanonicalized;
+    if (!SIM::GX::CopyCanonicalTextureBytes(texture, recanonicalized) ||
+        recanonicalized != std::vector<u8>(
+            canonical.begin(), canonical.end())) {
+        return false;
+    }
+    SIM::GX::TextureContentSnapshot snapshot;
+    snapshot.Capture(texture);
+    nativeWords[48] = 0xf800u;
+    if (snapshot.Matches(texture)) {
+        return false;
+    }
+
+    struct FilterCase {
+        GXTexFilter filter;
+        bool linearTexels;
+        TextureMipmapFilter mipmapFilter;
+    };
+    constexpr std::array<FilterCase, 6> filterCases = {{
+        {GX_NEAR, false, TextureMipmapFilter::None},
+        {GX_LINEAR, true, TextureMipmapFilter::None},
+        {GX_NEAR_MIP_NEAR, false, TextureMipmapFilter::Nearest},
+        {GX_LIN_MIP_NEAR, true, TextureMipmapFilter::Nearest},
+        {GX_NEAR_MIP_LIN, false, TextureMipmapFilter::Linear},
+        {GX_LIN_MIP_LIN, true, TextureMipmapFilter::Linear},
+    }};
+    for (const FilterCase& filterCase : filterCases) {
+        const auto selection =
+            SIM::GX::Detail::SelectTextureFilter(filterCase.filter);
+        if (selection.linearTexels != filterCase.linearTexels ||
+            selection.mipmapFilter != filterCase.mipmapFilter) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool TestNormalMatrixState() {
@@ -261,6 +700,99 @@ bool TestTextureObjectAbiBounds() {
         }
     }
     return true;
+}
+
+bool TestSdkTextureLodEncoding() {
+    alignas(32) std::array<u8, 128> image = {};
+    GXTexObj directTexture = {};
+    GXInitTexObj(
+        &directTexture,
+        image.data(),
+        8,
+        4,
+        GX_TF_I4,
+        GX_CLAMP,
+        GX_CLAMP,
+        GX_TRUE);
+    if (!NearlyEqual(GXGetTexObjMaxLOD(&directTexture), 3.0f)) {
+        return false;
+    }
+
+    TPLHeader header = {};
+    header.height = 8;
+    header.width = 8;
+    header.format = GX_TF_I4;
+    header.data = reinterpret_cast<Ptr>(image.data());
+    header.wrapS = GX_CLAMP;
+    header.wrapT = GX_CLAMP;
+    header.minFilter = GX_NEAR_MIP_NEAR;
+    header.magFilter = GX_LINEAR;
+    header.LODBias = 0.5f;
+    header.edgeLODEnable = GX_TRUE;
+    header.minLOD = 2;
+    header.maxLOD = 5;
+    TPLDescriptor descriptor = {&header, nullptr};
+    TPLPalette palette = {0x0020af30u, 1, &descriptor};
+    GXTexObj tplTexture = {};
+    TPLGetGXTexObjFromPalette(&palette, &tplTexture, 0);
+
+    if (!NearlyEqual(GXGetTexObjMinLOD(&tplTexture), 2.0f) ||
+        !NearlyEqual(GXGetTexObjMaxLOD(&tplTexture), 5.0f) ||
+        !NearlyEqual(GXGetTexObjLODBias(&tplTexture), 0.5f) ||
+        GXGetTexObjEdgeLOD(&tplTexture) != GX_TRUE) {
+        return false;
+    }
+
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+    GXTexRegion region = {};
+    GXInitTexPreLoadRegion(
+        &region,
+        0,
+        0x80000u,
+        0x80000u,
+        0x80000u);
+    GXLoadTexObjPreLoaded(&tplTexture, &region, GX_TEXMAP7);
+    const auto& loaded =
+        SIM::GX::GetGlobalState().GetTextureState(7);
+    return
+        loaded.mipmap &&
+        loaded.minFilter == GX_NEAR_MIP_NEAR &&
+        loaded.magFilter == GX_LINEAR &&
+        NearlyEqual(loaded.minLod, 2.0f) &&
+        NearlyEqual(loaded.maxLod, 5.0f) &&
+        NearlyEqual(loaded.lodBias, 0.5f) &&
+        SIM::GX::GetTextureMipLevelCount(loaded) == 4u &&
+        SIM::GX::GetTextureSourceByteSize(loaded) == image.size();
+}
+
+bool TestHostExiSyncCompletion() {
+    if (!EXISelect(2, 0, EXI_FREQ_1M)) {
+        return false;
+    }
+
+    std::array<u8, 2> command = {0x12u, 0x34u};
+    if (!EXIImm(2, command.data(), 2, EXI_WRITE, nullptr) ||
+        (EXIGetState(2) & EXI_STATE_BUSY) == 0u ||
+        EXIREG(2, 4) != 0x12340000u ||
+        !EXISync(2) ||
+        (EXIGetState(2) & EXI_STATE_BUSY) != 0u ||
+        (EXIREG(2, 3) & 1u) != 0u) {
+        return false;
+    }
+
+    std::array<u8, 4> response = {};
+    if (!EXIImm(2, response.data(), 4, EXI_READ, nullptr)) {
+        return false;
+    }
+    EXIREG(2, 4) = 0x89abcdefu;
+    if (!EXISync(2) ||
+        response != std::array<u8, 4>{0x89u, 0xabu, 0xcdu, 0xefu} ||
+        (EXIGetState(2) & EXI_STATE_BUSY) != 0u ||
+        (EXIREG(2, 3) & 1u) != 0u) {
+        return false;
+    }
+    return EXIDeselect(2) == TRUE;
 }
 
 bool TestFifoQueries() {
@@ -867,6 +1399,43 @@ bool TestBpTevCompareCommands() {
         NearlyEqual(color0[3], 1.0f);
 }
 
+bool TestTevColorArgumentHardwareEncoding() {
+    // Keep the shader's raw BP selector interpretation tied to Nintendo's
+    // interleaved color/alpha register encoding. In particular, selector 6
+    // is C2, not A1; confusing those makes valid multi-stage materials black.
+    const std::string_view shader = SIM_GXFragmentShader;
+    return
+        shader.find("if (input == 3) return vec3(reg0.a);") !=
+            std::string_view::npos &&
+        shader.find("if (input == 4) return reg1.rgb;") !=
+            std::string_view::npos &&
+        shader.find("if (input == 5) return vec3(reg1.a);") !=
+            std::string_view::npos &&
+        shader.find("if (input == 6) return reg2.rgb;") !=
+            std::string_view::npos;
+}
+
+bool TestTevSignedColorRegisters() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    const GXColorS10 color = {
+        -1024,
+        -1,
+        1023,
+        255,
+    };
+    GXSetTevColorS10(GX_TEVREG1, color);
+
+    const auto& decoded =
+        SIM::GX::GetGlobalState().GetTevColor(GX_TEVREG1);
+    return
+        NearlyEqual(decoded[0], -1024.0f / 255.0f) &&
+        NearlyEqual(decoded[1], -1.0f / 255.0f) &&
+        NearlyEqual(decoded[2], 1023.0f / 255.0f) &&
+        NearlyEqual(decoded[3], 1.0f);
+}
+
 bool TestTevKonstSelections() {
     SIM::GX::InitGlobalState();
     SIM_GX_CommandProcessor_Init();
@@ -992,6 +1561,10 @@ bool TestBpTextureAndScissorCommands() {
         GX_REPEAT,
         GX_NEAR,
         GX_LINEAR,
+        GX_FALSE,
+        0.0f,
+        0.0f,
+        0.0f,
         5);
 
     const auto& state = SIM::GX::GetGlobalState();
@@ -1047,6 +1620,10 @@ bool TestTlutDmaSnapshotAndNativeEncoding() {
         GX_CLAMP,
         GX_NEAR,
         GX_NEAR,
+        GX_FALSE,
+        0.0f,
+        0.0f,
+        0.0f,
         3);
     const u64 initialTextureRevision =
         SIM::GX::GetGlobalState().GetTextureState(0).revision;
@@ -1055,7 +1632,7 @@ bool TestTlutDmaSnapshotAndNativeEncoding() {
     const GXTlutRegionCallback previousTlutCallback =
         GXSetTlutRegionCallback(GetTestTlutRegion);
     GXTlutObj nativeTlutObject = {};
-    GXInitTlutObjHostNativeU16(
+    GXInitTlutObj(
         &nativeTlutObject,
         nativePalette.data(),
         GX_TL_RGB5A3,
@@ -1286,11 +1863,32 @@ int main() {
     if (!TestDepthTextureCopyEncoding()) {
         return 23;
     }
+    if (!TestGXCompressZ16Vectors()) {
+        return 34;
+    }
+    if (!TestIa8TlutTypedU16Dispatch()) {
+        return 35;
+    }
+    if (!TestPreloadEntireMipChain()) {
+        return 36;
+    }
+    if (!TestNativeU16TextureSourceEncoding()) {
+        return 37;
+    }
+    if (!TestMipPayloadLayoutDecodeAndFiltering()) {
+        return 38;
+    }
     if (!TestNormalMatrixState()) {
         return 24;
     }
     if (!TestIndependentTextureLodSetters()) {
         return 1;
+    }
+    if (!TestSdkTextureLodEncoding()) {
+        return 32;
+    }
+    if (!TestHostExiSyncCompletion()) {
+        return 33;
     }
     if (!TestHostTexturePointerPreserved()) {
         return 2;
@@ -1360,6 +1958,12 @@ int main() {
     }
     if (!TestBpTevCompareCommands()) {
         return 19;
+    }
+    if (!TestTevColorArgumentHardwareEncoding()) {
+        return 30;
+    }
+    if (!TestTevSignedColorRegisters()) {
+        return 31;
     }
     if (!TestTevKonstSelections()) {
         return 21;

@@ -46,8 +46,13 @@ typedef struct MEMiHeapHead {
     union {
         u32 val;
         struct {
+#ifdef LIBPORPOISE_PORT
+            u32 optFlag : 8;
+            u32 reserved : 24;
+#else
             u32 reserved : 24;
             u32 optFlag : 8;
+#endif
         } fields;
     } attribute;
 } MEMiHeapHead;

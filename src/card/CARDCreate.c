@@ -2,6 +2,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "CARDWire.h"
+
 /**
  * @TODO: Documentation
  */
@@ -30,20 +32,18 @@ static void CreateCallbackFat(s32 channel, s32 result)
 #endif
 	ent->permission = CARD_ATTR_PUBLIC;
 	ent->copyTimes  = 0;
-	ent->startBlock = card->startBlock;
+	CARDWireWrite16(&ent->startBlock, card->startBlock);
 
 	ent->bannerFormat = CARD_STAT_BANNER_NONE;
-	ent->iconAddr     = 0xFFFFFFFF;
-	ent->iconFormat   = CARD_STAT_ICON_NONE;
-	ent->iconSpeed    = CARD_STAT_SPEED_END;
-	ent->commentAddr  = 0xFFFFFFFF;
-
-	CARDSetIconSpeed(ent, 0, CARD_STAT_SPEED_FAST);
+	CARDWireWrite32(&ent->iconAddr, 0xFFFFFFFF);
+	CARDWireWrite16(&ent->iconFormat, CARD_STAT_ICON_NONE);
+	CARDWireWrite16(&ent->iconSpeed, CARD_STAT_SPEED_FAST);
+	CARDWireWrite32(&ent->commentAddr, 0xFFFFFFFF);
 
 	card->fileInfo->offset = 0;
-	card->fileInfo->iBlock = ent->startBlock;
+	card->fileInfo->iBlock = card->startBlock;
 
-	ent->time = (u32)OSTicksToSeconds(OSGetTime());
+	CARDWireWrite32(&ent->time, (u32)OSTicksToSeconds(OSGetTime()));
 	result    = __CARDUpdateDir(channel, callback);
 	if (result < CARD_RESULT_READY) {
 		goto error;
@@ -108,14 +108,14 @@ s32 CARDCreateAsync(s32 channel, const char* fileName, u32 size, CARDFileInfo* f
 	}
 
 	fat = __CARDGetFatBlock(card);
-	if (card->sectorSize * fat->freeBlocks < size) {
+	if (card->sectorSize * CARDWireRead16(&fat->freeBlocks) < size) {
 		return __CARDPutControlBlock(card, CARD_RESULT_INSSPACE);
 	}
 
 	card->apiCallback = callback ? callback : __CARDDefaultApiCallback;
 	card->freeNo      = freeNo;
 	ent               = &dir->entries[freeNo];
-	ent->length       = (u16)(size / card->sectorSize);
+	CARDWireWrite16(&ent->length, (u16)(size / card->sectorSize));
 	strncpy((char*)ent->fileName, fileName, CARD_FILENAME_MAX);
 
 	card->fileInfo   = fileInfo;

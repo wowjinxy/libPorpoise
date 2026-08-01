@@ -74,6 +74,7 @@ extern u32 GXCompressZ16(u32 z24, GXZFmt16 zFormat);
 extern u32 GXDecompressZ16(u32 z16, GXZFmt16 zFormat);
 
 struct OSThread* GXSetCurrentGXThread();
+struct OSThread* GXGetCurrentGXThread();
 
 ////////////////////////////////////////////
 

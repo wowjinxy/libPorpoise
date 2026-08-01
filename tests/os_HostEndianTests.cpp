@@ -2,6 +2,14 @@
 
 #include <bit>
 #include <cstdint>
+#include <type_traits>
+
+static_assert(sizeof(s32) == 4);
+static_assert(sizeof(u32) == 4);
+static_assert(sizeof(vs32) == 4);
+static_assert(sizeof(vu32) == 4);
+static_assert(std::is_signed_v<s32>);
+static_assert(std::is_unsigned_v<u32>);
 
 int main()
 {
@@ -33,7 +41,7 @@ int main()
 	}
 	if (OSReadBigEndianS16(bytes + 1) != 0x1234 ||
 	    OSReadBigEndianS32(bytes + 3) !=
-	        static_cast<s32>(0x89ABCDEFU) ||
+	        -1985229329 ||
 	    OSReadBigEndianS64(bytes + 7) !=
 	        static_cast<s64>(0x0123456789ABCDEFULL)) {
 		return 6;

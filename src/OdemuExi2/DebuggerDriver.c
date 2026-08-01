@@ -3,6 +3,8 @@
 #include <dolphin/os.h>
 #include <dolphin/types.h>
 
+#include "../exi/EXIWire.h"
+
 static MTRCallbackType MTRCallback;
 static void (*DBGCallback)(u32, OSContext*);
 
@@ -122,14 +124,14 @@ void DBGCheckID(void)
 static BOOL DBGWriteMailbox(u32 p1)
 {
 	BOOL total = FALSE;
-	u32 v;
+	u8 command[4];
 
 	if (!DBGEXISelect(4)) {
 		return FALSE;
 	}
 
-	v = (p1 & 0x1fffffff) | (0xC0000000);
-	total |= IS_FALSE(DBGEXIImm(&v, sizeof(v), 1));
+	EXIWireWrite32(command, (p1 & 0x1fffffffu) | 0xC0000000u);
+	total |= IS_FALSE(DBGEXIImm(command, sizeof(command), 1));
 	total |= IS_FALSE(DBGEXISync());
 	total |= IS_FALSE(DBGEXIDeselect());
 
@@ -142,18 +144,20 @@ static BOOL DBGWriteMailbox(u32 p1)
 static BOOL DBGReadMailbox(u32* p1)
 {
 	BOOL total = FALSE;
-	u32 v;
+	u8 command[2];
+	u8 response[4];
 
 	if (!DBGEXISelect(4)) {
 		return FALSE;
 	}
 
-	v = 0x60000000;
-	total |= IS_FALSE(DBGEXIImm(&v, 2, 1));
+	EXIWireWrite16(command, 0x6000u);
+	total |= IS_FALSE(DBGEXIImm(command, sizeof(command), 1));
 	total |= IS_FALSE(DBGEXISync());
 
-	total |= IS_FALSE(DBGEXIImm(p1, 4, 0));
+	total |= IS_FALSE(DBGEXIImm(response, sizeof(response), 0));
 	total |= IS_FALSE(DBGEXISync());
+	*p1 = EXIWireRead32(response);
 
 	total |= IS_FALSE(DBGEXIDeselect());
 
@@ -166,23 +170,23 @@ static BOOL DBGReadMailbox(u32* p1)
 static BOOL DBGRead(u32 count, void* buffer, s32 param3)
 {
 	BOOL total = FALSE;
-	u32* buf_p = (u32*)buffer;
-	u32 v1;
-	u32 v;
+	u8* buf_p = (u8*)buffer;
+	u8 command[4];
 
 	if (!DBGEXISelect(4)) {
 		return FALSE;
 	}
 
-	v1 = (count & 0x1fffc) << 8 | 0x20000000;
-	total |= IS_FALSE(DBGEXIImm(&v1, sizeof(v1), 1));
+	EXIWireWrite32(
+	    command, ((count & 0x1fffcu) << 8) | 0x20000000u);
+	total |= IS_FALSE(DBGEXIImm(command, sizeof(command), 1));
 	total |= IS_FALSE(DBGEXISync());
 
 	while (param3) {
-		total |= IS_FALSE(DBGEXIImm(&v, sizeof(v), 0));
+		total |= IS_FALSE(DBGEXIImm(buf_p, 4, 0));
 		total |= IS_FALSE(DBGEXISync());
 
-		*buf_p++ = v;
+		buf_p += 4;
 
 		param3 -= 4;
 		if (param3 < 0) {
@@ -200,23 +204,22 @@ static BOOL DBGRead(u32 count, void* buffer, s32 param3)
 static BOOL DBGWrite(u32 count, void* buffer, s32 param3)
 {
 	BOOL total = FALSE;
-	u32* buf_p = (u32*)buffer;
-	u32 v1;
-	u32 v;
+	u8* buf_p = (u8*)buffer;
+	u8 command[4];
 
 	if (!DBGEXISelect(4)) {
 		return FALSE;
 	}
 
-	v1 = (count & 0x1fffc) << 8 | 0xa0000000;
-	total |= IS_FALSE(DBGEXIImm(&v1, sizeof(v1), 1));
+	EXIWireWrite32(
+	    command, ((count & 0x1fffcu) << 8) | 0xa0000000u);
+	total |= IS_FALSE(DBGEXIImm(command, sizeof(command), 1));
 	total |= IS_FALSE(DBGEXISync());
 
 	while (param3 != 0) {
-		v = *buf_p++;
-
-		total |= IS_FALSE(DBGEXIImm(&v, sizeof(v), 1));
+		total |= IS_FALSE(DBGEXIImm(buf_p, 4, 1));
 		total |= IS_FALSE(DBGEXISync());
+		buf_p += 4;
 
 		param3 -= 4;
 		if (param3 < 0) {
@@ -234,18 +237,20 @@ static BOOL DBGWrite(u32 count, void* buffer, s32 param3)
 static BOOL DBGReadStatus(u32* p1)
 {
 	BOOL total = FALSE;
-	u32 v;
+	u8 command[2];
+	u8 response[4];
 
 	if (!DBGEXISelect(4)) {
 		return FALSE;
 	}
 
-	v = 1 << 30;
-	total |= IS_FALSE(DBGEXIImm((u8*)&v, 2, 1));
+	EXIWireWrite16(command, 0x4000u);
+	total |= IS_FALSE(DBGEXIImm(command, sizeof(command), 1));
 	total |= IS_FALSE(DBGEXISync());
 
-	total |= IS_FALSE(DBGEXIImm(p1, 4, 0));
+	total |= IS_FALSE(DBGEXIImm(response, sizeof(response), 0));
 	total |= IS_FALSE(DBGEXISync());
+	*p1 = EXIWireRead32(response);
 
 	total |= IS_FALSE(DBGEXIDeselect());
 

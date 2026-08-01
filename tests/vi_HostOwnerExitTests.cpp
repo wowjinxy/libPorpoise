@@ -1,3 +1,4 @@
+#include <dolphin/gx.h>
 #include <dolphin/os.h>
 #include <dolphin/vi.h>
 #include <SDL2/SDL_thread.h>
@@ -13,6 +14,7 @@ SDL_threadID InitialOwner = 0;
 SDL_threadID WorkerOwner = 0;
 SDL_threadID ContextThread = 0;
 SDL_threadID AlarmThread = 0;
+OSThread* InitialGXThread = nullptr;
 std::array<SDL_threadID, 4> RenderThreads = {};
 std::array<SDL_threadID, 4> ReleaseThreads = {};
 std::array<SDL_threadID, 4> AcquireThreads = {};
@@ -38,7 +40,11 @@ void RecordReturnedOwnerAlarm(OSAlarm*, OSContext*) {
 void* AdoptThenExit(void*) {
     WorkerOwner = SDL_ThreadID();
     RequestEntered.store(true, std::memory_order_release);
-    const BOOL adopted = __VIHostAdoptRenderThread();
+    OSThread* previousGXThread = GXSetCurrentGXThread();
+    const BOOL adopted =
+        previousGXThread == InitialGXThread &&
+        GXGetCurrentGXThread() == OSGetCurrentThread() &&
+        __VIHostIsRenderThread();
     WorkerAdopted.store(adopted, std::memory_order_release);
     if (!adopted) {
         OSSendMessage(
@@ -147,8 +153,10 @@ int main() {
     OSInit();
     __VIHostInitRuntime();
     VIInit();
-    if (!__VIHostIsRenderThread() ||
-        !__VIHostAdoptRenderThread()) {
+    InitialGXThread = OSGetCurrentThread();
+    if (GXSetCurrentGXThread() != nullptr ||
+        GXGetCurrentGXThread() != InitialGXThread ||
+        !__VIHostIsRenderThread()) {
         return 1;
     }
 
@@ -183,12 +191,6 @@ int main() {
         reinterpret_cast<OSMessage>(1),
         OS_MESSAGE_NOBLOCK);
 
-    /*
-     * The worker returns without another retrace. Its OS exit observer must
-     * wake this wait, return alarm dispatch, and let this thread attach GL.
-     */
-    VIWaitForRetrace();
-
     void* workerResult = nullptr;
     if (!OSJoinThread(&Worker, &workerResult) ||
         workerResult !=
@@ -196,11 +198,21 @@ int main() {
         return 5;
     }
 
+    /*
+     * The worker returns without another retrace. A loading/render worker may
+     * be joined before the main thread reclaims GX, so that public GX boundary
+     * must complete the pending VI/context and alarm handback coherently.
+     */
+    OSThread* previousGXThread = GXSetCurrentGXThread();
+    OSCheckAlarmQueue();
+
     /* Ownership-only retraces must not swap a cleared host back buffer. */
     const bool passed =
+        previousGXThread == &Worker &&
+        GXGetCurrentGXThread() == InitialGXThread &&
         __VIHostIsRenderThread() &&
         ContextThread == InitialOwner &&
-        VIGetRetraceCount() == initialRetraceCount + 2u &&
+        VIGetRetraceCount() == initialRetraceCount + 1u &&
         RenderCount == 0u &&
         !RenderWithoutContext.load(std::memory_order_acquire) &&
         ReleaseCount == 2u &&

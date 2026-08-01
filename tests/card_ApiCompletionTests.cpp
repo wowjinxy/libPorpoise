@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "../src/card/CARDWire.h"
+
 static CARDDirectoryBlock Directory;
 static s32 ControlResult;
 static s32 AccessResult;
@@ -161,22 +163,38 @@ int main()
 {
 	CARDDir output;
 	CARDDir desired;
-	CARDDir original;
 	CARDDir* entry;
 	s32 result;
 	u8 attributes;
 
 	ResetState();
 	entry = &Directory.entries[7];
-	std::memset(entry, 0x2a, sizeof(*entry));
-	entry->gameName[0] = 'G';
+	std::memset(entry, 0, sizeof(*entry));
+	std::memcpy(entry->gameName, "GAME", 4);
+	std::memcpy(entry->company, "CP", 2);
+	std::memcpy(entry->fileName, "wire.dat", 9);
+	CARDWireWrite32(&entry->time, 0x12345678);
+	CARDWireWrite32(&entry->iconAddr, 0x01020304);
+	CARDWireWrite16(&entry->iconFormat, 0x1122);
+	CARDWireWrite16(&entry->iconSpeed, 0x3344);
+	CARDWireWrite16(&entry->startBlock, 0x5566);
+	CARDWireWrite16(&entry->length, 0x7788);
+	CARDWireWrite16(&entry->reserved_3A, 0x99aa);
+	CARDWireWrite32(&entry->commentAddr, 0xbbccddee);
 	AccessResult = CARD_RESULT_NOPERM;
 	PublicResult = CARD_RESULT_READY;
 	std::memset(&output, 0, sizeof(output));
 	result = __CARDGetStatusEx(0, 7, &output);
-	if (result != CARD_RESULT_READY || std::memcmp(&output, entry, sizeof(output)) != 0 ||
+	if (result != CARD_RESULT_READY || output.time != 0x12345678 ||
+	    output.iconAddr != 0x01020304 || output.iconFormat != 0x1122 ||
+	    output.iconSpeed != 0x3344 || output.startBlock != 0x5566 ||
+	    output.length != 0x7788 || output.reserved_3A != 0x99aa ||
+	    output.commentAddr != 0xbbccddee ||
+	    std::memcmp(output.gameName, "GAME", 4) != 0 ||
+	    std::memcmp(output.company, "CP", 2) != 0 ||
+	    std::memcmp(output.fileName, "wire.dat", 9) != 0 ||
 	    PutCount != 1) {
-		return Fail("__CARDGetStatusEx did not return a complete public directory entry");
+		return Fail("__CARDGetStatusEx did not decode a complete public directory entry");
 	}
 
 	ResetState();
@@ -198,7 +216,7 @@ int main()
 	ResetState();
 	entry = &Directory.entries[FileLookupNumber];
 	std::memset(entry, 0x11, sizeof(*entry));
-	entry->startBlock = 42;
+	CARDWireWrite16(&entry->startBlock, 42);
 	result = CARDDeleteAsync(0, "save.dat", UserCallback);
 	if (result != CARD_RESULT_READY || !IsErased(*entry) || __CARDBlock[0].startBlock != 42 ||
 	    FreedBlock != 42 || FreeCount != 1 || UserCallbackCount != 1) {
@@ -208,7 +226,7 @@ int main()
 	ResetState();
 	entry = &Directory.entries[FileLookupNumber];
 	std::memset(entry, 0x21, sizeof(*entry));
-	entry->startBlock = 8;
+	CARDWireWrite16(&entry->startBlock, 8);
 	result = CARDDeleteAsync(0, "default.dat", nullptr);
 	if (result != CARD_RESULT_READY || DefaultCallbackCount != 1 || !IsErased(*entry)) {
 		return Fail("CARDDeleteAsync did not use the default callback for a null callback");
@@ -217,7 +235,7 @@ int main()
 	ResetState();
 	entry = &Directory.entries[FileLookupNumber];
 	std::memset(entry, 0x33, sizeof(*entry));
-	entry->startBlock = 9;
+	CARDWireWrite16(&entry->startBlock, 9);
 	FileOpened = TRUE;
 	result = CARDDeleteAsync(0, "open.dat", UserCallback);
 	if (result != CARD_RESULT_BUSY || IsErased(*entry) || UpdateCount != 0 || FreeCount != 0) {
@@ -227,7 +245,7 @@ int main()
 	ResetState();
 	entry = &Directory.entries[FileLookupNumber];
 	std::memset(entry, 0x44, sizeof(*entry));
-	entry->startBlock = 12;
+	CARDWireWrite16(&entry->startBlock, 12);
 	result = CARDDelete(0, "sync.dat");
 	if (result != CARD_RESULT_READY || SyncCallbackCount != 1 || SyncCount != 1 ||
 	    !IsErased(*entry)) {
@@ -240,9 +258,8 @@ int main()
 	std::memcpy(entry->gameName, "OLDG", 4);
 	std::memcpy(entry->company, "OC", 2);
 	std::memcpy(entry->fileName, "old.dat", 8);
-	entry->startBlock = 77;
-	entry->length = 13;
-	original = *entry;
+	CARDWireWrite16(&entry->startBlock, 77);
+	CARDWireWrite16(&entry->length, 13);
 	std::memset(&desired, 0x7e, sizeof(desired));
 	std::memcpy(desired.gameName, "NEWG", 4);
 	std::memcpy(desired.company, "NC", 2);
@@ -257,14 +274,16 @@ int main()
 	desired.commentAddr = 0x240;
 	result = __CARDSetStatusExAsync(0, 4, &desired, UserCallback);
 	if (result != CARD_RESULT_READY || UserCallbackCount != 1 || UpdateCount != 1 ||
-	    entry->startBlock != original.startBlock || entry->length != original.length ||
+	    CARDWireRead16(&entry->startBlock) != 77 || CARDWireRead16(&entry->length) != 13 ||
 	    std::memcmp(entry->gameName, desired.gameName, sizeof(entry->gameName)) != 0 ||
 	    std::memcmp(entry->company, desired.company, sizeof(entry->company)) != 0 ||
 	    std::memcmp(entry->fileName, desired.fileName, CARD_FILENAME_MAX) != 0 ||
-	    entry->time != desired.time || entry->bannerFormat != desired.bannerFormat ||
-	    entry->iconAddr != desired.iconAddr || entry->iconFormat != desired.iconFormat ||
-	    entry->iconSpeed != desired.iconSpeed || entry->permission != desired.permission ||
-	    entry->copyTimes != desired.copyTimes || entry->commentAddr != desired.commentAddr) {
+	    CARDWireRead32(&entry->time) != desired.time || entry->bannerFormat != desired.bannerFormat ||
+	    CARDWireRead32(&entry->iconAddr) != desired.iconAddr ||
+	    CARDWireRead16(&entry->iconFormat) != desired.iconFormat ||
+	    CARDWireRead16(&entry->iconSpeed) != desired.iconSpeed ||
+	    entry->permission != desired.permission || entry->copyTimes != desired.copyTimes ||
+	    CARDWireRead32(&entry->commentAddr) != desired.commentAddr) {
 		return Fail("__CARDSetStatusExAsync copied the wrong directory fields");
 	}
 	for (size_t i = 8; i < CARD_FILENAME_MAX; ++i) {

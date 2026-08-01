@@ -1,12 +1,16 @@
 #include <dolphin/tpl.h>
 
 #include <dolphin/dvd.h>
+#include <dolphin/os/OSAlloc.h>
 #include <dolphin/os/OSHostEndian.h>
 #include <dolphin/os/OSUtil.h>
 
-#include <malloc.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(_MSC_VER) || defined(_WIN32)
+#include <malloc.h>
+#endif
 
 enum { TPL_VERSION = 0x0020AF30 };
 enum { TPL_FALLBACK_DESCRIPTOR_COUNT = 256 };
@@ -83,7 +87,7 @@ static TPLPalettePtr tpl_create_fallback_palette(void) {
         header->height = 1;
         header->width = 1;
         header->format = GX_TF_I8;
-        header->data = s_fallback_texture;
+        header->data = (Ptr)s_fallback_texture;
         header->wrapS = GX_CLAMP;
         header->wrapT = GX_CLAMP;
         header->minFilter = GX_NEAR;
@@ -100,6 +104,57 @@ static TPLPalettePtr tpl_create_fallback_palette(void) {
 
 static BOOL tpl_range_valid(size_t offset, size_t length, size_t total) {
     return offset <= total && length <= total - offset;
+}
+
+static BOOL tpl_texture_format_valid(u32 format) {
+    switch (format) {
+    case GX_TF_I4:
+    case GX_TF_I8:
+    case GX_TF_IA4:
+    case GX_TF_IA8:
+    case GX_TF_RGB565:
+    case GX_TF_RGB5A3:
+    case GX_TF_RGBA8:
+    case GX_TF_C4:
+    case GX_TF_C8:
+    case GX_TF_C14X2:
+    case GX_TF_CMPR:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+static BOOL tpl_texture_data_size(
+    u16 width,
+    u16 height,
+    u32 format,
+    u8 minLOD,
+    u8 maxLOD,
+    size_t* dataSize) {
+    GXBool mipmap;
+    u32 size;
+
+    if (!dataSize || width == 0 || height == 0 || width > 1024 ||
+        height > 1024 || !tpl_texture_format_valid(format) ||
+        minLOD > maxLOD || maxLOD > 10) {
+        return FALSE;
+    }
+    mipmap = maxLOD > minLOD ? GX_TRUE : GX_FALSE;
+    size = GXGetTexBufferSize(
+        width,
+        height,
+        format,
+        mipmap,
+        /* GXGetTexBufferSize counts levels, while TPL maxLOD is an
+         * inclusive level index. Nintendo's preload demo likewise passes
+         * maxLOD + 1 when sizing a complete mip pyramid. */
+        mipmap ? (u8)(maxLOD + 1) : 0);
+    if (size == 0) {
+        return FALSE;
+    }
+    *dataSize = size;
+    return TRUE;
 }
 
 static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
@@ -148,6 +203,7 @@ static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
         if (textureOffset != 0) {
             const u8* texture;
             u32 dataOffset;
+            size_t dataSize;
             TPLHeader* header;
             if (!tpl_range_valid(textureOffset, 36, rawSize)) {
                 tpl_free_aligned(loaded);
@@ -155,7 +211,15 @@ static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
             }
             texture = raw + textureOffset;
             dataOffset = OSReadBigEndian32(texture + 8);
-            if (dataOffset != 0 && !tpl_range_valid(dataOffset, 1, rawSize)) {
+            if (!tpl_texture_data_size(
+                    OSReadBigEndian16(texture + 2),
+                    OSReadBigEndian16(texture + 0),
+                    OSReadBigEndian32(texture + 4),
+                    texture[33],
+                    texture[34],
+                    &dataSize) ||
+                (dataOffset != 0 &&
+                 !tpl_range_valid(dataOffset, dataSize, rawSize))) {
                 tpl_free_aligned(loaded);
                 return NULL;
             }
@@ -180,6 +244,7 @@ static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
         if (clutOffset != 0) {
             const u8* clut;
             u32 dataOffset;
+            size_t dataSize;
             TPLClutHeader* header;
             if (!tpl_range_valid(clutOffset, 12, rawSize)) {
                 tpl_free_aligned(loaded);
@@ -187,7 +252,10 @@ static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
             }
             clut = raw + clutOffset;
             dataOffset = OSReadBigEndian32(clut + 8);
-            if (dataOffset != 0 && !tpl_range_valid(dataOffset, 1, rawSize)) {
+            dataSize = (size_t)OSReadBigEndian16(clut + 0) * 2u;
+            if (dataSize > 0x8000u ||
+                (dataOffset != 0 &&
+                 !tpl_range_valid(dataOffset, dataSize, rawSize))) {
                 tpl_free_aligned(loaded);
                 return NULL;
             }
@@ -208,6 +276,8 @@ static TPLPalettePtr tpl_parse_loaded_palette(void* rawData, size_t rawSize) {
 static void* tpl_alloc_aligned(size_t size) {
 #if defined(_MSC_VER) || defined(_WIN32)
     return _aligned_malloc(size, 32);
+#elif !defined(LIBPORPOISE_PORT)
+    return OSAlloc(OSRoundUp32B((u32)size));
 #else
     void* p = NULL;
     if (posix_memalign(&p, 32, size) != 0) return NULL;
@@ -219,6 +289,8 @@ static void tpl_free_aligned(void* p) {
     if (!p) return;
 #if defined(_MSC_VER) || defined(_WIN32)
     _aligned_free(p);
+#elif !defined(LIBPORPOISE_PORT)
+    OSFree(p);
 #else
     free(p);
 #endif
@@ -239,6 +311,12 @@ void TPLBind(TPLPalettePtr pal) {
     u32 i;
 
     if (!pal) return;
+
+    /* A raw TPL header is only 12 bytes. Do not probe for host-wrapper
+     * metadata beyond it on 64-bit builds, where in-place pointer rebinding
+     * is unsupported anyway. TPLGetPalette supplies a decoded native view. */
+    if (sizeof(void*) > sizeof(u32)) return;
+
     if (((TPLLoadedPalette*)pal)->allocationMagic == TPL_ALLOCATION_LOADED ||
         ((TPLFallbackPalette*)pal)->allocationMagic == TPL_ALLOCATION_FALLBACK) {
         return;
@@ -250,8 +328,6 @@ void TPLBind(TPLPalettePtr pal) {
      * TPLGetPalette uses a separate host-native metadata allocation on 64-bit
      * builds, so never overwrite the first on-disc descriptor with a pointer.
      */
-    if (sizeof(void*) > sizeof(u32)) return;
-
     base = (u8*)pal;
     pal->versionNumber = OSReadBigEndian32(base + 0);
     pal->numDescriptors = OSReadBigEndian32(base + 4);
@@ -333,7 +409,7 @@ void TPLGetGXTexObjFromPalette(TPLPalettePtr pal, GXTexObj* to, u32 id) {
     } else {
         GXInitTexObj(to, tex->data, tex->width, tex->height, tex->format, tex->wrapS, tex->wrapT, mipmap);
     }
-    GXInitTexObjLOD(to, tex->minFilter, tex->magFilter, tex->minLOD / 8.0f, tex->maxLOD / 8.0f, tex->LODBias, GX_FALSE,
+    GXInitTexObjLOD(to, tex->minFilter, tex->magFilter, tex->minLOD, tex->maxLOD, tex->LODBias, GX_FALSE,
                     (GXBool)(tex->edgeLODEnable ? GX_TRUE : GX_FALSE), GX_ANISO_1);
 }
 
@@ -355,7 +431,7 @@ void TPLGetGXTexObjFromPaletteCI(TPLPalettePtr pal, GXTexObj* to, GXTlutObj* tlo
     GXInitTlutObj(tlo, clut->data, clut->format, clut->numEntries);
     GXLoadTlut(tlo, tluts);
     GXInitTexObjCI(to, tex->data, tex->width, tex->height, (GXCITexFmt)tex->format, tex->wrapS, tex->wrapT, mipmap, tluts);
-    GXInitTexObjLOD(to, tex->minFilter, tex->magFilter, tex->minLOD / 8.0f, tex->maxLOD / 8.0f, tex->LODBias, GX_FALSE,
+    GXInitTexObjLOD(to, tex->minFilter, tex->magFilter, tex->minLOD, tex->maxLOD, tex->LODBias, GX_FALSE,
                     (GXBool)(tex->edgeLODEnable ? GX_TRUE : GX_FALSE), GX_ANISO_1);
 }
 

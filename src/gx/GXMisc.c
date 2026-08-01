@@ -11,6 +11,20 @@ static GXBool ResetWritePipe;
 #ifdef LIBPORPOISE_PORT
 static u16 HostDrawSyncToken;
 
+static u32 GXHostCountLeadingZeros(u32 value)
+{
+	u32 count = 0;
+
+	if (value == 0) {
+		return 32;
+	}
+	while ((value & 0x80000000u) == 0) {
+		value <<= 1;
+		++count;
+	}
+	return count;
+}
+
 void __GXHostCompleteDrawSync(u16 token, GXBool signalCallback)
 {
 	HostDrawSyncToken = token;
@@ -523,7 +537,9 @@ u32 GXCompressZ16(u32 z24, GXZFmt16 zfmt)
 #endif
 
 	z24n = ~(z24 << 8);
-	#ifndef LIBPORPOISE_PORT
+	#ifdef LIBPORPOISE_PORT
+	temp = GXHostCountLeadingZeros(z24n);
+	#else
 	temp = __mwerks_cntlzw(z24n);
 	#endif
 	switch (zfmt) {

@@ -43,6 +43,9 @@ extern vu16 __OSDeviceCode AT_ADDRESS(OS_BASE_CACHED | OS_DVD_DEVICECODE);
 
 // flags and system info
 static OSBootInfo* BootInfo;
+#ifdef LIBPORPOISE_PORT
+static OSBootInfo HostBootInfo;
+#endif
 static vu32* BI2DebugFlag;
 static u32* BI2DebugFlagHolder;
 static f64 ZeroF             = 0.0;
@@ -56,6 +59,59 @@ void* __OSSavedRegionEnd;
 // functions
 static void OSExceptionInit(void);
 static void OSDefaultExceptionHandler(__OSException exception, OSContext* context);
+
+#ifdef LIBPORPOISE_PORT
+
+enum {
+	HOST_BOOT_INFO_WIRE_SIZE = 0x40,
+	HOST_BOOT_INFO_MAGIC_OFFSET = 0x20,
+	HOST_BOOT_INFO_VERSION_OFFSET = 0x24,
+	HOST_BOOT_INFO_MEMORY_SIZE_OFFSET = 0x28,
+	HOST_BOOT_INFO_CONSOLE_TYPE_OFFSET = 0x2C,
+	HOST_BOOT_INFO_ARENA_LO_OFFSET = 0x30,
+	HOST_BOOT_INFO_ARENA_HI_OFFSET = 0x34,
+	HOST_BOOT_INFO_FST_LOCATION_OFFSET = 0x38,
+	HOST_BOOT_INFO_FST_MAX_LENGTH_OFFSET = 0x3C
+};
+
+typedef char HostBootInfoDiskIDSizeCheck[
+	(sizeof(DVDDiskID) == 0x20) ? 1 : -1];
+
+static void PublishHostBootInfoWire(
+	void* destination,
+	const OSBootInfo* bootInfo)
+{
+	u8* wire = (u8*)destination;
+
+	memset(wire, 0, HOST_BOOT_INFO_WIRE_SIZE);
+	memcpy(wire, &bootInfo->DVDDiskID, sizeof(bootInfo->DVDDiskID));
+	OSWriteBigEndian32(
+		wire + HOST_BOOT_INFO_MAGIC_OFFSET,
+		bootInfo->magic);
+	OSWriteBigEndian32(
+		wire + HOST_BOOT_INFO_VERSION_OFFSET,
+		bootInfo->version);
+	OSWriteBigEndian32(
+		wire + HOST_BOOT_INFO_MEMORY_SIZE_OFFSET,
+		bootInfo->memorySize);
+	OSWriteBigEndian32(
+		wire + HOST_BOOT_INFO_CONSOLE_TYPE_OFFSET,
+		bootInfo->consoleType);
+	OSWriteBigEndian32(
+		wire + HOST_BOOT_INFO_ARENA_LO_OFFSET,
+		__OSHostEncodePointerWord(bootInfo->arenaLo));
+	OSWriteBigEndian32(
+		wire + HOST_BOOT_INFO_ARENA_HI_OFFSET,
+		__OSHostEncodePointerWord(bootInfo->arenaHi));
+	OSWriteBigEndian32(
+		wire + HOST_BOOT_INFO_FST_LOCATION_OFFSET,
+		__OSHostEncodePointerWord(bootInfo->FSTLocation));
+	OSWriteBigEndian32(
+		wire + HOST_BOOT_INFO_FST_MAX_LENGTH_OFFSET,
+		bootInfo->FSTMaxLength);
+}
+
+#endif
 
 /**
  * @TODO: Documentation
@@ -188,16 +244,17 @@ void OSInit(void)
 
 		// DEBUG //
 		// load some DVD stuff
-		BI2DebugFlag = 0;                           // debug flag from the DVD BI2 header
-		BootInfo     = (OSBootInfo*)OS_BASE_CACHED; // set pointer to BootInfo
-
-		#ifdef LIBPORPOISE_PORT
-		BootInfo = (OSBootInfo*)hostMemory->cachedBase;
-		memset(BootInfo, 0, sizeof(OSBootInfo));
+		BI2DebugFlag = 0; // debug flag from the DVD BI2 header
+#ifdef LIBPORPOISE_PORT
+		memset(&HostBootInfo, 0, sizeof(HostBootInfo));
+		BootInfo = &HostBootInfo;
 		BootInfo->memorySize = hostMemory->consoleSize;
 		BootInfo->arenaLo = hostMemory->arenaLo;
 		BootInfo->arenaHi = hostMemory->arenaHi;
-		#endif
+		PublishHostBootInfoWire(hostMemory->cachedBase, BootInfo);
+#else
+		BootInfo = (OSBootInfo*)OS_BASE_CACHED;
+#endif
 
 		__DVDLongFileNameFlag = FALSE;
 
@@ -277,6 +334,9 @@ void OSInit(void)
 			BootInfo->consoleType = OS_CONSOLE_RETAIL1;
 		}
 		BootInfo->consoleType += (__PIRegs[11] & 0xF0000000) >> 28;
+#ifdef LIBPORPOISE_PORT
+		PublishHostBootInfoWire(hostMemory->cachedBase, BootInfo);
+#endif
 #if OS_BUILD_VERSION >= 20011002L
 #if OS_BUILD_VERSION >= 20011217L
 		if (__OSInIPL == FALSE)

@@ -2,26 +2,14 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "CARDWire.h"
+
 /**
  * @TODO: Documentation
  */
 void __CARDCheckSum(void* data, int length, u16* checksum, u16* checksumInv)
 {
-	u16* p;
-	int i;
-
-	length /= sizeof(u16);
-	*checksum = *checksumInv = 0;
-	for (i = 0, p = data; i < length; i++, p++) {
-		*checksum += *p;
-		*checksumInv += ~*p;
-	}
-	if (*checksum == 0xffff) {
-		*checksum = 0;
-	}
-	if (*checksumInv == 0xffff) {
-		*checksumInv = 0;
-	}
+	CARDWireCalculateChecksum(data, length, checksum, checksumInv);
 }
 
 /**
@@ -38,20 +26,20 @@ static s32 VerifyID(CARDControl* card)
 
 	id = &card->workArea->header.id;
 
-	if (id->deviceID != 0 || id->size != card->size) {
+	if (CARDWireRead16(&id->deviceID) != 0 || CARDWireRead16(&id->size) != card->size) {
 		return CARD_RESULT_BROKEN;
 	}
 
 	__CARDCheckSum(id, sizeof(CARDID) - sizeof(u32), &checksum, &checksumInv);
-	if (id->checkSum != checksum || id->checkSumInv != checksumInv) {
+	if (CARDWireRead16(&id->checkSum) != checksum || CARDWireRead16(&id->checkSumInv) != checksumInv) {
 		return CARD_RESULT_BROKEN;
 	}
 
-	if (id->encode != OSGetFontEncode()) {
+	if (CARDWireRead16(&id->encode) != OSGetFontEncode()) {
 		return CARD_RESULT_ENCODING;
 	}
 
-	rand   = *(OSTime*)&id->serial[12];
+	rand   = (OSTime)CARDWireRead64(&id->serial[12]);
 	sramEx = __OSLockSramEx();
 
 	for (i = 0; i < 12; i++) {
@@ -86,7 +74,7 @@ static s32 VerifyDir(CARDControl* card, int* outCurrent)
 		dir[i]   = CARDGetDirectoryBlock(card, i);
 		check[i] = &dir[i]->check;
 		__CARDCheckSum(dir[i], CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &checkSum, &checkSumInv);
-		if (check[i]->checkSum != checkSum || check[i]->checkSumInv != checkSumInv) {
+		if (CARDWireRead16(&check[i]->checkSum) != checkSum || CARDWireRead16(&check[i]->checkSumInv) != checkSumInv) {
 			++errors;
 			current          = i;
 			card->currentDir = NULL;
@@ -95,7 +83,7 @@ static s32 VerifyDir(CARDControl* card, int* outCurrent)
 
 	if (errors == 0) {
 		if (card->currentDir == 0) {
-			if ((check[0]->checkCode - check[1]->checkCode) < 0) {
+			if ((CARDWireReadS16(&check[0]->checkCode) - CARDWireReadS16(&check[1]->checkCode)) < 0) {
 				current = 0;
 			} else {
 				current = 1;
@@ -133,7 +121,7 @@ static s32 VerifyFAT(CARDControl* card, int* outCurrent)
 		fatp = fat[i] = CARDGetFatBlock(card, i);
 
 		__CARDCheckSum(&fatp->checkCode, CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &checkSum, &checkSumInv);
-		if (fatp->checkSum != checkSum || fatp->checkSumInv != checkSumInv) {
+		if (CARDWireRead16(&fatp->checkSum) != checkSum || CARDWireRead16(&fatp->checkSumInv) != checkSumInv) {
 			++errors;
 			current          = i;
 			card->currentFat = NULL;
@@ -142,11 +130,11 @@ static s32 VerifyFAT(CARDControl* card, int* outCurrent)
 
 		cFree = 0;
 		for (nBlock = CARD_NUM_SYSTEM_BLOCK; nBlock < card->cBlock; nBlock++) {
-			if (((u16*)fatp)[nBlock] == CARD_FAT_AVAIL) {
+			if (CARDWireRead16((u8*)fatp + nBlock * sizeof(u16)) == CARD_FAT_AVAIL) {
 				cFree++;
 			}
 		}
-		if (cFree != fatp->freeBlocks) {
+		if (cFree != CARDWireRead16(&fatp->freeBlocks)) {
 			++errors;
 			current          = i;
 			card->currentFat = NULL;
@@ -156,7 +144,7 @@ static s32 VerifyFAT(CARDControl* card, int* outCurrent)
 
 	if (0 == errors) {
 		if (card->currentFat == 0) {
-			if (((s16)fat[0]->checkCode - (s16)fat[1]->checkCode) < 0) {
+			if ((CARDWireReadS16(&fat[0]->checkCode) - CARDWireReadS16(&fat[1]->checkCode)) < 0) {
 				current = 0;
 			} else {
 				current = 1;
@@ -275,19 +263,21 @@ s32 CARDCheckExAsync(s32 channel, s32* xferBytes, CARDCallback callback)
 
 	for (fileNo = 0; fileNo < CARD_MAX_FILE; fileNo++) {
 		CARDDir* ent;
+		u16 length;
 
 		ent = &card->currentDir->entries[fileNo];
 		if (ent->gameName[0] == 0xff) {
 			continue;
 		}
+		length = CARDWireRead16(&ent->length);
 
-		for (iBlock = ent->startBlock, cBlock = 0; iBlock != 0xFFFF && cBlock < ent->length;
-		     iBlock = ((u16*)card->currentFat)[iBlock], ++cBlock) {
+		for (iBlock = CARDWireRead16(&ent->startBlock), cBlock = 0; iBlock != 0xFFFF && cBlock < length;
+		     iBlock = CARDWireRead16((u8*)card->currentFat + iBlock * sizeof(u16)), ++cBlock) {
 			if (!CARDIsValidBlockNo(card, iBlock) || 1 < ++map[iBlock]) {
 				return __CARDPutControlBlock(card, CARD_RESULT_BROKEN);
 			}
 		}
-		if (cBlock != ent->length || iBlock != 0xFFFF) {
+		if (cBlock != length || iBlock != 0xFFFF) {
 			return __CARDPutControlBlock(card, CARD_RESULT_BROKEN);
 		}
 	}
@@ -296,10 +286,10 @@ s32 CARDCheckExAsync(s32 channel, s32* xferBytes, CARDCallback callback)
 	for (iBlock = CARD_NUM_SYSTEM_BLOCK; iBlock < card->cBlock; iBlock++) {
 		u16 nextBlock;
 
-		nextBlock = ((u16*)card->currentFat)[iBlock];
+		nextBlock = CARDWireRead16((u8*)card->currentFat + iBlock * sizeof(u16));
 		if (map[iBlock] == 0) {
 			if (nextBlock != CARD_FAT_AVAIL) {
-				((u16*)card->currentFat)[iBlock] = CARD_FAT_AVAIL;
+				CARDWireWrite16((u8*)card->currentFat + iBlock * sizeof(u16), CARD_FAT_AVAIL);
 				updateOrphan                     = TRUE;
 			}
 			cFree++;
@@ -307,13 +297,17 @@ s32 CARDCheckExAsync(s32 channel, s32* xferBytes, CARDCallback callback)
 			return __CARDPutControlBlock(card, CARD_RESULT_BROKEN);
 		}
 	}
-	if (cFree != card->currentFat->freeBlocks) {
-		card->currentFat->freeBlocks = cFree;
+	if (cFree != CARDWireRead16(&card->currentFat->freeBlocks)) {
+		CARDWireWrite16(&card->currentFat->freeBlocks, cFree);
 		updateOrphan                 = TRUE;
 	}
 	if (updateOrphan) {
-		__CARDCheckSum(&card->currentFat->checkCode, CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &card->currentFat->checkSum,
-		               &card->currentFat->checkSumInv);
+		u16 checkSum;
+		u16 checkSumInv;
+
+		__CARDCheckSum(&card->currentFat->checkCode, CARD_SYSTEM_BLOCK_SIZE - sizeof(u32), &checkSum, &checkSumInv);
+		CARDWireWrite16(&card->currentFat->checkSum, checkSum);
+		CARDWireWrite16(&card->currentFat->checkSumInv, checkSumInv);
 	}
 
 	memcpy(fat[currentFat ^ 1], fat[currentFat], CARD_SYSTEM_BLOCK_SIZE);

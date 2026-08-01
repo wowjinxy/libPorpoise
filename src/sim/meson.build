@@ -10,7 +10,8 @@ libsim_srcs = files(
     'sim_gx_State.cpp',
     'sim_gx_TexGen.cpp',
     'sim_gx_TextureCache.cpp',
-    'sim_gx_VertexDecoder.cpp'
+    'sim_gx_VertexDecoder.cpp',
+    'sim_host_Allocator.cpp'
 )
 
 libsim = library('sim',

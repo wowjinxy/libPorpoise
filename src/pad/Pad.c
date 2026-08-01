@@ -6,6 +6,10 @@
 #include <stddef.h>
 #include <string.h>
 
+#ifdef LIBPORPOISE_PORT
+#include "PADWire.h"
+#endif
+
 // For ease of implementing multiple revisions, static variables that were renamed go by their final
 // names everywhere in this file and are silently renamed for older revisions via the below macros.
 #if OS_BUILD_VERSION >= 20011002L
@@ -77,6 +81,50 @@ static u32 CmdProbeDevice[PAD_MAX_CONTROLLERS];
 #if OS_BUILD_VERSION >= 20011002L
 #else
 static u32 CmdFixDevice[PAD_MAX_CONTROLLERS];
+#endif
+
+#ifdef LIBPORPOISE_PORT
+/* SITransfer retains its buffer pointers when a transfer is delayed.  Keep
+ * command and response staging per channel so queued PAD traffic never points
+ * at a temporary or at storage reused by another channel. */
+static PADHostTransferStaging HostTransfer[PAD_MAX_CONTROLLERS];
+
+static void* PADCommandPointer(s32 chan, u32 command, u32 byteCount)
+{
+	return __PADStageScalarCommand(
+	    &HostTransfer[chan], command, byteCount);
+}
+
+static void* PADOriginResponsePointer(s32 chan)
+{
+	return __PADStageResponse(&HostTransfer[chan]);
+}
+
+static void PADCommitOriginResponse(s32 chan, u32 byteCount)
+{
+	__PADCommitOriginResponse(
+	    &Origin[chan], &HostTransfer[chan], byteCount);
+}
+
+#if OS_BUILD_VERSION < 20011002L
+static void* PADTypeResponsePointer(s32 chan)
+{
+	return __PADStageResponse(&HostTransfer[chan]);
+}
+
+static void PADCommitTypeResponse(s32 chan)
+{
+	Type[chan] = __PADCommitScalarResponse(&HostTransfer[chan], 3);
+}
+#endif
+#else
+#define PADCommandPointer(chan, command, byteCount) (&(command))
+#define PADOriginResponsePointer(chan) ((void*)&Origin[(chan)])
+#define PADCommitOriginResponse(chan, byteCount) ((void)0)
+#if OS_BUILD_VERSION < 20011002L
+#define PADTypeResponsePointer(chan) ((void*)&Type[(chan)])
+#define PADCommitTypeResponse(chan) ((void)0)
+#endif
 #endif
 
 static OSResetFunctionInfo ResetFunctionInfo = {
@@ -196,7 +244,14 @@ static BOOL DoReset(void)
 		memset(&Origin[ResettingChan], 0, sizeof(PADStatus));
 		Type[ResettingChan]    = 0;
 		PADType[ResettingChan] = 0;
-		rc                     = SITransfer(ResettingChan, &CmdTypeAndStatus, 1, &Type[ResettingChan], 3, PADResetCallback, 0);
+		rc = SITransfer(
+		    ResettingChan,
+		    PADCommandPointer(ResettingChan, CmdTypeAndStatus, 1),
+		    1,
+		    PADTypeResponsePointer(ResettingChan),
+		    3,
+		    PADResetCallback,
+		    0);
 		chanBit                = PAD_CHAN0_BIT >> ResettingChan;
 		ResettingBits &= ~chanBit;
 		if (!rc) {
@@ -267,6 +322,7 @@ static void PADProbeCallback(s32 chan, u32 error, OSContext* context)
 
 	if (!(error & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_NO_RESPONSE | SI_ERROR_COLLISION))) {
 		u32 type = Type[chan];
+		PADCommitOriginResponse(chan, 8);
 		if (!(type & 0x80000) && !(type & 0x40000)) {
 			PADEnable(ResettingChan);
 			WaitingBits |= PAD_CHAN0_BIT >> ResettingChan;
@@ -376,6 +432,7 @@ static void PADOriginCallback(s32 chan, u32 error, OSContext* context)
 	OSAssertLine(0x267, 0 <= ResettingChan && ResettingChan < SI_MAX_CHAN);
 	OSAssertLine(0x268, chan == ResettingChan);
 	if (!(error & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_NO_RESPONSE | SI_ERROR_COLLISION))) {
+		PADCommitOriginResponse(ResettingChan, 10);
 		UpdateOrigin(ResettingChan);
 		PADEnable(ResettingChan);
 	}
@@ -390,8 +447,10 @@ static void PADOriginUpdateCallback(s32 chan, u32 error, OSContext* context)
 	OSAssertLine(0x285, 0 <= chan && chan < SI_MAX_CHAN);
 	if (!(EnabledBits & (PAD_CHAN0_BIT >> chan)))
 		return;
-	if (!(error & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_NO_RESPONSE | SI_ERROR_COLLISION)))
+	if (!(error & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_NO_RESPONSE | SI_ERROR_COLLISION))) {
+		PADCommitOriginResponse(chan, 10);
 		UpdateOrigin(chan);
+	}
 #if OS_BUILD_VERSION >= 20011002L
 	if ((error & SI_ERROR_NO_RESPONSE))
 		PADDisable(chan);
@@ -409,6 +468,7 @@ static void PADProbeCallback(s32 chan, u32 error, OSContext* context)
 	OSAssertLine(0x1F6, chan == ResettingChan);
 
 	if (!(error & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_NO_RESPONSE | SI_ERROR_COLLISION))) {
+		PADCommitOriginResponse(ResettingChan, 8);
 		PADEnable(ResettingChan);
 		WaitingBits |= PAD_CHAN0_BIT >> ResettingChan;
 	}
@@ -451,15 +511,44 @@ static void PADTypeAndStatusCallback(s32 chan, u32 type)
 
 	if (!(type & SI_GC_WIRELESS) || (type & SI_WIRELESS_IR)) {
 		if (recalibrate) {
-			rc = SITransfer(ResettingChan, &CmdCalibrate, 3, &Origin[ResettingChan], 10, PADOriginCallback, 0);
+			rc = SITransfer(
+			    ResettingChan,
+			    PADCommandPointer(ResettingChan, CmdCalibrate, 3),
+			    3,
+			    PADOriginResponsePointer(ResettingChan),
+			    10,
+			    PADOriginCallback,
+			    0);
 		} else {
-			rc = SITransfer(ResettingChan, &CmdReadOrigin, 1, &Origin[ResettingChan], 10, PADOriginCallback, 0);
+			rc = SITransfer(
+			    ResettingChan,
+			    PADCommandPointer(ResettingChan, CmdReadOrigin, 1),
+			    1,
+			    PADOriginResponsePointer(ResettingChan),
+			    10,
+			    PADOriginCallback,
+			    0);
 		}
 	} else if ((((type & SI_WIRELESS_FIX_ID) != 0) && ((type & SI_WIRELESS_CONT_MASK) == 0)) && ((type & SI_WIRELESS_LITE) == 0)) {
 		if (type & SI_WIRELESS_RECEIVED) {
-			rc = SITransfer(ResettingChan, &CmdReadOrigin, 1, &Origin[ResettingChan], 10, PADOriginCallback, 0);
+			rc = SITransfer(
+			    ResettingChan,
+			    PADCommandPointer(ResettingChan, CmdReadOrigin, 1),
+			    1,
+			    PADOriginResponsePointer(ResettingChan),
+			    10,
+			    PADOriginCallback,
+			    0);
 		} else {
-			rc = SITransfer(ResettingChan, &CmdProbeDevice[ResettingChan], 3, &Origin[ResettingChan], 8, PADProbeCallback, 0);
+			rc = SITransfer(
+			    ResettingChan,
+			    PADCommandPointer(
+			        ResettingChan, CmdProbeDevice[ResettingChan], 3),
+			    3,
+			    PADOriginResponsePointer(ResettingChan),
+			    8,
+			    PADProbeCallback,
+			    0);
 		}
 	}
 
@@ -491,7 +580,14 @@ static void PADReceiveCheckCallback(s32 chan, u32 type)
 	if (!(error & (SI_ERROR_UNDER_RUN | SI_ERROR_OVER_RUN | SI_ERROR_NO_RESPONSE | SI_ERROR_COLLISION)) && (type & SI_GC_WIRELESS)
 	    && (type & SI_WIRELESS_FIX_ID) && (type & SI_WIRELESS_RECEIVED) && !(type & SI_WIRELESS_IR)
 	    && (type & SI_WIRELESS_CONT_MASK) == SI_WIRELESS_CONT && !(type & SI_WIRELESS_LITE)) {
-		SITransfer(chan, &CmdReadOrigin, 1, &Origin[chan], 10, PADOriginUpdateCallback, 0);
+		SITransfer(
+		    chan,
+		    PADCommandPointer(chan, CmdReadOrigin, 1),
+		    1,
+		    PADOriginResponsePointer(chan),
+		    10,
+		    PADOriginUpdateCallback,
+		    0);
 	} else {
 		PADDisable(chan);
 	}
@@ -511,6 +607,7 @@ static void PADFixCallback(s32 unused, u32 error, OSContext* context)
 	OSAssertLine(0x2A9, 0 <= ResettingChan && ResettingChan < SI_MAX_CHAN);
 
 	if (!(error & 0xF)) {
+		PADCommitTypeResponse(ResettingChan);
 		type = Type[ResettingChan];
 		id   = (GetWirelessID(ResettingChan) << 8);
 		if (!(type & 0x100000) || ((id & 0xCFFF00u) != (type & 0xCFFF00))) {
@@ -518,11 +615,26 @@ static void PADFixCallback(s32 unused, u32 error, OSContext* context)
 			return;
 		}
 		if ((type & 0x40000000) && !(type & 0x80000) && !(type & 0x40000)) {
-			SITransfer(ResettingChan, &CmdReadOrigin, 1, &Origin[ResettingChan], 0xA, PADOriginCallback, 0);
+			SITransfer(
+			    ResettingChan,
+			    PADCommandPointer(ResettingChan, CmdReadOrigin, 1),
+			    1,
+			    PADOriginResponsePointer(ResettingChan),
+			    0xA,
+			    PADOriginCallback,
+			    0);
 			return;
 		}
 		frame = (ResettingChan << 0x16) | 0x4D000000 | (__OSWirelessPadFixMode << 8) & 0x3FFF00u;
-		SITransfer(ResettingChan, &CmdProbeDevice[ResettingChan], 3, &Origin[ResettingChan], 8, PADProbeCallback, 0);
+		SITransfer(
+		    ResettingChan,
+		    PADCommandPointer(
+		        ResettingChan, CmdProbeDevice[ResettingChan], 3),
+		    3,
+		    PADOriginResponsePointer(ResettingChan),
+		    8,
+		    PADProbeCallback,
+		    0);
 		return;
 	}
 	DoReset();
@@ -543,6 +655,8 @@ static void PADResetCallback(s32 unused, u32 error, OSContext* context)
 
 	if (error & 0xF) {
 		Type[ResettingChan] = 0;
+	} else {
+		PADCommitTypeResponse(ResettingChan);
 	}
 
 	PADType[ResettingChan] = type = Type[ResettingChan];
@@ -568,16 +682,38 @@ static void PADResetCallback(s32 unused, u32 error, OSContext* context)
 			return;
 		}
 		if (recalibrate != 0) {
-			SITransfer(ResettingChan, &CmdCalibrate, 3, &Origin[ResettingChan], 0xA, PADOriginCallback, 0);
+			SITransfer(
+			    ResettingChan,
+			    PADCommandPointer(ResettingChan, CmdCalibrate, 3),
+			    3,
+			    PADOriginResponsePointer(ResettingChan),
+			    0xA,
+			    PADOriginCallback,
+			    0);
 			return;
 		}
-		SITransfer(ResettingChan, &CmdReadOrigin, 1, &Origin[ResettingChan], 0xA, PADOriginCallback, 0);
+		SITransfer(
+		    ResettingChan,
+		    PADCommandPointer(ResettingChan, CmdReadOrigin, 1),
+		    1,
+		    PADOriginResponsePointer(ResettingChan),
+		    0xA,
+		    PADOriginCallback,
+		    0);
 		return;
 	}
 	id = (GetWirelessID(ResettingChan) << 8);
 	if ((fix != 0) && (id & 0x100000)) {
 		CmdFixDevice[ResettingChan] = (id & 0xCFFF00) | 0x4E000000 | 0x100000;
-		SITransfer(ResettingChan, &CmdFixDevice[ResettingChan], 3, &Type[ResettingChan], 3, PADFixCallback, 0);
+		SITransfer(
+		    ResettingChan,
+		    PADCommandPointer(
+		        ResettingChan, CmdFixDevice[ResettingChan], 3),
+		    3,
+		    PADTypeResponsePointer(ResettingChan),
+		    3,
+		    PADFixCallback,
+		    0);
 		return;
 	}
 	if (type & 0x100000) {
@@ -588,14 +724,37 @@ static void PADResetCallback(s32 unused, u32 error, OSContext* context)
 				SetWirelessID(ResettingChan, (u16)(id >> 8) & 0xFFFFFF);
 			}
 			CmdFixDevice[ResettingChan] = id | 0x4E000000;
-			SITransfer(ResettingChan, &CmdFixDevice[ResettingChan], 3, &Type[ResettingChan], 3, PADFixCallback, 0);
+			SITransfer(
+			    ResettingChan,
+			    PADCommandPointer(
+			        ResettingChan, CmdFixDevice[ResettingChan], 3),
+			    3,
+			    PADTypeResponsePointer(ResettingChan),
+			    3,
+			    PADFixCallback,
+			    0);
 			return;
 		}
 		if ((type & 0x40000000) && !(type & 0x80000) && !(type & 0x40000)) {
-			SITransfer(ResettingChan, &CmdReadOrigin, 1, &Origin[ResettingChan], 0xA, PADOriginCallback, 0);
+			SITransfer(
+			    ResettingChan,
+			    PADCommandPointer(ResettingChan, CmdReadOrigin, 1),
+			    1,
+			    PADOriginResponsePointer(ResettingChan),
+			    0xA,
+			    PADOriginCallback,
+			    0);
 			return;
 		}
-		SITransfer(ResettingChan, &CmdProbeDevice[ResettingChan], 3, &Origin[ResettingChan], 8, PADProbeCallback, 0);
+		SITransfer(
+		    ResettingChan,
+		    PADCommandPointer(
+		        ResettingChan, CmdProbeDevice[ResettingChan], 3),
+		    3,
+		    PADOriginResponsePointer(ResettingChan),
+		    8,
+		    PADProbeCallback,
+		    0);
 		return;
 	}
 	if (type & 0x40000000) {
@@ -603,7 +762,15 @@ static void PADResetCallback(s32 unused, u32 error, OSContext* context)
 		id |= 0x100000;
 		SetWirelessID(ResettingChan, (u16)(id >> 8) & 0xFFFFFF);
 		CmdFixDevice[ResettingChan] = id | 0x4E000000;
-		SITransfer(ResettingChan, &CmdFixDevice[ResettingChan], 3, &Type[ResettingChan], 3, PADFixCallback, 0);
+		SITransfer(
+		    ResettingChan,
+		    PADCommandPointer(
+		        ResettingChan, CmdFixDevice[ResettingChan], 3),
+		    3,
+		    PADTypeResponsePointer(ResettingChan),
+		    3,
+		    PADFixCallback,
+		    0);
 		return;
 	}
 	SetWirelessID(ResettingChan, 0);
@@ -801,6 +968,9 @@ static void PADReceiveCheckCallback(s32 chan, u32 error, OSContext*)
 	u32 type;
 	u32 chanBit;
 
+	if (!(error & 0xF)) {
+		PADCommitTypeResponse(chan);
+	}
 	type    = Type[chan];
 	chanBit = PAD_CHAN0_BIT >> chan;
 
@@ -809,7 +979,14 @@ static void PADReceiveCheckCallback(s32 chan, u32 error, OSContext*)
 
 	if (EnabledBits & chanBit) {
 		if (!(error & 0xF) && (type & 0x80000000) && (type & 0x02000000) && (type & 0x40000000) && !(type & 0x04000000)) {
-			SITransfer(chan, &CmdReadOrigin, 1, &Origin[chan], 0xA, PADOriginUpdateCallback, 0);
+			SITransfer(
+			    chan,
+			    PADCommandPointer(chan, CmdReadOrigin, 1),
+			    1,
+			    PADOriginResponsePointer(chan),
+			    0xA,
+			    PADOriginUpdateCallback,
+			    0);
 			return;
 		}
 		PADDisable(chan);
@@ -895,7 +1072,14 @@ u32 PADRead(PADStatus* status)
 					SIGetTypeAsync(chan, PADReceiveCheckCallback);
 #else
 					enabled = OSDisableInterrupts();
-					if (SITransfer(chan, &CmdTypeAndStatus, 1, &Type[chan], 3, PADReceiveCheckCallback, 0) != 0) {
+					if (SITransfer(
+					        chan,
+					        PADCommandPointer(chan, CmdTypeAndStatus, 1),
+					        1,
+					        PADTypeResponsePointer(chan),
+					        3,
+					        PADReceiveCheckCallback,
+					        0) != 0) {
 						CheckingBits |= chanBit;
 					}
 					OSRestoreInterrupts(enabled);
@@ -958,7 +1142,14 @@ u32 PADRead(PADStatus* status)
 			// Get origin. It is okay if the following transfer fails
 			// since the PAD_ORIGIN bit remains until the read origin
 			// command complete.
-			SITransfer(chan, &CmdReadOrigin, 1, &Origin[chan], 10, PADOriginUpdateCallback, 0);
+			SITransfer(
+			    chan,
+			    PADCommandPointer(chan, CmdReadOrigin, 1),
+			    1,
+			    PADOriginResponsePointer(chan),
+			    10,
+			    PADOriginUpdateCallback,
+			    0);
 			continue;
 		}
 

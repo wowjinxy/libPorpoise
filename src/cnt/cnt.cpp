@@ -315,16 +315,43 @@ s32 CNTReadWithOffset(
     void* destination,
     u32 length,
     s32 offset) {
-    const s32 original = CNTTell(file);
-    s32 result;
+    FileState* state = GetFile(file);
+    s64 readPosition;
+    std::size_t read;
+    bool readFailed;
 
-    if (original < 0 ||
-        CNTSeek(file, offset, CNT_SEEK_SET) != CNT_RESULT_OK) {
+    if (state == nullptr ||
+        state->stream == nullptr ||
+        destination == nullptr) {
         return CNT_RESULT_BAD_STATUS;
     }
-    result = CNTRead(file, destination, length);
-    CNTSeek(file, original, CNT_SEEK_SET);
-    return result;
+
+    /*
+     * The SDK defines this offset relative to the file's current logical
+     * read position, but unlike CNTRead it must not advance that position.
+     * Keep the stdio cursor synchronized with the unchanged logical value
+     * after both successful and failed reads.
+     */
+    readPosition = static_cast<s64>(file->position) + offset;
+    if (readPosition < 0 || readPosition > file->length) {
+        return CNT_RESULT_INVALID;
+    }
+    if (std::fseek(
+            state->stream,
+            static_cast<long>(readPosition),
+            SEEK_SET) != 0) {
+        return CNT_RESULT_IO_ERROR;
+    }
+
+    read = std::fread(destination, 1, length, state->stream);
+    readFailed = read < length && std::ferror(state->stream) != 0;
+    if (readFailed) {
+        std::clearerr(state->stream);
+    }
+    if (std::fseek(state->stream, file->position, SEEK_SET) != 0) {
+        return CNT_RESULT_IO_ERROR;
+    }
+    return readFailed ? CNT_RESULT_IO_ERROR : static_cast<s32>(read);
 }
 
 s32 CNTSeek(CNTFileInfo* file, s32 offset, u32 origin) {

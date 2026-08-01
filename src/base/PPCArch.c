@@ -26,27 +26,33 @@ void PPCMtmsr(register u32 value)
  * @TODO: Documentation
  * @note UNUSED Size: 00000C (Nonmatching)
  */
-void PPCOrMsr(void)
+u32 PPCOrMsr(register u32 value)
 {
-	TRAP_UNIMPLEMENTED;
+	register u32 msr;
+	PPC_MOVE_FROM_MSR(msr);
+	return msr | value;
 }
 
 /**
  * @TODO: Documentation
  * @note UNUSED Size: 00000C (Nonmatching)
  */
-void PPCAndMsr(void)
+u32 PPCAndMsr(register u32 value)
 {
-	TRAP_UNIMPLEMENTED;
+	register u32 msr;
+	PPC_MOVE_FROM_MSR(msr);
+	return msr & value;
 }
 
 /**
  * @TODO: Documentation
  * @note UNUSED Size: 00000C (Nonmatching)
  */
-void PPCAndCMsr(void)
+u32 PPCAndCMsr(register u32 value)
 {
-	TRAP_UNIMPLEMENTED;
+	register u32 msr;
+	PPC_MOVE_FROM_MSR(msr);
+	return msr & ~value;
 }
 
 /**

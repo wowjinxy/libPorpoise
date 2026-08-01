@@ -22,9 +22,15 @@ typedef struct MEMiExpHeapMBlockHead {
     union {
         u16 val;
         struct {
+#ifdef LIBPORPOISE_PORT
+            u16 groupID : 8;
+            u16 alignment : 7;
+            u16 allocDir : 1;
+#else
             u16 allocDir : 1;
             u16 alignment : 7;
             u16 groupID : 8;
+#endif
         } fields;
     } attribute;
     u32 blockSize;
@@ -44,9 +50,15 @@ typedef struct MEMiExpHeapHead {
     union {
         u16 val;
         struct {
+#ifdef LIBPORPOISE_PORT
+            u16 allocMode : 1;
+            u16 useMarginOfAlign : 1;
+            u16 reserved : 14;
+#else
             u16 reserved : 14;
             u16 useMarginOfAlign : 1;
             u16 allocMode : 1;
+#endif
         } fields;
     } feature;
 } MEMiExpHeapHead;

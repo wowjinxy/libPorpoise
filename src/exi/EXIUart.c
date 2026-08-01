@@ -3,6 +3,8 @@
 #include <dolphin/exi.h>
 #include <dolphin/os.h>
 
+#include "EXIWire.h"
+
 // For ease of implementing multiple revisions, these magic numbers and variables that were turned
 // into variables and renamed (respectively) go by their final name everywhere in this file and are
 // silently replaced for older revisions via the below macros.
@@ -56,20 +58,21 @@ u32 ReadUARTN(void* bytes, u32 length)
  */
 static int QueueLength(void)
 {
-	u32 cmd;
+	u8 command[4];
+	u8 response = 0;
 
 	if (!EXISelect(Chan, Dev, EXI_FREQ_8M))
 		return -1;
 
-	cmd = EXI_TX << 6;
-	EXIImm(Chan, &cmd, 4, EXI_WRITE, NULL);
+	EXIWireWrite32(command, EXI_TX << 6);
+	EXIImm(Chan, command, sizeof(command), EXI_WRITE, NULL);
 	EXISync(Chan);
 
-	EXIImm(Chan, &cmd, 1, EXI_READ, NULL);
+	EXIImm(Chan, &response, sizeof(response), EXI_READ, NULL);
 	EXISync(Chan);
 	EXIDeselect(Chan);
 
-	return 16 - (int)((cmd >> 24) & 0xff);
+	return 16 - response;
 }
 
 /**
@@ -77,7 +80,7 @@ static int QueueLength(void)
  */
 u32 WriteUARTN(void* buf, u32 len)
 {
-	u32 cmd;
+	u8 command[4];
 	int qLen;
 	s32 xLen;
 	char* ptr;
@@ -98,7 +101,7 @@ u32 WriteUARTN(void* buf, u32 len)
 	}
 
 	error = 0;
-	cmd   = (EXI_TX | 0x2000000) << 6;
+	EXIWireWrite32(command, (EXI_TX | 0x2000000) << 6);
 	while (len) {
 		qLen = QueueLength();
 		if (qLen < 0) {
@@ -122,7 +125,7 @@ u32 WriteUARTN(void* buf, u32 len)
 			break;
 		}
 
-		EXIImm(Chan, &cmd, 4, EXI_WRITE, NULL);
+		EXIImm(Chan, command, sizeof(command), EXI_WRITE, NULL);
 		EXISync(Chan);
 
 		while (qLen && len) {

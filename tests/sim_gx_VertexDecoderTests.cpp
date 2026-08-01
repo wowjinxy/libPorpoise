@@ -597,6 +597,17 @@ bool TestCanonicalBigEndianTlutDecode() {
         return false;
     }
 
+    // IA8 entries are alpha/intensity on the GameCube bus. Keep this as a
+    // byte-level check so a little-endian host cannot silently reinterpret
+    // the entry as a native u16 and exchange the two components.
+    const std::array<u8, 2> ia8 = {0x20u, 0xe0u};
+    const SIM::GX::DecodedTlutColor decodedIa8 =
+        SIM::GX::DecodeTlutEntry(GX_TL_IA8, ia8.data());
+    if (decodedIa8.red != 0xe0u || decodedIa8.green != 0xe0u ||
+        decodedIa8.blue != 0xe0u || decodedIa8.alpha != 0x20u) {
+        return false;
+    }
+
     // Preserve a discriminator for the exact double-swap failure mode.
     const std::array<u8, 2> swapped = {0x00u, 0xfcu};
     const SIM::GX::DecodedTlutColor swappedDecoded =

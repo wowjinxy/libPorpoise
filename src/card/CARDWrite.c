@@ -1,6 +1,8 @@
 #include <dolphin/card.h>
 #include <stddef.h>
 
+#include "CARDWire.h"
+
 static void EraseCallback(s32 chan, s32 result);
 
 /**
@@ -30,7 +32,7 @@ static void WriteCallback(s32 channel, s32 result)
 	if (fileInfo->length <= 0) {
 		dir               = __CARDGetDirBlock(card);
 		ent               = &dir->entries[fileInfo->fileNo];
-		ent->time         = (u32)OSTicksToSeconds(OSGetTime());
+		CARDWireWrite32(&ent->time, (u32)OSTicksToSeconds(OSGetTime()));
 		callback          = card->apiCallback;
 		card->apiCallback = NULL;
 		result            = __CARDUpdateDir(channel, callback);
@@ -38,7 +40,7 @@ static void WriteCallback(s32 channel, s32 result)
 	} else {
 		fat = __CARDGetFatBlock(card);
 		fileInfo->offset += card->sectorSize;
-		fileInfo->iBlock = ((u16*)fat)[fileInfo->iBlock];
+		fileInfo->iBlock = CARDWireRead16((u8*)fat + fileInfo->iBlock * sizeof(u16));
 		if (!CARDIsValidBlockNo(card, fileInfo->iBlock)) {
 			result = CARD_RESULT_BROKEN;
 			goto error;

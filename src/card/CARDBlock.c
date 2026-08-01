@@ -2,6 +2,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "CARDWire.h"
+
 static void WriteCallback(s32 channel, s32 result);
 static void EraseCallback(s32 channel, s32 result);
 
@@ -96,6 +98,7 @@ s32 __CARDAllocBlock(s32 chan, u32 cBlock, CARDCallback callback)
 	u16 startBlock;
 	u16 prevBlock;
 	u16 count;
+	u16 freeBlocks;
 
 	card = &__CARDBlock[chan];
 	if (!card->attached) {
@@ -103,13 +106,14 @@ s32 __CARDAllocBlock(s32 chan, u32 cBlock, CARDCallback callback)
 	}
 
 	fat = __CARDGetFatBlock(card);
-	if (fat->freeBlocks < cBlock) {
+	freeBlocks = CARDWireRead16(&fat->freeBlocks);
+	if (freeBlocks < cBlock) {
 		return CARD_RESULT_INSSPACE;
 	}
 
-	fat->freeBlocks -= cBlock;
+	CARDWireWrite16(&fat->freeBlocks, (u16)(freeBlocks - cBlock));
 	startBlock = 0xFFFF;
-	iBlock     = fat->lastAllocBlock;
+	iBlock     = CARDWireRead16(&fat->lastAllocBlock);
 	count      = 0;
 	while (0 < cBlock) {
 		if (card->cBlock - 5 < ++count) {
@@ -121,18 +125,18 @@ s32 __CARDAllocBlock(s32 chan, u32 cBlock, CARDCallback callback)
 			iBlock = 5;
 		}
 
-		if (((u16*)fat)[iBlock] == 0) {
+		if (CARDWireRead16((u8*)fat + iBlock * sizeof(u16)) == CARD_FAT_AVAIL) {
 			if (startBlock == 0xFFFF) {
 				startBlock = iBlock;
 			} else {
-				((u16*)fat)[prevBlock] = iBlock;
+				CARDWireWrite16((u8*)fat + prevBlock * sizeof(u16), iBlock);
 			}
 			prevBlock           = iBlock;
-			((u16*)fat)[iBlock] = 0xFFFF;
+			CARDWireWrite16((u8*)fat + iBlock * sizeof(u16), 0xFFFF);
 			--cBlock;
 		}
 	}
-	fat->lastAllocBlock = iBlock;
+	CARDWireWrite16(&fat->lastAllocBlock, iBlock);
 	card->startBlock    = startBlock;
 
 	return __CARDUpdateFatBlock(chan, fat, callback);
@@ -146,7 +150,7 @@ s32 __CARDFreeBlock(s32 channel, u16 nBlock, CARDCallback callback)
 	CARDControl* card;
 	CARDFatBlock* fat;
 	u16 nextBlock;
-	u16* tmp;
+	u16 freeBlocks;
 
 	card = &__CARDBlock[channel];
 	if (!card->attached) {
@@ -154,17 +158,18 @@ s32 __CARDFreeBlock(s32 channel, u16 nBlock, CARDCallback callback)
 	}
 
 	fat = __CARDGetFatBlock(card);
-	tmp = (u16*)fat;
+	freeBlocks = CARDWireRead16(&fat->freeBlocks);
 	while (nBlock != 0xFFFF) {
 		if (!CARDIsValidBlockNo(card, nBlock)) {
 			return CARD_RESULT_BROKEN;
 		}
 
-		nextBlock   = tmp[nBlock];
-		tmp[nBlock] = 0;
+		nextBlock = CARDWireRead16((u8*)fat + nBlock * sizeof(u16));
+		CARDWireWrite16((u8*)fat + nBlock * sizeof(u16), CARD_FAT_AVAIL);
 		nBlock      = nextBlock;
-		fat->freeBlocks++;
+		freeBlocks++;
 	}
+	CARDWireWrite16(&fat->freeBlocks, freeBlocks);
 
 	return __CARDUpdateFatBlock(channel, fat, callback);
 }
@@ -175,10 +180,14 @@ s32 __CARDFreeBlock(s32 channel, u16 nBlock, CARDCallback callback)
 s32 __CARDUpdateFatBlock(s32 channel, CARDFatBlock* fat, CARDCallback callback)
 {
 	CARDControl* card;
+	u16 checkSum;
+	u16 checkSumInv;
 
 	card = &__CARDBlock[channel];
-	++fat->checkCode;
-	__CARDCheckSum(&fat->checkCode, 0x1FFC, &fat->checkSum, &fat->checkSumInv);
+	CARDWireWrite16(&fat->checkCode, (u16)(CARDWireRead16(&fat->checkCode) + 1));
+	__CARDCheckSum(&fat->checkCode, 0x1FFC, &checkSum, &checkSumInv);
+	CARDWireWrite16(&fat->checkSum, checkSum);
+	CARDWireWrite16(&fat->checkSumInv, checkSumInv);
 	DCStoreRange(fat, 0x2000);
 	card->eraseCallback = callback;
 

@@ -90,6 +90,7 @@ struct OSThread {
 	OSThreadStartFunction func; /* Function that the thread will run. */
 	void * param; /* Parameter passed to OSCreateThread */
 	SDL_Thread * sdlThread; /* Pointer to SDL thread object that actually runs the thread */
+	u32 hostStackMagic; /* Host-local sentinel used by OSCheckActiveThreads. */
 #endif
 };
 

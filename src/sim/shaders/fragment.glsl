@@ -114,10 +114,10 @@ vec3 colorInput(
     if (input == 0) return previous.rgb;
     if (input == 1) return vec3(previous.a);
     if (input == 2) return reg0.rgb;
-    if (input == 3) return reg1.rgb;
-    if (input == 4) return reg2.rgb;
-    if (input == 5) return vec3(reg0.a);
-    if (input == 6) return vec3(reg1.a);
+    if (input == 3) return vec3(reg0.a);
+    if (input == 4) return reg1.rgb;
+    if (input == 5) return vec3(reg1.a);
+    if (input == 6) return reg2.rgb;
     if (input == 7) return vec3(reg2.a);
     if (input == 8) return textureColor.rgb;
     if (input == 9) return vec3(textureColor.a);

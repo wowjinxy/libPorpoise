@@ -13,60 +13,172 @@ namespace {
 // calculating source ranges or allocating an RGBA decode buffer.
 constexpr size_t kMaxTextureDimension = 1024u;
 
+struct TextureBlockLayout {
+    size_t width = 0;
+    size_t height = 0;
+    size_t byteSize = 0;
+};
+
+bool GetTextureBlockLayout(
+    GXTexFmt format,
+    TextureBlockLayout& layout) {
+    switch (format) {
+        case GX_TF_I4:
+        case static_cast<GXTexFmt>(GX_TF_C4):
+        case GX_TF_CMPR:
+            layout = {8u, 8u, 32u};
+            return true;
+        case GX_TF_I8:
+        case GX_TF_IA4:
+        case static_cast<GXTexFmt>(GX_TF_C8):
+        case GX_TF_Z8:
+            layout = {8u, 4u, 32u};
+            return true;
+        case GX_TF_IA8:
+        case GX_TF_RGB565:
+        case GX_TF_RGB5A3:
+        case static_cast<GXTexFmt>(GX_TF_C14X2):
+        case GX_TF_Z16:
+            layout = {4u, 4u, 32u};
+            return true;
+        case GX_TF_RGBA8:
+        case GX_TF_Z24X8:
+            layout = {4u, 4u, 64u};
+            return true;
+        default:
+            return false;
+    }
 }
 
-size_t GetTextureSourceByteSize(const TextureState& texture) {
+size_t GetMipLevelByteSize(
+    u16 width,
+    u16 height,
+    const TextureBlockLayout& block) {
+    const size_t blockColumns =
+        (static_cast<size_t>(width) + block.width - 1u) /
+        block.width;
+    const size_t blockRows =
+        (static_cast<size_t>(height) + block.height - 1u) /
+        block.height;
+    return blockColumns * blockRows * block.byteSize;
+}
+
+}
+
+size_t GetTextureMipLevelCount(const TextureState& texture) {
     if (texture.width == 0u || texture.height == 0u ||
         texture.width > kMaxTextureDimension ||
         texture.height > kMaxTextureDimension) {
         return 0u;
     }
 
-    size_t blockWidth = 0;
-    size_t blockHeight = 0;
-    size_t bytesPerBlock = 0;
-    switch (texture.format) {
-        case GX_TF_I4:
-        case static_cast<GXTexFmt>(GX_TF_C4):
-        case GX_TF_CMPR:
-            blockWidth = 8u;
-            blockHeight = 8u;
-            bytesPerBlock = 32u;
-            break;
-        case GX_TF_I8:
-        case GX_TF_IA4:
-        case static_cast<GXTexFmt>(GX_TF_C8):
-        case GX_TF_Z8:
-            blockWidth = 8u;
-            blockHeight = 4u;
-            bytesPerBlock = 32u;
-            break;
-        case GX_TF_IA8:
-        case GX_TF_RGB565:
-        case GX_TF_RGB5A3:
-        case static_cast<GXTexFmt>(GX_TF_C14X2):
-        case GX_TF_Z16:
-            blockWidth = 4u;
-            blockHeight = 4u;
-            bytesPerBlock = 32u;
-            break;
-        case GX_TF_RGBA8:
-        case GX_TF_Z24X8:
-            blockWidth = 4u;
-            blockHeight = 4u;
-            bytesPerBlock = 64u;
-            break;
-        default:
-            return 0;
+    TextureBlockLayout block;
+    if (!GetTextureBlockLayout(texture.format, block)) {
+        return 0u;
+    }
+    if (!texture.mipmap) {
+        return 1u;
     }
 
-    const size_t blockColumns =
-        (static_cast<size_t>(texture.width) + blockWidth - 1u) /
-        blockWidth;
-    const size_t blockRows =
-        (static_cast<size_t>(texture.height) + blockHeight - 1u) /
-        blockHeight;
-    return blockColumns * blockRows * bytesPerBlock;
+    size_t physicalMaximumLevel = 0u;
+    u16 width = texture.width;
+    u16 height = texture.height;
+    while (width > 1u || height > 1u) {
+        width = width > 1u ? static_cast<u16>(width >> 1u) : 1u;
+        height = height > 1u ? static_cast<u16>(height >> 1u) : 1u;
+        ++physicalMaximumLevel;
+    }
+
+    float maximumLod = texture.maxLod;
+    if (!(maximumLod > 0.0f)) {
+        maximumLod = 0.0f;
+    } else if (maximumLod > 10.0f) {
+        maximumLod = 10.0f;
+    }
+    size_t requestedMaximumLevel = static_cast<size_t>(maximumLod);
+    if (static_cast<float>(requestedMaximumLevel) < maximumLod) {
+        ++requestedMaximumLevel;
+    }
+    if (requestedMaximumLevel > physicalMaximumLevel) {
+        requestedMaximumLevel = physicalMaximumLevel;
+    }
+    return requestedMaximumLevel + 1u;
+}
+
+bool GetTextureMipLevelLayout(
+    const TextureState& texture,
+    size_t level,
+    TextureMipLevelLayout& layout) {
+    const size_t levelCount = GetTextureMipLevelCount(texture);
+    TextureBlockLayout block;
+    if (level >= levelCount ||
+        !GetTextureBlockLayout(texture.format, block)) {
+        layout = {};
+        return false;
+    }
+
+    size_t offset = 0u;
+    u16 width = texture.width;
+    u16 height = texture.height;
+    for (size_t currentLevel = 0u;
+         currentLevel <= level;
+         ++currentLevel) {
+        const size_t byteSize =
+            GetMipLevelByteSize(width, height, block);
+        if (currentLevel == level) {
+            layout.offset = offset;
+            layout.byteSize = byteSize;
+            layout.width = width;
+            layout.height = height;
+            return true;
+        }
+        offset += byteSize;
+        width = width > 1u ? static_cast<u16>(width >> 1u) : 1u;
+        height = height > 1u ? static_cast<u16>(height >> 1u) : 1u;
+    }
+    layout = {};
+    return false;
+}
+
+size_t GetTextureSourceByteSize(const TextureState& texture) {
+    const size_t levelCount = GetTextureMipLevelCount(texture);
+    TextureMipLevelLayout finalLevel;
+    if (levelCount == 0u ||
+        !GetTextureMipLevelLayout(texture, levelCount - 1u, finalLevel)) {
+        return 0u;
+    }
+    return finalLevel.offset + finalLevel.byteSize;
+}
+
+bool CopyCanonicalTextureBytes(
+    const TextureState& texture,
+    std::vector<u8>& canonicalBytes) {
+    const size_t byteSize = GetTextureSourceByteSize(texture);
+    if (texture.data == nullptr || byteSize == 0u) {
+        canonicalBytes.clear();
+        return false;
+    }
+
+    canonicalBytes.resize(byteSize);
+    if (texture.sourceEncoding ==
+        TextureState::SourceEncoding::NativeU16) {
+        const auto* sourceWords =
+            static_cast<const u16*>(texture.data);
+        for (size_t word = 0; word < byteSize / 2u; ++word) {
+            const u16 value = sourceWords[word];
+            canonicalBytes[word * 2u] =
+                static_cast<u8>(value >> 8u);
+            canonicalBytes[word * 2u + 1u] =
+                static_cast<u8>(value);
+        }
+        if ((byteSize & 1u) != 0u) {
+            canonicalBytes.back() =
+                static_cast<const u8*>(texture.data)[byteSize - 1u];
+        }
+    } else {
+        std::memcpy(canonicalBytes.data(), texture.data, byteSize);
+    }
+    return true;
 }
 
 DecodedTlutColor DecodeTlutEntry(
@@ -108,11 +220,14 @@ DecodedTlutColor DecodeTlutEntry(
                 ((packed >> 12u) & 0x07u) * 255u / 7u);
         }
     } else {
-        const u8 intensity = static_cast<u8>(packed >> 8u);
+        // GX_TL_IA8 is serialized as alpha followed by intensity in
+        // GameCube memory. `packed` is the canonical big-endian word, so the
+        // high byte is alpha and the low byte is intensity.
+        const u8 intensity = static_cast<u8>(packed & 0xffu);
         color.red = intensity;
         color.green = intensity;
         color.blue = intensity;
-        color.alpha = static_cast<u8>(packed & 0xffu);
+        color.alpha = static_cast<u8>(packed >> 8u);
     }
     return color;
 }
@@ -124,11 +239,13 @@ bool TextureContentSnapshot::Matches(
     if (!mValid || texture.data == nullptr || textureByteSize == 0u ||
         mWidth != texture.width || mHeight != texture.height ||
         mFormat != texture.format ||
-        mTextureBytes.size() != textureByteSize ||
-        std::memcmp(
-            mTextureBytes.data(),
-            texture.data,
-            textureByteSize) != 0) {
+        mTextureBytes.size() != textureByteSize) {
+        return false;
+    }
+
+    std::vector<u8> currentTextureBytes;
+    if (!CopyCanonicalTextureBytes(texture, currentTextureBytes) ||
+        currentTextureBytes != mTextureBytes) {
         return false;
     }
 
@@ -162,17 +279,10 @@ bool TextureContentSnapshot::Matches(
 void TextureContentSnapshot::Capture(
     const TextureState& texture,
     const TlutState* tlut) {
-    const size_t textureByteSize = GetTextureSourceByteSize(texture);
-    mValid = texture.data != nullptr && textureByteSize != 0u;
     mWidth = texture.width;
     mHeight = texture.height;
     mFormat = texture.format;
-    if (mValid) {
-        const auto* bytes = static_cast<const u8*>(texture.data);
-        mTextureBytes.assign(bytes, bytes + textureByteSize);
-    } else {
-        mTextureBytes.clear();
-    }
+    mValid = CopyCanonicalTextureBytes(texture, mTextureBytes);
 
     const bool usesTlut =
         texture.format == GX_TF_C4 ||

@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "CARDWire.h"
+
 /**
  * @TODO: Documentation
  */
@@ -137,13 +139,14 @@ s32 CARDFastOpen(s32 channel, s32 fileNo, CARDFileInfo* fileInfo)
 		result = __CARDIsPublic(ent);
 	}
 	if (result >= CARD_RESULT_READY) {
-		if (!CARDIsValidBlockNo(card, ent->startBlock)) {
+		u16 startBlock = CARDWireRead16(&ent->startBlock);
+		if (!CARDIsValidBlockNo(card, startBlock)) {
 			result = CARD_RESULT_BROKEN;
 		} else {
 			fileInfo->chan   = channel;
 			fileInfo->fileNo = fileNo;
 			fileInfo->offset = 0;
-			fileInfo->iBlock = ent->startBlock;
+			fileInfo->iBlock = startBlock;
 		}
 	}
 	return __CARDPutControlBlock(card, result);
@@ -167,15 +170,17 @@ s32 CARDOpen(s32 chan, const char* fileName, CARDFileInfo* fileInfo)
 	}
 	result = __CARDGetFileNo(card, fileName, &fileNo);
 	if (0 <= result) {
+		u16 startBlock;
 		dir = __CARDGetDirBlock(card);
 		ent = &dir->entries[fileNo];
-		if (!CARDIsValidBlockNo(card, ent->startBlock)) {
+		startBlock = CARDWireRead16(&ent->startBlock);
+		if (!CARDIsValidBlockNo(card, startBlock)) {
 			result = CARD_RESULT_BROKEN;
 		} else {
 			fileInfo->chan   = chan;
 			fileInfo->fileNo = fileNo;
 			fileInfo->offset = 0;
-			fileInfo->iBlock = ent->startBlock;
+			fileInfo->iBlock = startBlock;
 		}
 	}
 	return __CARDPutControlBlock(card, result);

@@ -4,10 +4,13 @@
 #include <dolphin/os.h>
 #include <stddef.h>
 
+#include "OSRtcWire.h"
+
 // forward declarations.
 static BOOL WriteSram(void* buffer, u32 offset, u32 size);
 
 static SramControlBlock Scb ATTRIBUTE_ALIGN(32);
+static u8 SramWire[RTC_SRAM_SIZE] ATTRIBUTE_ALIGN(32);
 
 /**
  * @TODO: Documentation
@@ -43,9 +46,9 @@ static BOOL __OSSetRTC(u32 rtc)
 static BOOL ReadSram(void* buffer)
 {
 	BOOL err;
-	u32 cmd;
+	u8 command[4];
 
-	DCInvalidateRange(buffer, RTC_SRAM_SIZE);
+	DCInvalidateRange(SramWire, RTC_SRAM_SIZE);
 
 	if (!EXILock(RTC_CHAN, RTC_DEV, 0)) {
 		return FALSE;
@@ -55,14 +58,17 @@ static BOOL ReadSram(void* buffer)
 		return FALSE;
 	}
 
-	cmd = RTC_CMD_READ | RTC_SRAM_ADDR;
+	OSRtcWireMakeReadSramCommand(command);
 	err = FALSE;
-	err |= !EXIImm(RTC_CHAN, &cmd, 4, 1, NULL);
+	err |= !EXIImm(RTC_CHAN, command, sizeof(command), 1, NULL);
 	err |= !EXISync(RTC_CHAN);
-	err |= !EXIDma(RTC_CHAN, buffer, RTC_SRAM_SIZE, 0, NULL);
+	err |= !EXIDma(RTC_CHAN, SramWire, RTC_SRAM_SIZE, 0, NULL);
 	err |= !EXISync(RTC_CHAN);
 	err |= !EXIDeselect(RTC_CHAN);
 	EXIUnlock(RTC_CHAN);
+	if (!err) {
+		OSRtcWireDecodeSramImage(SramWire, buffer);
+	}
 
 	return !err;
 }
@@ -84,7 +90,9 @@ static void WriteSramCallback(s32 channel, OSContext* context)
 static BOOL WriteSram(void* buffer, u32 offset, u32 size)
 {
 	BOOL err;
-	u32 cmd;
+	u8 command[4];
+
+	(void)buffer;
 
 	if (!EXILock(RTC_CHAN, RTC_DEV, WriteSramCallback)) {
 		return FALSE;
@@ -94,12 +102,12 @@ static BOOL WriteSram(void* buffer, u32 offset, u32 size)
 		return FALSE;
 	}
 
-	offset <<= 6;
-	cmd = RTC_CMD_WRITE | RTC_SRAM_ADDR + offset;
+	OSRtcWireEncodeSramImage(Scb.sram, SramWire);
+	OSRtcWireMakeWriteSramCommand(command, offset);
 	err = FALSE;
-	err |= !EXIImm(RTC_CHAN, &cmd, 4, 1, NULL);
+	err |= !EXIImm(RTC_CHAN, command, sizeof(command), 1, NULL);
 	err |= !EXISync(RTC_CHAN);
-	err |= !EXIImmEx(RTC_CHAN, buffer, (s32)size, 1);
+	err |= !EXIImmEx(RTC_CHAN, SramWire + offset, (s32)size, 1);
 	err |= !EXIDeselect(RTC_CHAN);
 	EXIUnlock(RTC_CHAN);
 
@@ -157,21 +165,19 @@ OSSramEx* __OSLockSramEx(void)
  */
 static BOOL UnlockSram(BOOL commit, u32 offset)
 {
-	u16* p;
-
 	if (commit) {
 		if (offset == 0) {
 			OSSram* sram = (OSSram*)Scb.sram;
+			u16 checkSum;
+			u16 checkSumInv;
 
 			if (2u < (sram->flags & 3)) {
 				sram->flags &= ~3;
 			}
 
-			sram->checkSum = sram->checkSumInv = 0;
-			for (p = (u16*)&sram->counterBias; p < (u16*)(Scb.sram + sizeof(OSSram)); p++) {
-				sram->checkSum += *p;
-				sram->checkSumInv += ~*p;
-			}
+			OSRtcWireCalculateChecksum(sram, &checkSum, &checkSumInv);
+			sram->checkSum    = checkSum;
+			sram->checkSumInv = checkSumInv;
 		}
 
 		if (offset < Scb.offset) {

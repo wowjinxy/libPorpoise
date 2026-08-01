@@ -1,6 +1,8 @@
 #include <dolphin/card.h>
 #include <stddef.h>
 
+#include "CARDWire.h"
+
 /**
  * @TODO: Documentation
  */
@@ -23,7 +25,8 @@ s32 __CARDSeek(CARDFileInfo* fileInfo, s32 length, s32 offset, CARDControl** out
 
 	dir = __CARDGetDirBlock(card);
 	ent = &dir->entries[fileInfo->fileNo];
-	if (ent->length * card->sectorSize <= offset || ent->length * card->sectorSize < offset + length) {
+	if (CARDWireRead16(&ent->length) * card->sectorSize <= offset
+	    || CARDWireRead16(&ent->length) * card->sectorSize < offset + length) {
 		return __CARDPutControlBlock(card, CARD_RESULT_LIMIT);
 	}
 
@@ -31,7 +34,7 @@ s32 __CARDSeek(CARDFileInfo* fileInfo, s32 length, s32 offset, CARDControl** out
 	fileInfo->length = length;
 	if (offset < fileInfo->offset) {
 		fileInfo->offset = 0;
-		fileInfo->iBlock = ent->startBlock;
+		fileInfo->iBlock = CARDWireRead16(&ent->startBlock);
 		if (!CARDIsValidBlockNo(card, fileInfo->iBlock)) {
 			return __CARDPutControlBlock(card, CARD_RESULT_BROKEN);
 		}
@@ -39,7 +42,7 @@ s32 __CARDSeek(CARDFileInfo* fileInfo, s32 length, s32 offset, CARDControl** out
 	fat = __CARDGetFatBlock(card);
 	while (fileInfo->offset < TRUNC(offset, card->sectorSize)) {
 		fileInfo->offset += card->sectorSize;
-		fileInfo->iBlock = ((u16*)fat)[fileInfo->iBlock];
+		fileInfo->iBlock = CARDWireRead16((u8*)fat + fileInfo->iBlock * sizeof(u16));
 		if (!CARDIsValidBlockNo(card, fileInfo->iBlock)) {
 			return __CARDPutControlBlock(card, CARD_RESULT_BROKEN);
 		}
@@ -81,7 +84,7 @@ static void ReadCallback(s32 channel, s32 result)
 
 	fat = __CARDGetFatBlock(card);
 	fileInfo->offset += length;
-	fileInfo->iBlock = ((u16*)fat)[fileInfo->iBlock];
+	fileInfo->iBlock = CARDWireRead16((u8*)fat + fileInfo->iBlock * sizeof(u16));
 	if (!CARDIsValidBlockNo(card, fileInfo->iBlock)) {
 		result = CARD_RESULT_BROKEN;
 		goto error;

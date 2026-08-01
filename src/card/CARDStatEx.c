@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "CARDWire.h"
+
 s32 __CARDGetStatusEx(s32 chan, s32 fileNo, CARDDir* dirent)
 {
 	CARDControl* card;
@@ -29,6 +31,14 @@ s32 __CARDGetStatusEx(s32 chan, s32 fileNo, CARDDir* dirent)
 	}
 	if (result >= CARD_RESULT_READY) {
 		memcpy(dirent, ent, sizeof(CARDDir));
+		dirent->time       = CARDWireRead32(&ent->time);
+		dirent->iconAddr   = CARDWireRead32(&ent->iconAddr);
+		dirent->iconFormat = CARDWireRead16(&ent->iconFormat);
+		dirent->iconSpeed  = CARDWireRead16(&ent->iconSpeed);
+		dirent->startBlock = CARDWireRead16(&ent->startBlock);
+		dirent->length     = CARDWireRead16(&ent->length);
+		dirent->reserved_3A = CARDWireRead16(&ent->reserved_3A);
+		dirent->commentAddr = CARDWireRead32(&ent->commentAddr);
 	}
 	return __CARDPutControlBlock(card, result);
 }
@@ -110,12 +120,12 @@ s32 __CARDSetStatusExAsync(
 		memcpy(ent->company, dirent->company, sizeof(ent->company));
 	}
 
-	ent->time = dirent->time;
+	CARDWireWrite32(&ent->time, dirent->time);
 	ent->bannerFormat = dirent->bannerFormat;
-	ent->iconAddr = dirent->iconAddr;
-	ent->iconFormat = dirent->iconFormat;
-	ent->iconSpeed = dirent->iconSpeed;
-	ent->commentAddr = dirent->commentAddr;
+	CARDWireWrite32(&ent->iconAddr, dirent->iconAddr);
+	CARDWireWrite16(&ent->iconFormat, dirent->iconFormat);
+	CARDWireWrite16(&ent->iconSpeed, dirent->iconSpeed);
+	CARDWireWrite32(&ent->commentAddr, dirent->commentAddr);
 	ent->permission = dirent->permission;
 	ent->copyTimes = dirent->copyTimes;
 

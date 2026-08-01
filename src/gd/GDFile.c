@@ -192,6 +192,8 @@ s32 GDReadDLFile(const char* fName, u32* numDLs, u32* numPLs,
     u32 plCount;
     u32 dlOffset;
     u32 plOffset;
+    u32 dlTableBytes;
+    u32 plTableBytes;
     size_t dlHostBytes;
     size_t plHostBytes;
     size_t descriptorBytes;
@@ -243,7 +245,9 @@ s32 GDReadDLFile(const char* fName, u32* numDLs, u32* numPLs,
     dlOffset = OSReadBigEndian32(fileBytes + 12);
     plOffset = OSReadBigEndian32(fileBytes + 16);
 
-    if ((size_t)dlCount > SIZE_MAX / sizeof(GDGList) ||
+    if (!GDMulU32(dlCount, GD_FILE_DESC_SIZE, &dlTableBytes) ||
+        !GDMulU32(plCount, GD_FILE_DESC_SIZE, &plTableBytes) ||
+        (size_t)dlCount > SIZE_MAX / sizeof(GDGList) ||
         (size_t)plCount > SIZE_MAX / sizeof(GDGList)) {
         free(fileBytes);
         return -2;
@@ -255,8 +259,8 @@ s32 GDReadDLFile(const char* fName, u32* numDLs, u32* numPLs,
         return -2;
     }
     descriptorBytes = dlHostBytes + plHostBytes;
-    if (!GDRangeInFile(dlOffset, dlCount * GD_FILE_DESC_SIZE, fileLength) ||
-        !GDRangeInFile(plOffset, plCount * GD_FILE_DESC_SIZE, fileLength) ||
+    if (!GDRangeInFile(dlOffset, dlTableBytes, fileLength) ||
+        !GDRangeInFile(plOffset, plTableBytes, fileLength) ||
         descriptorBytes > SIZE_MAX - (GD_FILE_ALIGNMENT - 1) ||
         descriptorBytes + (GD_FILE_ALIGNMENT - 1) > SIZE_MAX - fileLength) {
         free(fileBytes);

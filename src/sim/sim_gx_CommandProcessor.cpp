@@ -5,6 +5,7 @@
 #include <dolphin.h>
 #include <simulator/sim_gx_CommandProcessor.h>
 #include <simulator/sim_gx_CommandProcessor.hpp>
+#include <simulator/sim_host_Allocator.hpp>
 #include <simulator/sim_gx_State.hpp>
 #include <simulator/sim.h>
 
@@ -48,6 +49,7 @@ u32 CommandProcessor::ReadU32(const u8* data) const {
 }
 
 void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
+    SIM::HostAllocationScope hostAllocations;
     while(len > 0) {
         if(mCurrentState == CommandProcessor::State::ReadOpcode) {
             u8 currentByte = *data;
@@ -167,6 +169,7 @@ void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
 
 void CommandProcessor::ProcessFifoScalar(
     const void* data, size_t size) {
+    SIM::HostAllocationScope hostAllocations;
     if (data == nullptr || size == 0u) {
         return;
     }
@@ -208,6 +211,7 @@ void CommandProcessor::ProcessFifoScalar(
 }
 
 void CommandProcessor::ProcessDisplayList(const u8* data, size_t len) {
+    SIM::HostAllocationScope hostAllocations;
     if (data == nullptr || len == 0) {
         return;
     }
@@ -564,6 +568,7 @@ static void SendCommandProcessorData(const void* data, size_t size) {
 }
 
 void SIM_GX_CommandProcessor_Init() {
+    SIM::HostAllocationScope hostAllocations;
     sCommandProcessor = new SIM::GX::CommandProcessor();
 
     // TODO: the gl stuff might move to another file
@@ -691,6 +696,7 @@ void SIM_GX_CommandProcessor_SetVertexArrayU32(
 
 void SIM_GX_CommandProcessor_LoadTlut(
     u32 id, const void* data, u32 format, u16 entries) {
+    SIM::HostAllocationScope hostAllocations;
     SIM::GX::TlutState tlut;
     tlut.data = data;
     tlut.format = static_cast<GXTlutFmt>(format);
@@ -700,6 +706,7 @@ void SIM_GX_CommandProcessor_LoadTlut(
 
 void SIM_GX_CommandProcessor_LoadTlutNativeU16(
     u32 id, const u16* data, u32 format, u16 entries) {
+    SIM::HostAllocationScope hostAllocations;
     SIM::GX::TlutState tlut;
     tlut.data = data;
     tlut.format = static_cast<GXTlutFmt>(format);
@@ -712,7 +719,9 @@ void SIM_GX_CommandProcessor_LoadTlutNativeU16(
 void SIM_GX_CommandProcessor_LoadTexture(
     u32 id, const void* data, u16 width, u16 height, u32 format,
     u32 wrap_s, u32 wrap_t, u32 min_filter, u32 mag_filter,
+    u32 mipmap, f32 min_lod, f32 max_lod, f32 lod_bias,
     u32 tlut_name) {
+    SIM::HostAllocationScope hostAllocations;
     SIM::GX::TextureState texture;
     texture.data = data;
     texture.width = width;
@@ -722,6 +731,35 @@ void SIM_GX_CommandProcessor_LoadTexture(
     texture.wrapT = static_cast<GXTexWrapMode>(wrap_t);
     texture.minFilter = static_cast<GXTexFilter>(min_filter);
     texture.magFilter = static_cast<GXTexFilter>(mag_filter);
+    texture.mipmap = mipmap != 0u;
+    texture.minLod = min_lod;
+    texture.maxLod = max_lod;
+    texture.lodBias = lod_bias;
     texture.tlutName = tlut_name;
+    SIM::GX::GetGlobalState().LoadTexture(id, texture);
+}
+
+void SIM_GX_CommandProcessor_LoadTextureNativeU16(
+    u32 id, const void* data, u16 width, u16 height, u32 format,
+    u32 wrap_s, u32 wrap_t, u32 min_filter, u32 mag_filter,
+    u32 mipmap, f32 min_lod, f32 max_lod, f32 lod_bias,
+    u32 tlut_name) {
+    SIM::HostAllocationScope hostAllocations;
+    SIM::GX::TextureState texture;
+    texture.data = data;
+    texture.width = width;
+    texture.height = height;
+    texture.format = static_cast<GXTexFmt>(format);
+    texture.wrapS = static_cast<GXTexWrapMode>(wrap_s);
+    texture.wrapT = static_cast<GXTexWrapMode>(wrap_t);
+    texture.minFilter = static_cast<GXTexFilter>(min_filter);
+    texture.magFilter = static_cast<GXTexFilter>(mag_filter);
+    texture.mipmap = mipmap != 0u;
+    texture.minLod = min_lod;
+    texture.maxLod = max_lod;
+    texture.lodBias = lod_bias;
+    texture.tlutName = tlut_name;
+    texture.sourceEncoding =
+        SIM::GX::TextureState::SourceEncoding::NativeU16;
     SIM::GX::GetGlobalState().LoadTexture(id, texture);
 }

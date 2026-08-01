@@ -15,6 +15,7 @@ typedef struct GXHostTexUserDataEntry {
 typedef struct GXHostTexImageDataEntry {
 	const GXTexObj* object;
 	void* imageData;
+	GXBool nativeU16;
 } GXHostTexImageDataEntry;
 
 typedef struct GXHostTlutDataEntry {
@@ -71,7 +72,8 @@ static void* GXHostGetTexUserData(const GXTexObj* object)
 	return NULL;
 }
 
-static void GXHostSetTexImageData(const GXTexObj* object, void* imageData)
+static void GXHostSetTexImageData(
+	const GXTexObj* object, void* imageData, GXBool nativeU16)
 {
 	s32 firstFree = -1;
 	u32 i;
@@ -82,6 +84,7 @@ static void GXHostSetTexImageData(const GXTexObj* object, void* imageData)
 				gxHostTexImageData[i].object = NULL;
 			}
 			gxHostTexImageData[i].imageData = imageData;
+			gxHostTexImageData[i].nativeU16 = nativeU16;
 			return;
 		}
 		if (firstFree < 0 && gxHostTexImageData[i].object == NULL) {
@@ -95,12 +98,14 @@ static void GXHostSetTexImageData(const GXTexObj* object, void* imageData)
 	if (firstFree >= 0) {
 		gxHostTexImageData[firstFree].object = object;
 		gxHostTexImageData[firstFree].imageData = imageData;
+		gxHostTexImageData[firstFree].nativeU16 = nativeU16;
 		return;
 	}
 
 	i = (u32)(((uintptr_t)object >> 2) % GX_HOST_TEX_USER_DATA_SLOTS);
 	gxHostTexImageData[i].object = object;
 	gxHostTexImageData[i].imageData = imageData;
+	gxHostTexImageData[i].nativeU16 = nativeU16;
 }
 
 static void* GXHostGetTexImageData(const GXTexObj* object)
@@ -163,6 +168,18 @@ static void* GXHostGetTlutData(const GXTlutObj* object)
 	return NULL;
 }
 
+static GXBool GXHostTexImageUsesNativeU16(const GXTexObj* object)
+{
+	u32 i;
+
+	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
+		if (gxHostTexImageData[i].object == object) {
+			return gxHostTexImageData[i].nativeU16;
+		}
+	}
+	return GX_FALSE;
+}
+
 static GXBool GXHostTlutUsesNativeU16(const GXTlutObj* object)
 {
 	u32 i;
@@ -173,6 +190,17 @@ static GXBool GXHostTlutUsesNativeU16(const GXTlutObj* object)
 		}
 	}
 	return GX_FALSE;
+}
+
+static u32 GXHostFloorLog2(u32 value)
+{
+	u32 result = 0;
+
+	while (value > 1) {
+		value >>= 1;
+		++result;
+	}
+	return result;
 }
 #endif
 
@@ -320,6 +348,9 @@ void __GetImageTileCount(enum _GXTexFmt fmt, u16 wd, u16 ht, u32* rowTiles, u32*
 /**
  * @TODO: Documentation
  */
+#ifdef LIBPORPOISE_PORT
+#undef GXInitTexObj
+#endif
 void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFmt format, GXTexWrapMode wrap_s, GXTexWrapMode wrap_t,
                   u8 mipmap)
 {
@@ -339,7 +370,7 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFm
 #if DEBUG
 	if (wrap_s != GX_CLAMP || mipmap != 0) {
 		#ifdef LIBPORPOISE_PORT
-		u32 mask = 1 << 31;
+		u32 mask = 1u << GXHostFloorLog2(width);
 		#else
 		u32 mask = 1 << (31 - __mwerks_cntlzw(width));
 		#endif
@@ -347,7 +378,7 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFm
 	}
 	if (wrap_t != GX_CLAMP || mipmap != 0) {
 		#ifdef LIBPORPOISE_PORT
-		u32 mask = 1 << 31;
+		u32 mask = 1u << GXHostFloorLog2(height);
 		#else
 		u32 mask = 1 << (31 - __mwerks_cntlzw(height));
 		#endif
@@ -360,7 +391,7 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFm
 	 * GXTexObj is fixed at 0x20 bytes by the SDK ABI. Keep native image and
 	 * application pointers in host-side tables instead of enlarging it.
 	 */
-	GXHostSetTexImageData(obj, image_ptr);
+	GXHostSetTexImageData(obj, image_ptr, GX_FALSE);
 	GXHostSetTexUserData(obj, NULL);
 #else
 	memset(t, 0, 0x20);
@@ -381,11 +412,15 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFm
 		t->mode0 = (t->mode0 & 0xFFFFFF1F) | 0xC0;
 #endif
 		if (width > height) {
-			#ifndef LIBPORPOISE_PORT
+			#ifdef LIBPORPOISE_PORT
+			maxLOD = GXHostFloorLog2(width);
+			#else
 			maxLOD = 31 - __mwerks_cntlzw(width);
 			#endif
 		} else {
-			#ifndef LIBPORPOISE_PORT
+			#ifdef LIBPORPOISE_PORT
+			maxLOD = GXHostFloorLog2(height);
+			#else
 			maxLOD = 31 - __mwerks_cntlzw(height);
 			#endif
 		}
@@ -457,6 +492,17 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFm
 	t->loadCount = (rowC * colC) & 0x7FFF;
 	t->flags |= 2;
 }
+
+#ifdef LIBPORPOISE_PORT
+void GXInitTexObjHostNativeU16(
+	GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFmt format,
+	GXTexWrapMode wrap_s, GXTexWrapMode wrap_t, GXBool mipmap)
+{
+	GXInitTexObj(
+		obj, image_ptr, width, height, format, wrap_s, wrap_t, mipmap);
+	GXHostSetTexImageData(obj, image_ptr, GX_TRUE);
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -621,7 +667,7 @@ void GXInitTexObjData(GXTexObj* obj, void* image_ptr)
 	imageBase = ((u32)image_ptr >> 5) & 0x01FFFFFF;
 	SET_REG_FIELD(0x301, t->image3, 21, 0, imageBase);
 #ifdef LIBPORPOISE_PORT
-	GXHostSetTexImageData(obj, image_ptr);
+	GXHostSetTexImageData(obj, image_ptr, GX_FALSE);
 #endif
 }
 
@@ -665,7 +711,7 @@ void GXInitTexObjUserData(GXTexObj* obj, void* user_data)
 #ifdef LIBPORPOISE_PORT
 	GXHostSetTexUserData(obj, user_data);
 #else
-	t->userData = user_data;
+	t->userData = (u32)user_data;
 #endif
 }
 
@@ -682,7 +728,7 @@ void* GXGetTexObjUserData(const GXTexObj* obj)
 	(void)t;
 	return GXHostGetTexUserData(obj);
 #else
-	return t->userData;
+	return (void*)t->userData;
 #endif
 }
 
@@ -968,16 +1014,37 @@ void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion* region, GXTexMapID id)
 	gx->tMode0[id]  = t->mode0;
 	gx->dirtyState |= 1;
 #ifdef LIBPORPOISE_PORT
-	SIM_GX_CommandProcessor_LoadTexture(
-	    id, GXHostGetTexImageData(obj),
-	    (u16)(GET_REG_FIELD(t->image0, 10, 0) + 1),
-	    (u16)(GET_REG_FIELD(t->image0, 10, 10) + 1),
-	    (u32)t->format,
-	    GET_REG_FIELD(t->mode0, 2, 0),
-	    GET_REG_FIELD(t->mode0, 2, 2),
-	    HW2GXFiltConv[GET_REG_FIELD(t->mode0, 3, 5)],
-	    GET_REG_FIELD(t->mode0, 1, 4),
-	    t->tlutName);
+	if (GXHostTexImageUsesNativeU16(obj)) {
+		SIM_GX_CommandProcessor_LoadTextureNativeU16(
+		    id, GXHostGetTexImageData(obj),
+		    (u16)(GET_REG_FIELD(t->image0, 10, 0) + 1),
+		    (u16)(GET_REG_FIELD(t->image0, 10, 10) + 1),
+		    (u32)t->format,
+		    GET_REG_FIELD(t->mode0, 2, 0),
+		    GET_REG_FIELD(t->mode0, 2, 2),
+		    HW2GXFiltConv[GET_REG_FIELD(t->mode0, 3, 5)],
+		    GET_REG_FIELD(t->mode0, 1, 4),
+		    (t->flags & 1) != 0,
+		    (f32)GET_REG_FIELD(t->mode1, 8, 0) / 16.0f,
+		    (f32)GET_REG_FIELD(t->mode1, 8, 8) / 16.0f,
+		    (f32)(s8)GET_REG_FIELD(t->mode0, 8, 9) / 32.0f,
+		    t->tlutName);
+	} else {
+		SIM_GX_CommandProcessor_LoadTexture(
+		    id, GXHostGetTexImageData(obj),
+		    (u16)(GET_REG_FIELD(t->image0, 10, 0) + 1),
+		    (u16)(GET_REG_FIELD(t->image0, 10, 10) + 1),
+		    (u32)t->format,
+		    GET_REG_FIELD(t->mode0, 2, 0),
+		    GET_REG_FIELD(t->mode0, 2, 2),
+		    HW2GXFiltConv[GET_REG_FIELD(t->mode0, 3, 5)],
+		    GET_REG_FIELD(t->mode0, 1, 4),
+		    (t->flags & 1) != 0,
+		    (f32)GET_REG_FIELD(t->mode1, 8, 0) / 16.0f,
+		    (f32)GET_REG_FIELD(t->mode1, 8, 8) / 16.0f,
+		    (f32)(s8)GET_REG_FIELD(t->mode0, 8, 9) / 32.0f,
+		    t->tlutName);
+	}
 #endif
 #if OS_BUILD_VERSION >= 20011002L
 	gx->bpSent = GX_FALSE;
@@ -1005,6 +1072,9 @@ void GXLoadTexObj(GXTexObj* obj, GXTexMapID id)
  * @TODO: Documentation
  * @note UNUSED Size: 000048
  */
+#ifdef LIBPORPOISE_PORT
+#undef GXInitTlutObj
+#endif
 void GXInitTlutObj(GXTlutObj* tlut_obj, void* lut, GXTlutFmt fmt, u16 n_entries)
 {
 	GXTlutObjPriv* t = (GXTlutObjPriv*)tlut_obj;
@@ -1510,11 +1580,15 @@ void GXPreLoadEntireTexture(const GXTexObj* tex_obj, const GXTexRegion* region)
 		wd = GET_REG_FIELD(t->image0, 10, 0) + 1;
 		ht = GET_REG_FIELD(t->image0, 10, 10) + 1;
 		if (wd > ht) {
-			#ifndef LIBPORPOISE_PORT
+			#ifdef LIBPORPOISE_PORT
+			maxLevelIndex = (u16)GXHostFloorLog2(wd);
+			#else
 			maxLevelIndex = (u16)(31 - __mwerks_cntlzw(wd));
 			#endif
 		} else {
-			#ifndef LIBPORPOISE_PORT
+			#ifdef LIBPORPOISE_PORT
+			maxLevelIndex = (u16)GXHostFloorLog2(ht);
+			#else
 			maxLevelIndex = (u16)(31 - __mwerks_cntlzw(ht));
 			#endif
 		}

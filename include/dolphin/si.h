@@ -36,6 +36,20 @@ typedef struct SIControl {
 
 // Struct to set and store flags (size 0x4).
 typedef struct SICommFlags {
+#ifdef LIBPORPOISE_PORT
+	u32 tstart : 1;
+	u32 channel : 2;
+	u32 pad2 : 5;
+	u32 inlngth : 7;
+	u32 pad1 : 1;
+	u32 outlngth : 7;
+	u32 pad0 : 4;
+	u32 rdstintmsk : 1;
+	u32 rdstint : 1;
+	u32 comerr : 1;
+	u32 tcintmsk : 1;
+	u32 tcint : 1;
+#else
 	u32 tcint : 1;
 	u32 tcintmsk : 1;
 	u32 comerr : 1;
@@ -48,6 +62,7 @@ typedef struct SICommFlags {
 	u32 pad2 : 5;
 	u32 channel : 2;
 	u32 tstart : 1;
+#endif
 } SICommFlags;
 
 // Union to control setting flags or overall word value (size 0x4).

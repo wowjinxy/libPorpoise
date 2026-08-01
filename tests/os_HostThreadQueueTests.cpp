@@ -51,6 +51,11 @@ int main() {
     if (!OSCreateThread(&Worker, WaitForWake, nullptr, nullptr, 0, 16, 0)) {
         return 1;
     }
+    if (Worker.stackEnd != &Worker.hostStackMagic ||
+        Worker.hostStackMagic != OS_THREAD_STACK_MAGIC ||
+        OSCheckActiveThreads() != 1) {
+        return 12;
+    }
     if (OSResumeThread(&Worker) != 1) {
         return 2;
     }

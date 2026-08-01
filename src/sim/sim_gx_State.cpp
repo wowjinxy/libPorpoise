@@ -951,20 +951,28 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
             if (address >= 0xe0u && address <= 0xe7u) {
                 const size_t colorIndex =
                     static_cast<size_t>((address - 0xe0u) / 2u);
-                auto& color =
-                    field(4, 20) == 8u
-                        ? mTevKonstColors[colorIndex]
-                        : mTevColors[colorIndex];
+                const bool isKonstColor = field(1, 23) != 0u;
+                auto& color = isKonstColor
+                    ? mTevKonstColors[colorIndex]
+                    : mTevColors[colorIndex];
+                const auto decodeComponent = [&](u32 shift) {
+                    if (isKonstColor) {
+                        return static_cast<float>(field(8, shift)) /
+                            255.0f;
+                    }
+
+                    const u32 encoded = field(11, shift);
+                    const s32 signedValue = (encoded & 0x400u) != 0u
+                        ? static_cast<s32>(encoded) - 0x800
+                        : static_cast<s32>(encoded);
+                    return static_cast<float>(signedValue) / 255.0f;
+                };
                 if ((address & 1u) == 0u) {
-                    color[0] =
-                        static_cast<float>(field(8, 0)) / 255.0f;
-                    color[3] =
-                        static_cast<float>(field(8, 12)) / 255.0f;
+                    color[0] = decodeComponent(0);
+                    color[3] = decodeComponent(12);
                 } else {
-                    color[2] =
-                        static_cast<float>(field(8, 0)) / 255.0f;
-                    color[1] =
-                        static_cast<float>(field(8, 12)) / 255.0f;
+                    color[2] = decodeComponent(0);
+                    color[1] = decodeComponent(12);
                 }
             }
             if (address >= 0xc0u &&
@@ -1126,7 +1134,12 @@ void GlobalState::LoadTexture(size_t index, const TextureState& texture) {
         current.wrapT == texture.wrapT &&
         current.minFilter == texture.minFilter &&
         current.magFilter == texture.magFilter &&
-        current.tlutName == texture.tlutName) {
+        current.mipmap == texture.mipmap &&
+        current.minLod == texture.minLod &&
+        current.maxLod == texture.maxLod &&
+        current.lodBias == texture.lodBias &&
+        current.tlutName == texture.tlutName &&
+        current.sourceEncoding == texture.sourceEncoding) {
         // GXLoadTexObj is commonly repeated before draws. Loading an
         // identical descriptor does not alter texture memory or sampler
         // state, so preserve its revision and the renderer's cache hit.

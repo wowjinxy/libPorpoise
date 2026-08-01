@@ -2,6 +2,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "CARDWire.h"
+
 /**
  * @TODO: Documentation
  */
@@ -65,7 +67,7 @@ s32 CARDFastDeleteAsync(s32 channel, s32 fileNo, CARDCallback callback)
 		return __CARDPutControlBlock(card, CARD_RESULT_BUSY);
 	}
 
-	card->startBlock = ent->startBlock;
+	card->startBlock = CARDWireRead16(&ent->startBlock);
 	memset(ent, 0xff, sizeof(CARDDir));
 
 	card->apiCallback = callback ? callback : __CARDDefaultApiCallback;
@@ -116,7 +118,7 @@ s32 CARDDeleteAsync(s32 chan, const char* fileName, CARDCallback callback)
 
 	dir = __CARDGetDirBlock(card);
 	ent = &dir->entries[fileNo];
-	card->startBlock = ent->startBlock;
+	card->startBlock = CARDWireRead16(&ent->startBlock);
 	memset(ent, 0xff, sizeof(CARDDir));
 
 	card->apiCallback = callback ? callback : __CARDDefaultApiCallback;

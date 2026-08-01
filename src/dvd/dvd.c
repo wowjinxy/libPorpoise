@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "DVDWire.h"
+
 // forward declarations for local functions, as needed:
 static void cbForCancelSync(s32 result, DVDCommandBlock* block);
 static void cbForStateBusy(u32 p1);
@@ -106,9 +108,18 @@ void DVDInit()
  */
 static void stateReadingFST()
 {
-	LastState = (stateFunc)stateReadingFST;
+	DVDDecodedBB2 bb2;
 
-	DVDLowRead(bootInfo->FSTLocation, OSRoundUp32B(((u32*)tmpBuffer)[2]), ((u32*)tmpBuffer)[1], cbForStateReadingFST);
+	LastState = (stateFunc)stateReadingFST;
+	if (!__DVDDecodeBB2(tmpBuffer, sizeof(tmpBuffer), &bb2)) {
+		return;
+	}
+
+	DVDLowRead(
+		bootInfo->FSTLocation,
+		OSRoundUp32B(bb2.FSTLength),
+		bb2.FSTPosition,
+		cbForStateReadingFST);
 }
 
 /**
@@ -434,7 +445,7 @@ static void stateCheckID()
 		} else {
 			memcpy(currID, tmpBuffer, sizeof(DVDDiskID));
 			executing->state = DVD_STATE_BUSY;
-			DCInvalidateRange(tmpBuffer, sizeof(DVDBB2));
+			DCInvalidateRange(tmpBuffer, DVD_BB2_WIRE_SIZE);
 			LastState = stateCheckID2;
 			stateCheckID2(executing);
 		}
@@ -466,7 +477,7 @@ static void stateCheckID3(DVDCommandBlock* cmdBlock)
  */
 static void stateCheckID2(DVDCommandBlock* block)
 {
-	DVDLowRead(tmpBuffer, OSRoundUp32B(sizeof(DVDBB2)), 0x420, cbForStateCheckID2);
+	DVDLowRead(tmpBuffer, DVD_BB2_WIRE_SIZE, 0x420, cbForStateCheckID2);
 }
 
 /**

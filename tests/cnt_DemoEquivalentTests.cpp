@@ -88,6 +88,7 @@ bool TestContentReadSeek() {
     CNTFileInfo firstFile{};
     CNTFileInfo secondFirstHalf{};
     CNTFileInfo secondSecondHalf{};
+    CNTFileInfo offsetFile{};
     if (!Require(
             CNTInitHandle(2, &handle, nullptr) == CNT_RESULT_OK,
             "CNTInitHandle failed") ||
@@ -96,6 +97,8 @@ bool TestContentReadSeek() {
                 CNTOpen(&handle, "test2.txt", &secondFirstHalf) ==
                     CNT_RESULT_OK &&
                 CNTOpen(&handle, "test2.txt", &secondSecondHalf) ==
+                    CNT_RESULT_OK &&
+                CNTOpen(&handle, "test2.txt", &offsetFile) ==
                     CNT_RESULT_OK,
             "CNTOpen failed for content files")) {
         return false;
@@ -104,6 +107,8 @@ bool TestContentReadSeek() {
     std::vector<u8> firstActual(first.size());
     std::vector<u8> firstHalf(second.size() / 2);
     std::vector<u8> secondHalf(second.size() / 2);
+    alignas(32) std::array<u8, 32> offsetActual{};
+    alignas(32) std::array<u8, 32> currentActual{};
     const bool reads =
         Require(
             CNTGetLength(&firstFile) == first.size() &&
@@ -137,7 +142,33 @@ bool TestContentReadSeek() {
                 secondHalf.data(),
                 static_cast<u32>(secondHalf.size())) ==
                 static_cast<s32>(secondHalf.size()),
-            "CNTRead failed for the second half");
+            "CNTRead failed for the second half") &&
+        Require(
+            CNTSeek(&offsetFile, 16, CNT_SEEK_SET) == CNT_RESULT_OK &&
+                CNTReadWithOffset(
+                    &offsetFile,
+                    offsetActual.data(),
+                    static_cast<u32>(offsetActual.size()),
+                    4) == static_cast<s32>(offsetActual.size()),
+            "CNTReadWithOffset failed for a current-relative read") &&
+        Require(
+            std::equal(
+                offsetActual.begin(),
+                offsetActual.end(),
+                second.begin() + 20) &&
+                CNTTell(&offsetFile) == 16,
+            "CNTReadWithOffset used an absolute offset or changed CNTTell") &&
+        Require(
+            CNTRead(
+                &offsetFile,
+                currentActual.data(),
+                static_cast<u32>(currentActual.size())) ==
+                    static_cast<s32>(currentActual.size()) &&
+                std::equal(
+                    currentActual.begin(),
+                    currentActual.end(),
+                    second.begin() + 16),
+            "CNTReadWithOffset did not restore the underlying stream position");
 
     std::vector<u8> reconstructed;
     reconstructed.insert(
@@ -158,6 +189,7 @@ bool TestContentReadSeek() {
     CNTClose(&firstFile);
     CNTClose(&secondFirstHalf);
     CNTClose(&secondSecondHalf);
+    CNTClose(&offsetFile);
     CNTReleaseHandle(&handle);
     CNTShutdown();
     return result;
