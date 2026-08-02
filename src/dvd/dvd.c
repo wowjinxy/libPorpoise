@@ -89,6 +89,11 @@ void DVDInit()
 		return;
 	}
 
+	#ifdef LIBPORPOISE_PORT
+	// Set up simulated DVD filesystem
+	SIM_DVDInit();
+	#endif
+
 	OSInitAlarm();
 	DVDInitialized = TRUE;
 	__DVDFSInit();
@@ -114,11 +119,6 @@ void DVDInit()
 		FirstTimeInBootrom = TRUE;
 		OSReport("bootrom\n");
 	}
-	#endif
-
-	#ifdef LIBPORPOISE_PORT
-	// Set up simulated DVD filesystem
-	SIM_DVDInit();
 	#endif
 }
 

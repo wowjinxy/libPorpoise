@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <stddef.h>
 #ifdef LIBPORPOISE_PORT
+#include <unistd.h>
 #include "simulator/sim_dvd.h"
 #endif
 
@@ -34,7 +35,9 @@ static void cbForPrepareStreamSync(s32 result, DVDCommandBlock* block);
  */
 void __DVDFSInit()
 {
-	#ifndef LIBPORPOISE_PORT
+	#ifdef LIBPORPOISE_PORT
+	MaxEntryNum = SIM_DVDGetMaxEntrynum();
+	#else
 	BootInfo = (OSBootInfo*)OSPhysicalToCached(0);
 	FstStart = (FSTEntry*)BootInfo->FSTLocation;
 
@@ -46,7 +49,12 @@ void __DVDFSInit()
 }
 
 /* For convenience */
+#ifdef GAMECUBE
 #define entryIsDir(i)   (((FstStart[i].isDirAndStringOff & 0xff000000) == 0) ? FALSE : TRUE)
+#else
+//TODO
+#define entryIsDir(i)   FALSE
+#endif
 #define stringOff(i)    (FstStart[i].isDirAndStringOff & ~0xff000000)
 #define parentDir(i)    (FstStart[i].parentOrPosition)
 #define nextDir(i)      (FstStart[i].nextEntryOrLength)
@@ -76,6 +84,33 @@ static BOOL isSame(const char* path, const char* string)
  */
 s32 DVDConvertPathToEntrynum(const char* pathPtr)
 {
+	#ifdef LIBPORPOISE_PORT
+	if(pathPtr && pathPtr[0] == '/') {
+		//Convert to absolute system path
+		const char * dvdRoot = SIM_DVDGetRootPath();
+		int combinedLen = strlen(pathPtr) + strlen(dvdRoot) + 1;
+		char * combinedFileNameBuf = malloc(sizeof(char) * combinedLen);
+		memset(combinedFileNameBuf, 0, combinedLen);
+		strcpy(combinedFileNameBuf, dvdRoot);
+		strcat(combinedFileNameBuf, pathPtr);
+		s32 entrynum = SIM_DVDConvertPathToEntrynum(combinedFileNameBuf);
+		free(combinedFileNameBuf);
+		return entrynum;
+	} else {
+		//Convert the relative path to an absolute system path
+		char currentDirBuf[256] = {0};
+		getcwd(currentDirBuf, 255);
+		int pathPtrLen = strlen(currentDirBuf) + strlen(pathPtr) + 2;
+		char * newPathPtrBuf = malloc(sizeof(char) * pathPtrLen);
+		memset(newPathPtrBuf, 0, pathPtrLen);
+		strcpy(newPathPtrBuf, currentDirBuf);
+		strcat(newPathPtrBuf, "/");
+		strcat(newPathPtrBuf, pathPtr);
+		s32 entrynum = SIM_DVDConvertPathToEntrynum(newPathPtrBuf);
+		free(newPathPtrBuf);
+		return entrynum;
+	}
+	#else
 	const char* ptr;
 	char* stringPtr;
 	BOOL isDir;
@@ -180,6 +215,7 @@ s32 DVDConvertPathToEntrynum(const char* pathPtr)
 		dirLookAt = i;
 		pathPtr += length + 1;
 	}
+	#endif
 }
 
 /**
@@ -191,12 +227,21 @@ BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo)
 		return FALSE;
 	}
 
+	#ifdef LIBPORPOISE_PORT
+	char path[512] = {0};
+	SIM_DVDConvertEntrynumToPath(entrynum, path, 255);
+	//Convert to a DVD absolute path instead of a system absolute path
+	const char * dvdRootPath = SIM_DVDGetRootPath();
+
+	return DVDOpen(&path[strlen(dvdRootPath)], fileInfo);
+	#else
 	fileInfo->startAddr    = filePosition(entrynum);
 	fileInfo->length       = fileLength(entrynum);
 	fileInfo->callback     = (DVDCallback)NULL;
 	fileInfo->cBlock.state = DVD_STATE_END;
 
 	return TRUE;
+	#endif
 }
 
 /**
