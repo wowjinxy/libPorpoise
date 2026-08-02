@@ -3,12 +3,17 @@
 
 #include <dolphin/types.h>
 
+#ifndef GAMECUBE
+#include <dolphin/gx/GXFifo.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define GXFIFO_ADDR 0xCC008000
 
+#ifdef GAMECUBE
 typedef union {
   u8 u8;
   u16 u16;
@@ -21,13 +26,15 @@ typedef union {
   f32 f32;
   f64 f64;
 } PPCWGPipe;
+#endif
 
 #ifdef __MWERKS__
 volatile PPCWGPipe GXWGFifo : GXFIFO_ADDR;
 #else
-#define GXWGFifo (*(volatile PPCWGPipe*)GXFIFO_ADDR)
+#define GXWGFifo (*(PPCWGPipe*)GXFIFO_ADDR)
 #endif
 
+#ifdef GAMECUBE
 static inline void GXPosition2f32(const f32 x, const f32 y) {
   GXWGFifo.f32 = x;
   GXWGFifo.f32 = y;
@@ -69,6 +76,7 @@ static inline void GXTexCoord2f32(const f32 u, const f32 v) {
 }
 
 static inline void GXEnd(void) {}
+#endif
 
 /* Packing macros for color formats (SDK-compatible) */
 #define GXPackedRGB565(r, g, b) \

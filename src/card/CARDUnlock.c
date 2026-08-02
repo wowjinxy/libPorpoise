@@ -296,7 +296,9 @@ int __CARDUnlock(int chan, u8 flashID[12])
 	task->res_cb          = NULL;
 	task->done_cb         = DoneCallback;
 	task->req_cb          = NULL;
+	#ifdef GAMECUBE
 	DSPAddTask(task);
+	#endif
 
 	dp    = (u32*)flashID;
 	*dp++ = para1A;

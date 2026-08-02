@@ -169,3 +169,30 @@ void CARDCancel(void)
 {
 	TRAP_UNIMPLEMENTED;
 }
+
+
+//TODO
+s32 CARDGetAttributes(s32 chan, s32 fileNo, u8* attr) {
+	return 0;
+}
+
+//TODO
+s32 CARDSetAttributes(s32 chan, s32 fileNo, u8 attr) {
+	return 0;
+}
+
+//TODO
+int __CARDGetStatusEx(int chan, int fileNo, struct CARDDir * dirent) {
+	return 0;
+}
+
+//TODO
+int __CARDSetStatusExAsync(int chan, int fileNo, struct CARDDir * dirent, void (* callback)(long, long)) {
+	return 0;
+}
+
+//TODO
+int __CARDSetStatusEx(int chan, int fileNo, struct CARDDir * dirent) {
+	return 0;
+}
+

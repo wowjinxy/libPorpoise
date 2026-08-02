@@ -89,6 +89,12 @@ s32 CARDFastDelete(s32 channel, s32 fileNo)
 	return __CARDSync(channel);
 }
 
+s32 CARDDelete(s32 chan, const char* fileName)
+{
+	//TODO
+	return 0;
+}
+
 /**
  * @TODO: Documentation
  * @note UNUSED Size: 000110

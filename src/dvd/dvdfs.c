@@ -202,10 +202,15 @@ BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo)
 BOOL DVDOpen(const char* fileName, DVDFileInfo* fileInfo)
 {
 	#ifdef LIBPORPOISE_PORT
+	if(fileName && fileName[0] == '/') {
+		fileName++;
+	}
+	
 	fileInfo->pcFilePtr = fopen(fileName, "rb");
 
 	if(!fileInfo->pcFilePtr) {
 		OSReport("Warning: DVDOpen(): file %s could not be opened.\n", fileName);
+		return FALSE;
 	}
 
 	fseek(fileInfo->pcFilePtr, 0, SEEK_END);

@@ -285,8 +285,10 @@ void __ARChecksize(void)
 	u32 i;
 
 #if OS_BUILD_VERSION >= 20011217L
+#ifdef GAMECUBE
 	do {
 	} while (!(__DSPRegs[DSP_ARAM_MODE] & 1));
+#endif
 
 	ARAM_mode = 3;
 	ARAM_size = __AR_InternalSize = 0x1000000;
@@ -297,9 +299,15 @@ void __ARChecksize(void)
 	ARAM_size = 0;
 #endif
 
+	#ifdef GAMECUBE
 	test_data  = (u32*)(OSRoundUp32B((u32)(test_data_pad)));
 	dummy_data = (u32*)(OSRoundUp32B((u32)(dummy_data_pad)));
 	buffer     = (u32*)(OSRoundUp32B((u32)(buffer_pad)));
+	#else
+	test_data  = (u32*)(OSRoundUp32B((u64)(test_data_pad)));
+	dummy_data = (u32*)(OSRoundUp32B((u64)(dummy_data_pad)));
+	buffer     = (u32*)(OSRoundUp32B((u64)(buffer_pad)));
+	#endif
 
 	for (i = 0; i < 8; i++) {
 		test_data[i]  = 0xDEADBEEF;
@@ -444,7 +452,9 @@ void __ARChecksize(void)
 		}
 		__DSPRegs[DSP_ARAM_SIZE] = ((u16)(__DSPRegs[DSP_ARAM_SIZE] & 0xFFFFFFC0) | ARAM_mode);
 	}
+	#ifdef GAMECUBE
 	*(u32*)OSPhysicalToUncached(0xD0) = ARAM_size;
+	#endif
 	__AR_Size                         = ARAM_size;
 }
 
