@@ -60,7 +60,7 @@ bool TestTextureCopyIntensityConversion() {
         SIM::GX::ConvertRgbToCopyIntensity(0, 0, 0) == 16 &&
         SIM::GX::ConvertRgbToCopyIntensity(255, 255, 255) == 235 &&
         SIM::GX::ConvertRgbToCopyIntensity(255, 0, 0) == 82 &&
-        SIM::GX::ConvertRgbToCopyIntensity(0, 255, 0) == 145 &&
+        SIM::GX::ConvertRgbToCopyIntensity(0, 255, 0) == 144 &&
         SIM::GX::ConvertRgbToCopyIntensity(0, 0, 255) == 41;
 }
 
@@ -74,6 +74,58 @@ bool TestTextureCopyChannelSelection() {
             GX_CTF_G8, 10, 20, 30, 40) == 20 &&
         SIM::GX::ConvertColorToTextureCopyByte(
             GX_CTF_B8, 10, 20, 30, 40) == 30;
+}
+
+bool TestTextureCopyLinearResampling() {
+    // glReadPixels stores the framebuffer bottom-up. Fill a 4x4 top-down
+    // gradient so both the vertical orientation and GX-style linear
+    // 2x downsample are covered.
+    std::array<u8, 4u * 4u * 4u> framebuffer = {};
+    for (size_t topDownY = 0u; topDownY < 4u; ++topDownY) {
+        const size_t openGlY = 3u - topDownY;
+        for (size_t x = 0u; x < 4u; ++x) {
+            const size_t offset = (openGlY * 4u + x) * 4u;
+            framebuffer[offset] = static_cast<u8>(topDownY * 40u + x * 10u);
+            framebuffer[offset + 3u] = 255u;
+        }
+    }
+
+    std::vector<u8> downsampled;
+    if (!SIM::GX::Detail::ResampleOpenGlFramebufferRgba(
+            framebuffer.data(),
+            4u,
+            4u,
+            0.0f,
+            0.0f,
+            4.0f,
+            4.0f,
+            2u,
+            2u,
+            downsampled)) {
+        return false;
+    }
+    const std::array<u8, 4> expected = {25u, 45u, 105u, 125u};
+    for (size_t pixel = 0u; pixel < expected.size(); ++pixel) {
+        if (downsampled[pixel * 4u] != expected[pixel] ||
+            downsampled[pixel * 4u + 3u] != 255u) {
+            return false;
+        }
+    }
+
+    std::vector<u8> exactCrop;
+    return SIM::GX::Detail::ResampleOpenGlFramebufferRgba(
+               framebuffer.data(),
+               4u,
+               4u,
+               1.0f,
+               1.0f,
+               2.0f,
+               2.0f,
+               2u,
+               2u,
+               exactCrop) &&
+           exactCrop[0u] == 50u && exactCrop[4u] == 60u &&
+           exactCrop[8u] == 90u && exactCrop[12u] == 100u;
 }
 
 bool TestRgb565TextureCopyEncoding() {
@@ -114,6 +166,133 @@ bool TestDepthTextureCopyEncoding() {
     return
         encodedZ16[0] == 0x00 && encodedZ16[1] == 0x80 &&
         encodedZ16[2] == 0xff && encodedZ16[3] == 0xff;
+}
+
+bool TestBpTextureCopyFilterState() {
+    SIM::GX::InitGlobalState();
+    auto& state = SIM::GX::GetGlobalState();
+    state.SetBpRegister(
+        0x53000000u | 1u | (2u << 6u) | (3u << 12u) | (4u << 18u));
+    state.SetBpRegister(
+        0x54000000u | 5u | (6u << 6u) | (7u << 12u));
+    state.SetBpRegister(0x52000000u | (1u << 9u));
+
+    const auto& copy = state.GetCopyFilterState();
+    const std::array<u8, 7> expected = {1u, 2u, 3u, 4u, 5u, 6u, 7u};
+    return copy.coefficients == expected && copy.halfScale &&
+        copy.EffectiveCoefficients() == std::array<u32, 3>{3u, 12u, 13u};
+}
+
+bool TestHalfScaleTextureCopyFiltering() {
+    // OpenGL readback is bottom-up. The half-scale current sample averages
+    // rows 2/3, while the copy-filter rows are the adjacent 2-pixel boxes
+    // (0/1 and 4/5), exactly as Dolphin's RAM-copy shader does.
+    std::array<u8, 2u * 6u * 4u> colorFramebuffer = {};
+    constexpr std::array<u8, 6> colors = {0u, 0u, 80u, 80u, 240u, 240u};
+    constexpr std::array<u8, 6> alphas = {0u, 0u, 50u, 70u, 0u, 0u};
+    for (size_t topDownY = 0u; topDownY < 6u; ++topDownY) {
+        const size_t openGlY = 5u - topDownY;
+        for (size_t x = 0u; x < 2u; ++x) {
+            const size_t offset = (openGlY * 2u + x) * 4u;
+            colorFramebuffer[offset] = colors[topDownY];
+            colorFramebuffer[offset + 1u] = colors[topDownY];
+            colorFramebuffer[offset + 2u] = colors[topDownY];
+            colorFramebuffer[offset + 3u] = alphas[topDownY];
+        }
+    }
+
+    SIM::GX::CopyFilterState filter;
+    filter.coefficients = {16u, 0u, 32u, 0u, 0u, 16u, 0u};
+    filter.halfScale = true;
+    std::vector<u8> filteredColor;
+    if (!SIM::GX::Detail::FilterTextureCopyRgba(
+            colorFramebuffer.data(),
+            2u,
+            6u,
+            0.0f,
+            2.0f,
+            2.0f,
+            2.0f,
+            1u,
+            1u,
+            filter,
+            filteredColor) ||
+        filteredColor != std::vector<u8>({100u, 100u, 100u, 60u})) {
+        return false;
+    }
+
+    std::array<float, 2u * 6u> depthFramebuffer = {};
+    constexpr std::array<float, 6> depths = {
+        0.0f, 0.0f, 0.25f, 0.25f, 0.5f, 0.5f,
+    };
+    for (size_t topDownY = 0u; topDownY < 6u; ++topDownY) {
+        const size_t openGlY = 5u - topDownY;
+        depthFramebuffer[openGlY * 2u] = depths[topDownY];
+        depthFramebuffer[openGlY * 2u + 1u] = depths[topDownY];
+    }
+    std::vector<u8> filteredDepth;
+    return SIM::GX::Detail::FilterTextureCopyDepth(
+               depthFramebuffer.data(),
+               2u,
+               6u,
+               0.0f,
+               2.0f,
+               2.0f,
+               2.0f,
+               1u,
+               1u,
+               filter,
+               filteredDepth) &&
+        filteredDepth == std::vector<u8>({127u, 63u, 63u, 255u});
+}
+
+bool TestStandardTextureCopyEncoders() {
+    std::array<u8, 8u * 8u * 4u> rgba = {};
+    rgba[0] = 255u;
+    rgba[3] = 255u;
+    rgba[4] = 255u;
+    rgba[5] = 128u;
+    rgba[6] = 16u;
+    rgba[7] = 224u;
+
+    std::array<u8, 32> i4 = {};
+    std::array<u8, 32> ia4 = {};
+    std::array<u8, 32> ia8 = {};
+    std::array<u8, 32> rgb5a3 = {};
+    std::array<u8, 64> rgba8 = {};
+    if (!SIM::GX::EncodeColorTextureCopy(
+            rgba.data(), 8u, 8u, GX_TF_I4, i4.data()) ||
+        !SIM::GX::EncodeColorTextureCopy(
+            rgba.data(), 8u, 4u, GX_TF_IA4, ia4.data()) ||
+        !SIM::GX::EncodeColorTextureCopy(
+            rgba.data(), 4u, 4u, GX_TF_IA8, ia8.data()) ||
+        !SIM::GX::EncodeColorTextureCopy(
+            rgba.data(), 4u, 4u, GX_TF_RGB5A3, rgb5a3.data()) ||
+        !SIM::GX::EncodeColorTextureCopy(
+            rgba.data(), 4u, 4u, GX_TF_RGBA8, rgba8.data())) {
+        return false;
+    }
+    if (i4[0] != 0x59u || ia4[0] != 0xf5u ||
+        ia8[0] != 0xffu || ia8[1] != 82u ||
+        rgb5a3[0] != 0xfcu || rgb5a3[1] != 0x00u ||
+        rgb5a3[2] != 0x7fu || rgb5a3[3] != 0x81u ||
+        rgba8[0] != 255u || rgba8[1] != 255u ||
+        rgba8[2] != 224u || rgba8[3] != 255u ||
+        rgba8[32] != 0u || rgba8[33] != 0u ||
+        rgba8[34] != 128u || rgba8[35] != 16u) {
+        return false;
+    }
+
+    std::array<u8, 4u * 4u * 4u> depthBytes = {};
+    depthBytes[0] = 0x12u;
+    depthBytes[1] = 0x34u;
+    depthBytes[2] = 0x56u;
+    depthBytes[3] = 0xffu;
+    std::array<u8, 64> z24x8 = {};
+    return SIM::GX::EncodeDepthTextureCopyBytes(
+               depthBytes.data(), 4u, 4u, GX_TF_Z24X8, z24x8.data()) &&
+        z24x8[0] == 0xffu && z24x8[1] == 0x12u &&
+        z24x8[32] == 0x34u && z24x8[33] == 0x56u;
 }
 
 bool TestGXCompressZ16Vectors() {
@@ -433,6 +612,79 @@ bool TestNativeU16TextureSourceEncoding() {
             SourceEncoding::NativeU16;
 }
 
+bool TestGxCmprInterpolation() {
+    SIM::GX::TextureState texture;
+    texture.width = 8;
+    texture.height = 8;
+    texture.format = GX_TF_CMPR;
+
+    // One 8x8 CMPR tile consists of four 4x4 sub-blocks. The first uses
+    // four-color mode and selects the two interpolated colors. The second
+    // uses three-color mode and selects transparent color three.
+    alignas(32) std::array<u8, 32> canonical = {};
+    canonical[0] = 0xf8u;
+    canonical[1] = 0x00u;
+    canonical[2] = 0x00u;
+    canonical[3] = 0x1fu;
+    canonical[4] = 0xb0u;
+
+    canonical[8] = 0x00u;
+    canonical[9] = 0x00u;
+    canonical[10] = 0xffu;
+    canonical[11] = 0xffu;
+    canonical[12] = 0xc0u;
+    texture.data = canonical.data();
+
+    std::vector<u8> rgba;
+    if (!SIM::GX::Detail::DecodeTextureToRgba(texture, {}, rgba) ||
+        rgba.size() != 8u * 8u * 4u) {
+        return false;
+    }
+
+    const size_t interpolated2 = 0u;
+    const size_t interpolated3 = 4u;
+    const size_t transparent3 = 4u * 4u;
+    return
+        rgba[interpolated2] == 159u &&
+        rgba[interpolated2 + 1u] == 0u &&
+        rgba[interpolated2 + 2u] == 95u &&
+        rgba[interpolated2 + 3u] == 255u &&
+        rgba[interpolated3] == 95u &&
+        rgba[interpolated3 + 1u] == 0u &&
+        rgba[interpolated3 + 2u] == 159u &&
+        rgba[interpolated3 + 3u] == 255u &&
+        rgba[transparent3] == 127u &&
+        rgba[transparent3 + 1u] == 127u &&
+        rgba[transparent3 + 2u] == 127u &&
+        rgba[transparent3 + 3u] == 0u;
+}
+
+bool TestTextureMipFloorAndCopyInvalidation() {
+    alignas(32) std::array<u8, 96> image = {};
+    SIM::GX::TextureState texture;
+    texture.data = image.data();
+    texture.width = 8;
+    texture.height = 8;
+    texture.format = GX_TF_I4;
+    texture.mipmap = true;
+    texture.maxLod = 1.9375f;
+    if (SIM::GX::GetTextureMipLevelCount(texture) != 2u ||
+        SIM::GX::GetTextureSourceByteSize(texture) != 64u) {
+        return false;
+    }
+    texture.maxLod = 2.0f;
+    if (SIM::GX::GetTextureMipLevelCount(texture) != 3u ||
+        SIM::GX::GetTextureSourceByteSize(texture) != 96u) {
+        return false;
+    }
+
+    SIM::GX::InitGlobalState();
+    auto& state = SIM::GX::GetGlobalState();
+    const u64 before = state.GetTextureInvalidationRevision();
+    SIM::GX::NotifyTextureCopyDestinationWrite(state);
+    return state.GetTextureInvalidationRevision() == before + 1u;
+}
+
 bool TestMipPayloadLayoutDecodeAndFiltering() {
     using SIM::GX::Detail::TextureMipmapFilter;
     using SIM::GX::TextureMipLevelLayout;
@@ -626,6 +878,362 @@ bool TestHostTexturePointerPreserved() {
         wrapS == GX_CLAMP &&
         wrapT == GX_CLAMP &&
         mipmap == GX_FALSE;
+}
+
+bool TestHostTextureMetadataSurvivesMemcpy() {
+    using SourceEncoding = SIM::GX::TextureState::SourceEncoding;
+
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    alignas(32) std::array<u16, 16> nativeImage = {};
+    alignas(32) std::array<u8, 32> canonicalImage = {};
+    int originalUserData = 17;
+    int copiedUserData = 29;
+    GXTexObj original = {};
+    GXTexObj copy = {};
+
+    GXInitTexObj(
+        &original,
+        nativeImage.data(),
+        8,
+        8,
+        GX_TF_CMPR,
+        GX_CLAMP,
+        GX_CLAMP,
+        GX_FALSE);
+    GXInitTexObjUserData(&original, &originalUserData);
+    std::memcpy(&copy, &original, sizeof(copy));
+
+    if (GXGetTexObjData(&copy) != nativeImage.data() ||
+        GXGetTexObjUserData(&copy) != &originalUserData) {
+        return false;
+    }
+
+    GXTexRegion region = {};
+    GXInitTexPreLoadRegion(
+        &region,
+        0,
+        0x80000u,
+        0x80000u,
+        0x80000u);
+    GXLoadTexObjPreLoaded(&copy, &region, GX_TEXMAP0);
+    const auto& nativeLoaded =
+        SIM::GX::GetGlobalState().GetTextureState(0);
+    if (nativeLoaded.data != nativeImage.data() ||
+        nativeLoaded.sourceEncoding != SourceEncoding::NativeU16) {
+        return false;
+    }
+
+    GXInitTexObjData(&copy, canonicalImage.data());
+    GXInitTexObjUserData(&copy, &copiedUserData);
+    if (GXGetTexObjData(&copy) != canonicalImage.data() ||
+        GXGetTexObjUserData(&copy) != &copiedUserData ||
+        GXGetTexObjData(&original) != nativeImage.data() ||
+        GXGetTexObjUserData(&original) != &originalUserData) {
+        return false;
+    }
+
+    GXLoadTexObjPreLoaded(&copy, &region, GX_TEXMAP1);
+    const auto& canonicalLoaded =
+        SIM::GX::GetGlobalState().GetTextureState(1);
+    if (canonicalLoaded.data != canonicalImage.data() ||
+        canonicalLoaded.sourceEncoding !=
+            SourceEncoding::CanonicalBigEndian) {
+        return false;
+    }
+
+    alignas(32) std::array<u16, 16> nativePalette = {};
+    alignas(32) std::array<u8, 32> canonicalPalette = {};
+    nativePalette[0] = 0x20e0u;
+    GXTlutObj originalTlut = {};
+    GXTlutObj copiedTlut = {};
+    GXInitTlutObj(
+        &originalTlut,
+        nativePalette.data(),
+        GX_TL_IA8,
+        static_cast<u16>(nativePalette.size()));
+    std::memcpy(&copiedTlut, &originalTlut, sizeof(copiedTlut));
+    if (GXGetTlutObjData(&copiedTlut) != nativePalette.data()) {
+        return false;
+    }
+
+    GXInitTlutRegion(&TestTlutRegion, 0x80000u, GX_TLUT_256);
+    const GXTlutRegionCallback previousTlutCallback =
+        GXSetTlutRegionCallback(GetTestTlutRegion);
+    GXLoadTlut(&copiedTlut, 2);
+    GXSetTlutRegionCallback(previousTlutCallback);
+    const auto& loadedTlut = SIM::GX::GetGlobalState().GetTlutState(2);
+    if (loadedTlut.canonicalBytes.size() != nativePalette.size() * 2u ||
+        loadedTlut.canonicalBytes[0] != 0x20u ||
+        loadedTlut.canonicalBytes[1] != 0xe0u) {
+        return false;
+    }
+
+    void* canonicalPaletteData = canonicalPalette.data();
+    GXInitTlutObj(
+        &copiedTlut,
+        canonicalPaletteData,
+        GX_TL_IA8,
+        16);
+    return
+        GXGetTlutObjData(&copiedTlut) == canonicalPalette.data() &&
+        GXGetTlutObjData(&originalTlut) == nativePalette.data();
+}
+
+bool TestHostTextureMetadataBeyondLegacyCapacity() {
+    constexpr size_t ObjectCount = 1152;
+    static std::array<GXTexObj, ObjectCount> textures = {};
+    alignas(32) static std::array<std::array<u8, 32>, ObjectCount>
+        textureData = {};
+    static std::array<u32, ObjectCount> userData = {};
+    static std::array<GXTlutObj, ObjectCount> tluts = {};
+    alignas(32) static std::array<std::array<u8, 32>, ObjectCount>
+        tlutData = {};
+
+    for (size_t index = 0; index < ObjectCount; ++index) {
+        userData[index] = static_cast<u32>(index);
+        GXInitTexObj(
+            &textures[index],
+            textureData[index].data(),
+            8,
+            8,
+            GX_TF_I4,
+            GX_CLAMP,
+            GX_CLAMP,
+            GX_FALSE);
+        GXInitTexObjUserData(&textures[index], &userData[index]);
+        GXInitTlutObj(
+            &tluts[index],
+            tlutData[index].data(),
+            GX_TL_IA8,
+            16);
+    }
+
+    for (size_t index = 0; index < ObjectCount; ++index) {
+        if (GXGetTexObjData(&textures[index]) !=
+                textureData[index].data() ||
+            GXGetTexObjUserData(&textures[index]) != &userData[index] ||
+            GXGetTlutObjData(&tluts[index]) != tlutData[index].data()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TestHostTextureMetadataInterningStress() {
+    constexpr size_t FrameBufferCount = 3;
+    constexpr size_t FrameCount = 4096;
+    alignas(32) std::array<std::array<u8, 64>, FrameBufferCount>
+        movieFrames = {};
+    std::array<u32, FrameBufferCount> yCookies = {};
+    std::array<u32, FrameBufferCount> uvCookies = {};
+    GXTexObj yTexture = {};
+    GXTexObj uvTexture = {};
+    GXTexRegion region = {};
+
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+    GXInitTexPreLoadRegion(
+        &region,
+        0,
+        0x80000u,
+        0x80000u,
+        0x80000u);
+
+    for (size_t slot = 0; slot < FrameBufferCount; ++slot) {
+        GXInitTexObj(
+            &yTexture,
+            movieFrames[slot].data(),
+            8,
+            4,
+            GX_TF_I8,
+            GX_CLAMP,
+            GX_CLAMP,
+            GX_FALSE);
+        GXInitTexObj(
+            &uvTexture,
+            movieFrames[slot].data() + 32,
+            4,
+            4,
+            GX_TF_IA8,
+            GX_CLAMP,
+            GX_CLAMP,
+            GX_FALSE);
+        yCookies[slot] =
+            reinterpret_cast<const GXTexObjPriv*>(&yTexture)->userData;
+        uvCookies[slot] =
+            reinterpret_cast<const GXTexObjPriv*>(&uvTexture)->userData;
+        if ((yCookies[slot] & 0xff000000u) != 0xa5000000u ||
+            (uvCookies[slot] & 0xff000000u) != 0xa5000000u ||
+            yCookies[slot] == uvCookies[slot]) {
+            return false;
+        }
+    }
+
+    const u64 initialInvalidationRevision =
+        SIM::GX::GetGlobalState().GetTextureInvalidationRevision();
+    for (size_t frame = 0; frame < FrameCount; ++frame) {
+        const size_t slot = frame % FrameBufferCount;
+        u8* const data = movieFrames[slot].data();
+        data[0] = static_cast<u8>(frame);
+        data[32] = static_cast<u8>(frame >> 1u);
+
+        GXInvalidateTexAll();
+        GXInitTexObj(
+            &yTexture,
+            data,
+            8,
+            4,
+            GX_TF_I8,
+            GX_CLAMP,
+            GX_CLAMP,
+            GX_FALSE);
+        if (reinterpret_cast<const GXTexObjPriv*>(&yTexture)->userData !=
+            yCookies[slot]) {
+            return false;
+        }
+        GXLoadTexObjPreLoaded(&yTexture, &region, GX_TEXMAP1);
+        if (reinterpret_cast<const GXTexObjPriv*>(&yTexture)->userData !=
+            yCookies[slot]) {
+            return false;
+        }
+
+        GXInitTexObj(
+            &uvTexture,
+            data + 32,
+            4,
+            4,
+            GX_TF_IA8,
+            GX_CLAMP,
+            GX_CLAMP,
+            GX_FALSE);
+        if (reinterpret_cast<const GXTexObjPriv*>(&uvTexture)->userData !=
+            uvCookies[slot]) {
+            return false;
+        }
+        GXLoadTexObjPreLoaded(&uvTexture, &region, GX_TEXMAP0);
+        if (reinterpret_cast<const GXTexObjPriv*>(&uvTexture)->userData !=
+            uvCookies[slot] ||
+            SIM::GX::GetGlobalState().GetTextureState(0).data != data + 32 ||
+            SIM::GX::GetGlobalState().GetTextureState(1).data != data) {
+            return false;
+        }
+    }
+    if (SIM::GX::GetGlobalState().GetTextureInvalidationRevision() <=
+        initialInvalidationRevision) {
+        return false;
+    }
+
+    int sharedUserData = 7;
+    int distinctUserData = 11;
+    GXTexObj firstUserTexture = {};
+    GXTexObj secondUserTexture = {};
+    GXInitTexObj(
+        &firstUserTexture,
+        movieFrames[0].data(),
+        8,
+        4,
+        GX_TF_I8,
+        GX_CLAMP,
+        GX_CLAMP,
+        GX_FALSE);
+    GXInitTexObj(
+        &secondUserTexture,
+        movieFrames[0].data(),
+        8,
+        4,
+        GX_TF_I8,
+        GX_CLAMP,
+        GX_CLAMP,
+        GX_FALSE);
+    GXInitTexObjUserData(&firstUserTexture, &sharedUserData);
+    GXInitTexObjUserData(&secondUserTexture, &sharedUserData);
+    const u32 sharedCookie =
+        reinterpret_cast<const GXTexObjPriv*>(&firstUserTexture)->userData;
+    if (reinterpret_cast<const GXTexObjPriv*>(&secondUserTexture)->userData !=
+            sharedCookie ||
+        GXGetTexObjUserData(&firstUserTexture) != &sharedUserData) {
+        return false;
+    }
+    GXInitTexObjUserData(&secondUserTexture, &distinctUserData);
+    if (reinterpret_cast<const GXTexObjPriv*>(&secondUserTexture)->userData ==
+            sharedCookie ||
+        GXGetTexObjUserData(&firstUserTexture) != &sharedUserData ||
+        GXGetTexObjUserData(&secondUserTexture) != &distinctUserData) {
+        return false;
+    }
+
+    alignas(32) std::array<u16, 16> palette = {};
+    GXTlutObj tlut = {};
+    GXInitTlutObj(
+        &tlut,
+        palette.data(),
+        GX_TL_RGB5A3,
+        static_cast<u16>(palette.size()));
+    const u32 tlutCookie =
+        reinterpret_cast<const GXTlutObjPriv*>(&tlut)->loadTlut0;
+    if ((tlutCookie & 0xff000000u) != 0x64000000u ||
+        (tlutCookie & 0x00e00000u) != 0x00a00000u) {
+        return false;
+    }
+
+    GXInitTlutRegion(&TestTlutRegion, 0x80000u, GX_TLUT_256);
+    const GXTlutRegionCallback previousTlutCallback =
+        GXSetTlutRegionCallback(GetTestTlutRegion);
+    bool tlutLoadsValid = true;
+    u64 previousRevision = 0;
+    for (size_t frame = 0; frame < FrameCount; ++frame) {
+        const u16 value = static_cast<u16>(0x8000u + frame);
+        palette[0] = value;
+        GXInitTlutObj(
+            &tlut,
+            palette.data(),
+            GX_TL_RGB5A3,
+            static_cast<u16>(palette.size()));
+        if (reinterpret_cast<const GXTlutObjPriv*>(&tlut)->loadTlut0 !=
+            tlutCookie) {
+            tlutLoadsValid = false;
+            break;
+        }
+        GXLoadTlut(&tlut, 7);
+        const auto& loaded = SIM::GX::GetGlobalState().GetTlutState(7);
+        if (reinterpret_cast<const GXTlutObjPriv*>(&tlut)->loadTlut0 !=
+                tlutCookie ||
+            loaded.canonicalBytes.size() != palette.size() * 2u ||
+            loaded.canonicalBytes[0] != static_cast<u8>(value >> 8u) ||
+            loaded.canonicalBytes[1] != static_cast<u8>(value) ||
+            loaded.revision <= previousRevision) {
+            tlutLoadsValid = false;
+            break;
+        }
+        previousRevision = loaded.revision;
+    }
+    GXSetTlutRegionCallback(previousTlutCallback);
+    if (!tlutLoadsValid) {
+        return false;
+    }
+
+    void* canonicalPalette = palette.data();
+    GXTlutObj canonicalTlut = {};
+    GXInitTlutObj(
+        &canonicalTlut,
+        canonicalPalette,
+        GX_TL_RGB5A3,
+        static_cast<u16>(palette.size()));
+    if (reinterpret_cast<const GXTlutObjPriv*>(&canonicalTlut)->loadTlut0 ==
+        tlutCookie) {
+        return false;
+    }
+
+    GXTexObj invalidTextureCookie = yTexture;
+    reinterpret_cast<GXTexObjPriv*>(&invalidTextureCookie)->userData = 1u;
+    GXTlutObj invalidTlutCookie = tlut;
+    reinterpret_cast<GXTlutObjPriv*>(&invalidTlutCookie)->loadTlut0 =
+        0x64000001u;
+    return GXGetTexObjData(&invalidTextureCookie) == nullptr &&
+           GXGetTexObjUserData(&invalidTextureCookie) == nullptr &&
+           GXGetTlutObjData(&invalidTlutCookie) == nullptr;
 }
 
 bool TestTextureObjectAbiBounds() {
@@ -1193,6 +1801,292 @@ void SendBpRegister(u32 value) {
     SIM_GX_CommandProcessor_SendU32(value);
 }
 
+bool TestNestedDisplayListOpcodeFraming() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    // GX_CMD_CALL_DL has an eight-byte payload. The host cannot resolve its
+    // 32-bit console address, but it must consume the complete command before
+    // parsing the BP write which follows it.
+    const std::array<u8, 14> commands = {
+        0x40u,
+        0x10u, 0x00u, 0x10u, 0x3fu,
+        0x00u, 0x00u, 0x00u, 0x04u,
+        0x61u, 0x41u, 0x00u, 0x00u, 0x01u,
+    };
+    SIM_GX_CommandProcessor_CallDisplayList(
+        commands.data(), static_cast<u32>(commands.size()));
+
+    return SIM::GX::GetGlobalState().GetBlendState().mode == GX_BM_BLEND;
+}
+
+bool TestSizedVertexArrayXfIndexBounds() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    std::array<float, 4> xfWords = {1.0f, 2.0f, 6.0f, 7.0f};
+    const auto sendIndexedLoad = [](u16 index, u32 wordCount) {
+        const u32 command =
+            (static_cast<u32>(index) << 16u) |
+            ((wordCount - 1u) << 12u);
+        SIM_GX_CommandProcessor_SendU8(GX_CMD_LOAD_INDX_A);
+        SIM_GX_CommandProcessor_SendU32(command);
+    };
+
+    GXSetArraySized(
+        GX_POS_MTX_ARRAY,
+        xfWords.data(),
+        static_cast<u32>(sizeof(xfWords)),
+        static_cast<u8>(2u * sizeof(float)));
+    const auto& exactArray =
+        SIM::GX::GetGlobalState().GetVertexArray(GX_POS_MTX_ARRAY);
+    if (exactArray.mArraySize != sizeof(xfWords)) {
+        return false;
+    }
+
+    // Index one plus two XF words ends exactly at the registered boundary.
+    sendIndexedLoad(1u, 2u);
+    const auto& exactMatrix =
+        SIM::GX::GetGlobalState().GetPositionMatrix(0u);
+    if (!NearlyEqual(exactMatrix[0], 6.0f) ||
+        !NearlyEqual(exactMatrix[1], 7.0f)) {
+        return false;
+    }
+
+    const auto setPositionWords = [](float first, float second) {
+        SIM_GX_CommandProcessor_SendU8(GX_CMD_LOAD_XF_REG);
+        SIM_GX_CommandProcessor_SendU32(0x00010000u);
+        SIM_GX_CommandProcessor_SendF32(first);
+        SIM_GX_CommandProcessor_SendF32(second);
+    };
+    setPositionWords(3.0f, 4.0f);
+
+    // The same load is one word past this shorter registration. It must not
+    // partially update XF memory, and a large index must not form a pointer.
+    GXSetArraySized(
+        GX_POS_MTX_ARRAY,
+        xfWords.data(),
+        static_cast<u32>(3u * sizeof(float)),
+        static_cast<u8>(2u * sizeof(float)));
+    sendIndexedLoad(1u, 2u);
+    sendIndexedLoad(0xfffeu, 1u);
+    const auto& unchangedMatrix =
+        SIM::GX::GetGlobalState().GetPositionMatrix(0u);
+    if (!NearlyEqual(unchangedMatrix[0], 3.0f) ||
+        !NearlyEqual(unchangedMatrix[1], 4.0f)) {
+        return false;
+    }
+
+    std::array<u32, 3> packedWords = {};
+    GXSetArrayU32Sized(
+        GX_VA_CLR0,
+        packedWords.data(),
+        static_cast<u32>(sizeof(packedWords)),
+        static_cast<u8>(sizeof(u32)));
+    const auto& packedArray =
+        SIM::GX::GetGlobalState().GetVertexArray(GX_VA_CLR0);
+    if (!packedArray.mHostPackedU32 ||
+        packedArray.mArraySize != sizeof(packedWords)) {
+        return false;
+    }
+
+    // Unsized pointer callers retain the legacy unbounded contract.
+    SIM_GX_CommandProcessor_SetVertexArray(
+        GX_VA_POS, xfWords.data(), static_cast<int>(sizeof(float)));
+    return
+        SIM::GX::GetGlobalState().GetVertexArray(GX_VA_POS).mArraySize == 0u;
+}
+
+bool TestXfNumTexGensCommand() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    const auto sendCount = [](u32 count) {
+        SIM_GX_CommandProcessor_SendU8(0x10u);
+        SIM_GX_CommandProcessor_SendU32(0x0000103fu);
+        SIM_GX_CommandProcessor_SendU32(count);
+    };
+
+    sendCount(6u);
+    if (SIM::GX::GetGlobalState().GetNumTexGens() != 6u) {
+        return false;
+    }
+
+    sendCount(15u);
+    return SIM::GX::GetGlobalState().GetNumTexGens() == 8u;
+}
+
+bool TestBpZeroEncodedScissorCorner() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    // A zero register payload is a valid written value, not an unwritten
+    // sentinel. Keep its signed, bias-removed corner until final clipping.
+    SendBpRegister(0x20000000u);
+    SendBpRegister(0x2100a00au);
+    const auto& decoded = SIM::GX::GetGlobalState().GetScissorState();
+    if (!decoded.valid || decoded.left != -342 || decoded.top != -342 ||
+        decoded.width != 11u || decoded.height != 11u) {
+        return false;
+    }
+
+    // An invalid follow-up pair must invalidate the old rectangle rather than
+    // retaining stale dimensions.
+    SendBpRegister(0x20014014u);
+    return !SIM::GX::GetGlobalState().GetScissorState().valid;
+}
+
+bool TestBpSignedScissorAndDrawableClipping() {
+    using SIM::GX::Detail::ComputeDrawableScissor;
+
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+
+    const auto sendScissor = [](u32 left, u32 top, u32 right, u32 bottom) {
+        SendBpRegister(0x20000000u | top | (left << 12u));
+        SendBpRegister(0x21000000u | bottom | (right << 12u));
+    };
+    const auto sendOffset = [](s32 x, s32 y) {
+        const u32 rawX = static_cast<u32>(x + 342) >> 1u;
+        const u32 rawY = static_cast<u32>(y + 342) >> 1u;
+        SendBpRegister(0x59000000u | rawX | (rawY << 10u));
+    };
+
+    // Raw corners below the 342 bias are negative logical coordinates.
+    // Subtracting a negative offset can move them back into the EFB.
+    sendScissor(340u, 339u, 439u, 438u);
+    sendOffset(-4, -6);
+    const auto& scissor = SIM::GX::GetGlobalState().GetScissorState();
+    if (scissor.left != -2 || scissor.top != -3 ||
+        scissor.offsetX != -4 || scissor.offsetY != -6 ||
+        scissor.width != 100u || scissor.height != 100u) {
+        return false;
+    }
+
+    SIM::GX::ViewportState viewport = {};
+    viewport.referenceWidth = 640.0f;
+    viewport.referenceHeight = 480.0f;
+    viewport.valid = true;
+    auto drawable = ComputeDrawableScissor(viewport, scissor, 640, 480);
+    if (drawable.x != 2 || drawable.y != 377 ||
+        drawable.width != 100 || drawable.height != 100) {
+        return false;
+    }
+
+    // Clip endpoints only after offset subtraction, shrinking a partially
+    // off-screen rectangle instead of clamping its origin and retaining size.
+    sendScissor(337u, 337u, 356u, 356u);
+    sendOffset(0, 0);
+    drawable = ComputeDrawableScissor(
+        viewport, SIM::GX::GetGlobalState().GetScissorState(), 640, 480);
+    return
+        drawable.x == 0 && drawable.y == 465 &&
+        drawable.width == 15 && drawable.height == 15;
+}
+
+bool TestBpTexCoordScaleState() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+    const auto& state = SIM::GX::GetGlobalState();
+    const u64 initialRevision = state.GetUniformStateRevision();
+
+    SendBpRegister(
+        0x3a000000u |
+        0x1234u |
+        (1u << 16u) |
+        (1u << 17u) |
+        (1u << 18u));
+    const u64 afterSRevision = state.GetUniformStateRevision();
+    if (afterSRevision == initialRevision) {
+        return false;
+    }
+    SendBpRegister(
+        0x3b000000u |
+        0x5678u |
+        (1u << 17u));
+    if (state.GetUniformStateRevision() == afterSRevision) {
+        return false;
+    }
+
+    const auto& scale =
+        state.GetTexCoordScaleState(5);
+    return
+        scale.scaleS == 0x1234u &&
+        scale.scaleT == 0x5678u &&
+        scale.biasS &&
+        !scale.biasT &&
+        scale.cylindricalWrapS &&
+        scale.cylindricalWrapT &&
+        scale.lineOffset &&
+        !scale.pointOffset;
+}
+
+bool TestBpPixelEngineAndScissorOffsetState() {
+    SIM::GX::InitGlobalState();
+    SIM_GX_CommandProcessor_Init();
+    const auto& state = SIM::GX::GetGlobalState();
+    const u64 initialRevision = state.GetUniformStateRevision();
+
+    // PE format 4 is disambiguated by CMODE1 bits 9..10.
+    SendBpRegister(
+        0x43000000u |
+        4u |
+        (static_cast<u32>(GX_ZC_FAR) << 3u) |
+        (1u << 6u));
+    SendBpRegister(
+        0x42000000u |
+        0x7au |
+        (1u << 8u) |
+        (2u << 9u));
+
+    if (state.GetUniformStateRevision() <= initialRevision + 1u) {
+        return false;
+    }
+    const auto& firstPe = state.GetPixelEngineState();
+    if (firstPe.pixelFormat != GX_PF_V8 ||
+        firstPe.zFormat != GX_ZC_FAR ||
+        !firstPe.zCompareBeforeTexture ||
+        !firstPe.destinationAlphaEnabled ||
+        firstPe.destinationAlpha != 0x7au) {
+        return false;
+    }
+
+    // Updating CMODE1 must also re-decode the shared pixel-format subtype.
+    SendBpRegister(0x42000000u | 0x33u | (1u << 9u));
+    const auto& secondPe = state.GetPixelEngineState();
+    if (secondPe.pixelFormat != GX_PF_U8 ||
+        secondPe.destinationAlphaEnabled ||
+        secondPe.destinationAlpha != 0x33u) {
+        return false;
+    }
+
+    constexpr s32 offsetX = 12;
+    constexpr s32 offsetY = -8;
+    const u32 encodedOffsetX =
+        static_cast<u32>(offsetX + 342) >> 1u;
+    const u32 encodedOffsetY =
+        static_cast<u32>(offsetY + 342) >> 1u;
+    SendBpRegister(
+        0x59000000u |
+        encodedOffsetX |
+        (encodedOffsetY << 10u));
+    const auto& scissor = state.GetScissorState();
+    if (scissor.offsetX != offsetX || scissor.offsetY != offsetY) {
+        return false;
+    }
+
+    // The high bit of each ten-bit BP field is ignored by the setup unit.
+    SendBpRegister(
+        0x59000000u |
+        encodedOffsetX |
+        (1u << 9u) |
+        (encodedOffsetY << 10u) |
+        (1u << 19u));
+    return
+        scissor.offsetX == offsetX &&
+        scissor.offsetY == offsetY;
+}
+
 bool TestBpRenderStateCommands() {
     SIM::GX::InitGlobalState();
     SIM_GX_CommandProcessor_Init();
@@ -1314,10 +2208,22 @@ bool TestZeroRasterChannelContract() {
     }
 
     // Keep the GLSL interpretation of the hardware selector tied to the SDK
-    // contract: RAS1_CC_Z supplies zero for every raster-color component.
-    return std::string_view(SIM_GXFragmentShader).find(
-               "if (channel == 7) return vec4(0.0);") !=
-           std::string_view::npos;
+    // contract: every selector other than COLOR0/COLOR1, including RAS1_CC_Z,
+    // supplies zero until the indirect alpha-bump path is implemented.
+    const std::string_view shader = SIM_GXFragmentShader;
+    const size_t functionStart = shader.find("vec4 rasterColor(int channel)");
+    const size_t functionEnd = shader.find("vec4 swapColor", functionStart);
+    if (functionStart == std::string_view::npos ||
+        functionEnd == std::string_view::npos) {
+        return false;
+    }
+    const std::string_view function =
+        shader.substr(functionStart, functionEnd - functionStart);
+    return function.find("if (channel == 0) return color0;") !=
+               std::string_view::npos &&
+           function.find("if (channel == 1) return color1;") !=
+               std::string_view::npos &&
+           function.find("return vec4(0.0);") != std::string_view::npos;
 }
 
 bool TestBigEndianBpWriteMaskCommands() {
@@ -1386,6 +2292,12 @@ bool TestBpTevCompareCommands() {
         (1u << 18) |
         (1u << 19) |
         (3u << 20));
+    SendBpRegister(
+        0xc1000000u |
+        (3u << 16) |
+        (1u << 18) |
+        (1u << 19) |
+        (2u << 20));
 
     const auto& state = SIM::GX::GetGlobalState();
     const auto& firstStage = state.GetTevStageState(0);
@@ -1393,6 +2305,8 @@ bool TestBpTevCompareCommands() {
     return
         firstStage.colorMode ==
             SIM::GX::TevColorMode::CompareTextureRgb8EqualZero &&
+        firstStage.colorScale == GX_CS_SCALE_1 &&
+        firstStage.alphaScale == GX_CS_SCALE_1 &&
         NearlyEqual(color0[0], 0xa0 / 255.0f) &&
         NearlyEqual(color0[1], 0xa0 / 255.0f) &&
         NearlyEqual(color0[2], 0xa0 / 255.0f) &&
@@ -1857,11 +2771,23 @@ int main() {
     if (!TestTextureCopyChannelSelection()) {
         return 22;
     }
+    if (!TestTextureCopyLinearResampling()) {
+        return 47;
+    }
     if (!TestRgb565TextureCopyEncoding()) {
         return 21;
     }
     if (!TestDepthTextureCopyEncoding()) {
         return 23;
+    }
+    if (!TestBpTextureCopyFilterState()) {
+        return 60;
+    }
+    if (!TestHalfScaleTextureCopyFiltering()) {
+        return 61;
+    }
+    if (!TestStandardTextureCopyEncoders()) {
+        return 62;
     }
     if (!TestGXCompressZ16Vectors()) {
         return 34;
@@ -1874,6 +2800,12 @@ int main() {
     }
     if (!TestNativeU16TextureSourceEncoding()) {
         return 37;
+    }
+    if (!TestGxCmprInterpolation()) {
+        return 42;
+    }
+    if (!TestTextureMipFloorAndCopyInvalidation()) {
+        return 43;
     }
     if (!TestMipPayloadLayoutDecodeAndFiltering()) {
         return 38;
@@ -1892,6 +2824,15 @@ int main() {
     }
     if (!TestHostTexturePointerPreserved()) {
         return 2;
+    }
+    if (!TestHostTextureMetadataSurvivesMemcpy()) {
+        return 39;
+    }
+    if (!TestHostTextureMetadataBeyondLegacyCapacity()) {
+        return 40;
+    }
+    if (!TestHostTextureMetadataInterningStress()) {
+        return 63;
     }
     if (!TestFifoQueries()) {
         return 3;
@@ -1922,6 +2863,27 @@ int main() {
     }
     if (!TestBigEndianBpWriteMaskCommands()) {
         return 25;
+    }
+    if (!TestNestedDisplayListOpcodeFraming()) {
+        return 48;
+    }
+    if (!TestSizedVertexArrayXfIndexBounds()) {
+        return 54;
+    }
+    if (!TestXfNumTexGensCommand()) {
+        return 49;
+    }
+    if (!TestBpZeroEncodedScissorCorner()) {
+        return 50;
+    }
+    if (!TestBpSignedScissorAndDrawableClipping()) {
+        return 53;
+    }
+    if (!TestBpTexCoordScaleState()) {
+        return 51;
+    }
+    if (!TestBpPixelEngineAndScissorOffsetState()) {
+        return 52;
     }
     if (!TestBpCopyClearCommands()) {
         return 10;
@@ -1966,7 +2928,7 @@ int main() {
         return 31;
     }
     if (!TestTevKonstSelections()) {
-        return 21;
+        return 55;
     }
     return 0;
 }

@@ -764,6 +764,18 @@ void GXSetArrayU32(GXAttr attr, void* base_ptr, u8 stride)
 {
 	SIM_GX_CommandProcessor_SetVertexArrayU32(attr, base_ptr, stride);
 }
+
+void GXSetArraySized(GXAttr attr, void* base_ptr, u32 size, u8 stride)
+{
+	SIM_GX_CommandProcessor_SetVertexArraySized(
+		attr, base_ptr, size, stride);
+}
+
+void GXSetArrayU32Sized(GXAttr attr, void* base_ptr, u32 size, u8 stride)
+{
+	SIM_GX_CommandProcessor_SetVertexArrayU32Sized(
+		attr, base_ptr, size, stride);
+}
 #endif
 
 /**

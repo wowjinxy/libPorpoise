@@ -137,11 +137,11 @@ SIM::GX::RenderColor EvaluateChannelLighting(
 
             float attenuation = 1.0f;
             if (control.attenuationFunction == GX_AF_SPOT) {
-                const auto hardwareDirection = Normalize({
+                const SIM::GX::RenderVector3 hardwareDirection = {
                     light.direction[0],
                     light.direction[1],
                     light.direction[2],
-                });
+                };
                 const float cosine =
                     std::max(0.0f, Dot(vertexToLight, hardwareDirection));
                 const float cosineAttenuation = std::max(
@@ -157,18 +157,42 @@ SIM::GX::RenderColor EvaluateChannelLighting(
                     ? cosineAttenuation / distanceAttenuation
                     : 0.0f;
             } else if (control.attenuationFunction == GX_AF_SPEC) {
-                const auto halfAngle = Normalize({
+                const SIM::GX::RenderVector3 halfAngle = {
                     light.direction[0],
                     light.direction[1],
                     light.direction[2],
-                });
-                const float cosine =
-                    std::max(0.0f, Dot(viewNormal, halfAngle));
-                attenuation = std::max(
+                };
+                // GX_AF_SPEC uses the light direction as a precomputed
+                // half-angle.  Back-facing lights contribute no specular
+                // term.  The cosine coefficients form the numerator and the
+                // distance coefficients form a second polynomial in that
+                // same specular angle (not the vertex/light distance).
+                const float specularAngle = normalDotLight >= 0.0f
+                    ? std::max(0.0f, Dot(viewNormal, halfAngle))
+                    : 0.0f;
+                const float cosineAttenuation = std::max(
                     0.0f,
-                    light.distanceAttenuation[0] +
-                        light.distanceAttenuation[1] * cosine +
-                        light.distanceAttenuation[2] * cosine * cosine);
+                    light.cosineAttenuation[0] +
+                        light.cosineAttenuation[1] * specularAngle +
+                        light.cosineAttenuation[2] *
+                            specularAngle * specularAngle);
+
+                SIM::GX::RenderVector3 distanceCoefficients = {
+                    light.distanceAttenuation[0],
+                    light.distanceAttenuation[1],
+                    light.distanceAttenuation[2],
+                };
+                if (control.diffuseFunction != GX_DF_NONE) {
+                    distanceCoefficients = Normalize(distanceCoefficients);
+                }
+                const float distanceAttenuation =
+                    distanceCoefficients.x +
+                    distanceCoefficients.y * specularAngle +
+                    distanceCoefficients.z *
+                        specularAngle * specularAngle;
+                attenuation = distanceAttenuation > 0.000001f
+                    ? cosineAttenuation / distanceAttenuation
+                    : 0.0f;
             }
 
             lightAccumulation +=

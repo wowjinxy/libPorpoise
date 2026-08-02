@@ -2,6 +2,8 @@
 
 #include <bit>
 #include <cstring>
+#include <functional>
+#include <utility>
 
 #include <simulator/sim_gx_State.hpp>
 
@@ -296,10 +298,10 @@ size_t GetTextureMipLevelCount(const TextureState& texture) {
     } else if (maximumLod > 10.0f) {
         maximumLod = 10.0f;
     }
+    // GX selects the last resident mip with the integer part of MAX_LOD.
+    // Rounding a fractional value up reads a level that GXGetTexBufferSize
+    // did not include and can walk past the application's texture payload.
     size_t requestedMaximumLevel = static_cast<size_t>(maximumLod);
-    if (static_cast<float>(requestedMaximumLevel) < maximumLod) {
-        ++requestedMaximumLevel;
-    }
     if (requestedMaximumLevel > physicalMaximumLevel) {
         requestedMaximumLevel = physicalMaximumLevel;
     }
@@ -371,6 +373,103 @@ bool CopyCanonicalTextureBytes(
         std::memcpy(canonicalBytes.data(), texture.data, byteSize);
     }
     return true;
+}
+
+namespace Detail {
+
+bool TextureSourceKey::operator==(
+    const TextureSourceKey& other) const noexcept {
+    return data == other.data &&
+        width == other.width &&
+        height == other.height &&
+        format == other.format &&
+        mipmap == other.mipmap &&
+        mipLevelCount == other.mipLevelCount &&
+        sourceEncoding == other.sourceEncoding &&
+        usesTlut == other.usesTlut &&
+        tlutName == other.tlutName &&
+        tlutFormat == other.tlutFormat &&
+        tlutEntries == other.tlutEntries &&
+        tlutRevision == other.tlutRevision &&
+        tlutSourceEncoding == other.tlutSourceEncoding;
+}
+
+size_t TextureSourceKeyHash::operator()(
+    const TextureSourceKey& key) const noexcept {
+    size_t hash = std::hash<const void*>{}(key.data);
+    const auto combine = [&hash](size_t value) {
+        hash ^= value + static_cast<size_t>(0x9e3779b9u) +
+            (hash << 6u) + (hash >> 2u);
+    };
+    combine(key.width);
+    combine(key.height);
+    combine(static_cast<size_t>(key.format));
+    combine(key.mipmap ? 1u : 0u);
+    combine(key.mipLevelCount);
+    combine(static_cast<size_t>(key.sourceEncoding));
+    combine(key.usesTlut ? 1u : 0u);
+    combine(key.tlutName);
+    combine(static_cast<size_t>(key.tlutFormat));
+    combine(key.tlutEntries);
+    combine(static_cast<size_t>(key.tlutRevision));
+    if constexpr (sizeof(size_t) < sizeof(u64)) {
+        combine(static_cast<size_t>(key.tlutRevision >> 32u));
+    }
+    combine(static_cast<size_t>(key.tlutSourceEncoding));
+    return hash;
+}
+
+TextureSourceKey MakeTextureSourceKey(
+    const TextureState& texture,
+    const TlutState* tlut) {
+    TextureSourceKey key;
+    key.data = texture.data;
+    key.width = texture.width;
+    key.height = texture.height;
+    key.format = texture.format;
+    key.mipmap = texture.mipmap;
+    key.mipLevelCount = GetTextureMipLevelCount(texture);
+    key.sourceEncoding = texture.sourceEncoding;
+    key.usesTlut =
+        texture.format == GX_TF_C4 ||
+        texture.format == GX_TF_C8 ||
+        texture.format == GX_TF_C14X2;
+    if (key.usesTlut) {
+        key.tlutName = texture.tlutName;
+        if (tlut != nullptr) {
+            key.tlutFormat = tlut->format;
+            key.tlutEntries = tlut->entries;
+            key.tlutRevision = tlut->revision;
+            key.tlutSourceEncoding = tlut->sourceEncoding;
+        }
+    }
+    return key;
+}
+
+size_t GetDecodedTextureByteSize(const TextureState& texture) {
+    const size_t levelCount = GetTextureMipLevelCount(texture);
+    size_t byteSize = 0u;
+    for (size_t level = 0u; level < levelCount; ++level) {
+        TextureMipLevelLayout layout;
+        if (!GetTextureMipLevelLayout(texture, level, layout)) {
+            return 0u;
+        }
+        byteSize +=
+            static_cast<size_t>(layout.width) *
+            static_cast<size_t>(layout.height) * 4u;
+    }
+    return byteSize;
+}
+
+}
+
+void NotifyTextureCopyDestinationWrite(GlobalState& state) {
+    // GXCopyTex writes through the texture cache rather than ordinary CPU
+    // stores. The host renderer writes the emulated backing memory directly,
+    // so issue the equivalent TMEM invalidation after a successful copy. The
+    // content snapshot still prevents redundant decode/upload work when an
+    // unrelated texture is subsequently used.
+    state.SetBpRegister(0x66000000u);
 }
 
 DecodedTlutColor DecodeTlutEntry(
@@ -462,10 +561,26 @@ bool TextureContentSnapshot::Matches(
 void TextureContentSnapshot::Capture(
     const TextureState& texture,
     const TlutState* tlut) {
+    std::vector<u8> canonicalTextureBytes;
+    (void)CopyCanonicalTextureBytes(texture, canonicalTextureBytes);
+    (void)CaptureCanonical(
+        texture, std::move(canonicalTextureBytes), tlut);
+}
+
+bool TextureContentSnapshot::CaptureCanonical(
+    const TextureState& texture,
+    std::vector<u8>&& canonicalTextureBytes,
+    const TlutState* tlut) {
     mWidth = texture.width;
     mHeight = texture.height;
     mFormat = texture.format;
-    mValid = CopyCanonicalTextureBytes(texture, mTextureBytes);
+    const size_t expectedTextureBytes =
+        GetTextureSourceByteSize(texture);
+    mValid =
+        texture.data != nullptr &&
+        expectedTextureBytes != 0u &&
+        canonicalTextureBytes.size() == expectedTextureBytes;
+    mTextureBytes = std::move(canonicalTextureBytes);
 
     const bool usesTlut =
         texture.format == GX_TF_C4 ||
@@ -482,6 +597,7 @@ void TextureContentSnapshot::Capture(
     } else {
         mTlutBytes.clear();
     }
+    return mValid;
 }
 
 }

@@ -1,11 +1,46 @@
 #include <simulator/sim_gx_State.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
+#include <limits>
 
 static SIM::GX::GlobalState sGXGlobalState ={};
 
 namespace SIM::GX {
+
+bool VertexArray::ResolveRange(
+    size_t index, size_t requiredBytes, const u8*& source) const {
+    source = nullptr;
+    if (mArrayPtr == nullptr || mStride < 0 || requiredBytes == 0u) {
+        return false;
+    }
+
+    const size_t stride = static_cast<size_t>(mStride);
+    if (stride != 0u &&
+        index > std::numeric_limits<size_t>::max() / stride) {
+        return false;
+    }
+    const size_t offset = index * stride;
+    if (mArraySize != 0u &&
+        (offset > mArraySize || requiredBytes > mArraySize - offset)) {
+        return false;
+    }
+
+    const std::uintptr_t base =
+        reinterpret_cast<std::uintptr_t>(mArrayPtr);
+    if (offset > std::numeric_limits<std::uintptr_t>::max() - base) {
+        return false;
+    }
+    const std::uintptr_t address = base + offset;
+    if (requiredBytes - 1u >
+        std::numeric_limits<std::uintptr_t>::max() - address) {
+        return false;
+    }
+
+    source = reinterpret_cast<const u8*>(address);
+    return true;
+}
 
 GlobalState::GlobalState() {
     Reset();
@@ -61,10 +96,41 @@ static ChannelControlState DecodeChannelControl(u32 word) {
     return control;
 }
 
+static GXPixelFmt DecodePixelFormat(u32 peControl, u32 colorMode1) {
+    switch (peControl & 0x07u) {
+        case 0:
+            return GX_PF_RGB8_Z24;
+        case 1:
+            return GX_PF_RGBA6_Z24;
+        case 2:
+            return GX_PF_RGB565_Z16;
+        case 3:
+            return GX_PF_Z24;
+        case 4:
+            switch ((colorMode1 >> 9u) & 0x03u) {
+                case 0:
+                    return GX_PF_Y8;
+                case 1:
+                    return GX_PF_U8;
+                case 2:
+                    return GX_PF_V8;
+                default:
+                    return GX_PF_Y8;
+            }
+        case 5:
+            return GX_PF_YUV420;
+        default:
+            return GX_PF_RGB8_Z24;
+    }
+}
+
 static bool BpRegisterAffectsShaderUniforms(u8 address) {
     return
         address == 0x00u ||
         (address >= 0x28u && address <= 0x2fu) ||
+        (address >= 0x30u && address <= 0x3fu) ||
+        address == 0x42u ||
+        address == 0x43u ||
         (address >= 0xc0u && address <= 0xfdu);
 }
 
@@ -116,8 +182,10 @@ void GlobalState::Reset() {
     mCopySourceWidth = 640;
     mCopySourceHeight = 480;
     mCopySourceValid = false;
+    mCopyFilterState = {};
     mBlendState = {};
     mDepthState = {};
+    mPixelEngineState = {};
     mZTextureState = {};
     mAlphaCompareState = {};
     mFogState = {};
@@ -127,6 +195,7 @@ void GlobalState::Reset() {
     mTextures = {};
     mTluts = {};
     mTevStages = {};
+    mTexCoordScales = {};
     for (auto& table : mTevSwapTables) {
         table = {
             GX_CH_RED,
@@ -171,6 +240,12 @@ void GlobalState::Reset() {
         (static_cast<u32>(GX_BL_ONE) << 8u) |
         (static_cast<u32>(GX_LO_CLEAR) << 12u);
     mBpRegisterWritten[0x41] = true;
+    mBpRegisters[0x53] =
+        (21u << 12u) |
+        (22u << 18u);
+    mBpRegisterWritten[0x53] = true;
+    mBpRegisters[0x54] = 21u;
+    mBpRegisterWritten[0x54] = true;
     for (size_t registerIndex = 0; registerIndex < 8u; ++registerIndex) {
         const size_t tableIndex = registerIndex / 2u;
         const size_t componentOffset = (registerIndex & 1u) * 2u;
@@ -401,12 +476,20 @@ const ScissorState& GlobalState::GetScissorState() const {
     return mScissorState;
 }
 
+const CopyFilterState& GlobalState::GetCopyFilterState() const {
+    return mCopyFilterState;
+}
+
 const BlendState& GlobalState::GetBlendState() const {
     return mBlendState;
 }
 
 const DepthState& GlobalState::GetDepthState() const {
     return mDepthState;
+}
+
+const PixelEngineState& GlobalState::GetPixelEngineState() const {
+    return mPixelEngineState;
 }
 
 const ZTextureState& GlobalState::GetZTextureState() const {
@@ -454,6 +537,15 @@ const TexCoordGenState& GlobalState::GetTexCoordGenState(size_t index) const {
         return mTexCoordGens[index];
     }
     static const TexCoordGenState empty = {};
+    return empty;
+}
+
+const TexCoordScaleState& GlobalState::GetTexCoordScaleState(
+    size_t index) const {
+    if (index < mTexCoordScales.size()) {
+        return mTexCoordScales[index];
+    }
+    static const TexCoordScaleState empty = {};
     return empty;
 }
 
@@ -684,7 +776,7 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
         }
         case 0x20:
             mScissorTopLeft = value;
-            if (mScissorBottomRight != 0u) {
+            if (mBpRegisterWritten[0x21u]) {
                 const u32 encodedTop = mScissorTopLeft & 0x7ffu;
                 const u32 encodedLeft =
                     (mScissorTopLeft >> 12u) & 0x7ffu;
@@ -692,12 +784,13 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
                     mScissorBottomRight & 0x7ffu;
                 const u32 encodedRight =
                     (mScissorBottomRight >> 12u) & 0x7ffu;
+                mScissorState.valid = false;
                 if (encodedRight >= encodedLeft &&
                     encodedBottom >= encodedTop) {
                     mScissorState.left =
-                        encodedLeft >= 342u ? encodedLeft - 342u : 0u;
+                        static_cast<s32>(encodedLeft) - 342;
                     mScissorState.top =
-                        encodedTop >= 342u ? encodedTop - 342u : 0u;
+                        static_cast<s32>(encodedTop) - 342;
                     mScissorState.width =
                         encodedRight - encodedLeft + 1u;
                     mScissorState.height =
@@ -708,7 +801,7 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
             break;
         case 0x21:
             mScissorBottomRight = value;
-            if (mScissorTopLeft != 0u) {
+            if (mBpRegisterWritten[0x20u]) {
                 const u32 encodedTop = mScissorTopLeft & 0x7ffu;
                 const u32 encodedLeft =
                     (mScissorTopLeft >> 12u) & 0x7ffu;
@@ -716,12 +809,13 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
                     mScissorBottomRight & 0x7ffu;
                 const u32 encodedRight =
                     (mScissorBottomRight >> 12u) & 0x7ffu;
+                mScissorState.valid = false;
                 if (encodedRight >= encodedLeft &&
                     encodedBottom >= encodedTop) {
                     mScissorState.left =
-                        encodedLeft >= 342u ? encodedLeft - 342u : 0u;
+                        static_cast<s32>(encodedLeft) - 342;
                     mScissorState.top =
-                        encodedTop >= 342u ? encodedTop - 342u : 0u;
+                        static_cast<s32>(encodedTop) - 342;
                     mScissorState.width =
                         encodedRight - encodedLeft + 1u;
                     mScissorState.height =
@@ -760,6 +854,38 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
             mRasterState.pointSize =
                 std::max(1.0f, static_cast<float>(field(8, 8)) / 6.0f);
             break;
+        case 0x30:
+        case 0x31:
+        case 0x32:
+        case 0x33:
+        case 0x34:
+        case 0x35:
+        case 0x36:
+        case 0x37:
+        case 0x38:
+        case 0x39:
+        case 0x3a:
+        case 0x3b:
+        case 0x3c:
+        case 0x3d:
+        case 0x3e:
+        case 0x3f: {
+            const size_t coordinate =
+                static_cast<size_t>((address - 0x30u) / 2u);
+            auto& scale = mTexCoordScales[coordinate];
+            if ((address & 1u) == 0u) {
+                scale.scaleS = static_cast<u16>(field(16, 0));
+                scale.biasS = field(1, 16) != 0u;
+                scale.cylindricalWrapS = field(1, 17) != 0u;
+                scale.lineOffset = field(1, 18) != 0u;
+                scale.pointOffset = field(1, 19) != 0u;
+            } else {
+                scale.scaleT = static_cast<u16>(field(16, 0));
+                scale.biasT = field(1, 16) != 0u;
+                scale.cylindricalWrapT = field(1, 17) != 0u;
+            }
+            break;
+        }
         case 0x40:
             mDepthState.compareEnabled = field(1, 0) != 0;
             mDepthState.function =
@@ -790,6 +916,22 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
                 static_cast<GXLogicOp>(field(4, 12));
             break;
         }
+        case 0x42:
+            mPixelEngineState.destinationAlpha =
+                static_cast<u8>(field(8, 0));
+            mPixelEngineState.destinationAlphaEnabled =
+                field(1, 8) != 0u;
+            mPixelEngineState.pixelFormat = DecodePixelFormat(
+                mBpRegisters[0x43u], value);
+            break;
+        case 0x43:
+            mPixelEngineState.pixelFormat = DecodePixelFormat(
+                value, mBpRegisters[0x42u]);
+            mPixelEngineState.zFormat =
+                static_cast<GXZFmt16>(field(3, 3));
+            mPixelEngineState.zCompareBeforeTexture =
+                field(1, 6) != 0u;
+            break;
         case 0x49:
             mCopySourceLeft = field(10, 0);
             mCopySourceTop = field(10, 10);
@@ -816,6 +958,12 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
                 static_cast<float>(field(24, 0)) / 16777215.0f;
             break;
         case 0x52:
+            if (field(1, 14) == 0u) {
+                // For texture copies bit 9 selects the GX 2:1 box sample.
+                // Keep the trigger state until the synchronous host copy has
+                // consumed it.
+                mCopyFilterState.halfScale = field(1, 9) != 0u;
+            }
             /*
              * A display copy defines the EFB area that is scaled into the
              * XFB. Rebase the host viewport on that area instead of retaining
@@ -860,6 +1008,32 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
             if (field(1, 14) != 0 && field(1, 11) != 0) {
                 mCopyClearRequested = true;
             }
+            break;
+        case 0x53:
+            mCopyFilterState.coefficients[0] =
+                static_cast<u8>(field(6, 0));
+            mCopyFilterState.coefficients[1] =
+                static_cast<u8>(field(6, 6));
+            mCopyFilterState.coefficients[2] =
+                static_cast<u8>(field(6, 12));
+            mCopyFilterState.coefficients[3] =
+                static_cast<u8>(field(6, 18));
+            break;
+        case 0x54:
+            mCopyFilterState.coefficients[4] =
+                static_cast<u8>(field(6, 0));
+            mCopyFilterState.coefficients[5] =
+                static_cast<u8>(field(6, 6));
+            mCopyFilterState.coefficients[6] =
+                static_cast<u8>(field(6, 12));
+            break;
+        case 0x59:
+            // The setup unit stores half-resolution offsets biased by 342.
+            // Hardware ignores the high bit in each ten-bit BP field.
+            mScissorState.offsetX =
+                static_cast<s32>(field(9, 0) * 2u) - 342;
+            mScissorState.offsetY =
+                static_cast<s32>(field(9, 10) * 2u) - 342;
             break;
         case 0x66:
             // BP writes to TMEMTEXINVALIDATE are commands, not passive
@@ -1037,7 +1211,9 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
                         ? GX_TB_ZERO
                         : static_cast<GXTevBias>(field(2, 16));
                 tevStage.colorScale =
-                    static_cast<GXTevScale>(field(2, 20));
+                    field(2, 16) == 3u
+                        ? GX_CS_SCALE_1
+                        : static_cast<GXTevScale>(field(2, 20));
                 tevStage.colorClamp = field(1, 19) != 0u;
                 tevStage.colorOutput =
                     static_cast<GXTevRegID>(field(2, 22));
@@ -1098,7 +1274,9 @@ u32 GlobalState::SetBpRegister(u32 registerValue) {
                         ? GX_TB_ZERO
                         : static_cast<GXTevBias>(field(2, 16));
                 tevStage.alphaScale =
-                    static_cast<GXTevScale>(field(2, 20));
+                    field(2, 16) == 3u
+                        ? GX_CS_SCALE_1
+                        : static_cast<GXTevScale>(field(2, 20));
                 tevStage.alphaClamp = field(1, 19) != 0u;
                 tevStage.alphaOutput =
                     static_cast<GXTevRegID>(field(2, 22));
@@ -1312,6 +1490,12 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
         mNumColorChannels = std::min<size_t>(
             mXfMemory[numColorsAddress],
             2u);
+    }
+    constexpr u32 numTexGensAddress = 0x103fu;
+    if (address <= numTexGensAddress && endAddress > numTexGensAddress) {
+        mNumTexGens = std::min<size_t>(
+            mXfMemory[numTexGensAddress],
+            mTexCoordGens.size());
     }
     RefreshPositionMatrices(address, endAddress);
     RefreshNormalMatrices(address, endAddress);

@@ -242,6 +242,13 @@ int CommandProcessor::GetOpcodeArgSize(Opcode code) {
         case Opcode::LoadXfIndexC:
         case Opcode::LoadXfIndexD:
             return 4;
+        case Opcode::CallDisplayList:
+            // A hardware display-list call carries a 32-bit address and a
+            // 32-bit byte count. Host GXCallDisplayList bypasses this opcode
+            // because native pointers do not fit in the console address
+            // field, but recorded/nested commands still need to be consumed
+            // as one unit so the following FIFO command stays aligned.
+            return 8;
         case Opcode::BeginTriangles:
         case Opcode::BeginTriangleStrip:
         case Opcode::BeginQuads:
@@ -352,10 +359,9 @@ void CommandProcessor::ProcessOpcode() {
                     static_cast<size_t>(command >> 16);
                 auto& gxState = GetGlobalState();
                 const auto& array = gxState.GetVertexArray(arrayAttribute);
-                if (array.mArrayPtr != nullptr && array.mStride > 0) {
-                    const u8* source =
-                        static_cast<const u8*>(array.mArrayPtr) +
-                        arrayIndex * static_cast<size_t>(array.mStride);
+                const u8* source = nullptr;
+                if (array.ResolveRange(
+                        arrayIndex, wordCount * sizeof(u32), source)) {
                     gxState.SetXfData(destination, source, wordCount);
                 }
                 mCurrentState = State::ReadOpcode;
@@ -404,6 +410,13 @@ void CommandProcessor::ProcessOpcode() {
             }
             break;
         case Opcode::InvalidateVertexCache:
+            mCurrentState = State::ReadOpcode;
+            break;
+        case Opcode::CallDisplayList:
+            // Host display lists are submitted through ProcessDisplayList,
+            // where the full native pointer is available. Nested hardware
+            // calls cannot be resolved safely from their 32-bit address, so
+            // consume the command without executing it.
             mCurrentState = State::ReadOpcode;
             break;
         default:
@@ -570,6 +583,11 @@ static void SendCommandProcessorData(const void* data, size_t size) {
 void SIM_GX_CommandProcessor_Init() {
     SIM::HostAllocationScope hostAllocations;
     sCommandProcessor = new SIM::GX::CommandProcessor();
+    sDisplayListBuffer = nullptr;
+    sDisplayListCapacity = 0;
+    sDisplayListSize = 0;
+    sDisplayListRecording = false;
+    sDisplayListOverflow = false;
 
     // TODO: the gl stuff might move to another file
     //glGenVertexArrays(1, &gpuVertexArray);
@@ -616,14 +634,6 @@ void SIM_GX_CommandProcessor_SendU32(u32 data) {
 }
 
 void SIM_GX_CommandProcessor_SendF32(f32 data) {
-    if (sDisplayListRecording) {
-        SendCommandProcessorData(&data, sizeof(data));
-    } else {
-        sCommandProcessor->ProcessFifoScalar(&data, sizeof(data));
-    }
-}
-
-void SIM_GX_CommandProcessor_SendU64(u64 data) {
     if (sDisplayListRecording) {
         SendCommandProcessorData(&data, sizeof(data));
     } else {
@@ -679,18 +689,30 @@ void SIM_GX_CommandProcessor_CallDisplayList(const void* list, u32 size) {
 }
 
 void SIM_GX_CommandProcessor_SetVertexArray(GXAttr attr, void * ptr, int stride) {
-    SIM::GX::VertexArray vtxArray;
-    vtxArray.mArrayPtr = ptr;
-    vtxArray.mStride = stride;
-    SIM::GX::GetGlobalState().SetVertexArray(attr, vtxArray);
+    SIM_GX_CommandProcessor_SetVertexArraySized(attr, ptr, 0u, stride);
 }
 
 void SIM_GX_CommandProcessor_SetVertexArrayU32(
     GXAttr attr, void * ptr, int stride) {
+    SIM_GX_CommandProcessor_SetVertexArrayU32Sized(attr, ptr, 0u, stride);
+}
+
+void SIM_GX_CommandProcessor_SetVertexArraySized(
+    GXAttr attr, void* ptr, u32 size, int stride) {
+    SIM::GX::VertexArray vtxArray;
+    vtxArray.mArrayPtr = ptr;
+    vtxArray.mStride = stride;
+    vtxArray.mArraySize = static_cast<size_t>(size);
+    SIM::GX::GetGlobalState().SetVertexArray(attr, vtxArray);
+}
+
+void SIM_GX_CommandProcessor_SetVertexArrayU32Sized(
+    GXAttr attr, void* ptr, u32 size, int stride) {
     SIM::GX::VertexArray vtxArray;
     vtxArray.mArrayPtr = ptr;
     vtxArray.mStride = stride;
     vtxArray.mHostPackedU32 = true;
+    vtxArray.mArraySize = static_cast<size_t>(size);
     SIM::GX::GetGlobalState().SetVertexArray(attr, vtxArray);
 }
 
@@ -762,4 +784,38 @@ void SIM_GX_CommandProcessor_LoadTextureNativeU16(
     texture.sourceEncoding =
         SIM::GX::TextureState::SourceEncoding::NativeU16;
     SIM::GX::GetGlobalState().LoadTexture(id, texture);
+}
+
+void SIM_GX_CommandProcessor_LoadTlutEx(
+    u32 id, const void* data, u32 data_size, u32 format, u16 entries,
+    u32 source_encoding, u32 object_id, u32 data_revision) {
+    (void)data_size;
+    (void)object_id;
+    (void)data_revision;
+    if (source_encoding == SIM_GX_SOURCE_NATIVE_U16) {
+        SIM_GX_CommandProcessor_LoadTlutNativeU16(
+            id, static_cast<const u16*>(data), format, entries);
+    } else {
+        SIM_GX_CommandProcessor_LoadTlut(id, data, format, entries);
+    }
+}
+
+void SIM_GX_CommandProcessor_LoadTextureEx(
+    u32 id, const void* data, u32 data_size, u16 width, u16 height,
+    u32 format, u32 wrap_s, u32 wrap_t, u32 min_filter, u32 mag_filter,
+    u32 mipmap, f32 min_lod, f32 max_lod, f32 lod_bias,
+    u32 tlut_name, u32 source_encoding, u32 object_id,
+    u32 data_revision) {
+    (void)data_size;
+    (void)object_id;
+    (void)data_revision;
+    if (source_encoding == SIM_GX_SOURCE_NATIVE_U16) {
+        SIM_GX_CommandProcessor_LoadTextureNativeU16(
+            id, data, width, height, format, wrap_s, wrap_t, min_filter,
+            mag_filter, mipmap, min_lod, max_lod, lod_bias, tlut_name);
+    } else {
+        SIM_GX_CommandProcessor_LoadTexture(
+            id, data, width, height, format, wrap_s, wrap_t, min_filter,
+            mag_filter, mipmap, min_lod, max_lod, lod_bias, tlut_name);
+    }
 }

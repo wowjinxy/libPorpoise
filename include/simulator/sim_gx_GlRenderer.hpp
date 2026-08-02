@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstddef>
+#include <unordered_map>
 #include <vector>
 
 #include <dolphin/types.h>
@@ -39,6 +40,10 @@ class TextureContentSnapshot {
   void Capture(
       const TextureState& texture,
       const TlutState* tlut = nullptr);
+  bool CaptureCanonical(
+      const TextureState& texture,
+      std::vector<u8>&& canonicalTextureBytes,
+      const TlutState* tlut = nullptr);
 
  private:
   bool mValid = false;
@@ -60,6 +65,7 @@ size_t GetTextureSourceByteSize(const TextureState& texture);
 bool CopyCanonicalTextureBytes(
     const TextureState& texture,
     std::vector<u8>& canonicalBytes);
+void NotifyTextureCopyDestinationWrite(GlobalState& state);
 DecodedTlutColor DecodeTlutEntry(
     GXTlutFmt format,
     const u8* canonicalBigEndianBytes);
@@ -83,6 +89,18 @@ void EncodeRgb565TextureCopy(
     u16 width,
     u16 height,
     u8* encoded);
+bool EncodeColorTextureCopy(
+    const u8* rgba,
+    u16 width,
+    u16 height,
+    u32 destinationFormat,
+    u8* encoded);
+bool EncodeDepthTextureCopyBytes(
+    const u8* depthBytes,
+    u16 width,
+    u16 height,
+    u32 destinationFormat,
+    u8* encoded);
 void EncodeDepthTextureCopy(
     const float* depth,
     u16 width,
@@ -104,6 +122,41 @@ struct TextureFilterSelection {
 };
 
 TextureFilterSelection SelectTextureFilter(GXTexFilter filter);
+bool ResampleOpenGlFramebufferRgba(
+    const u8* framebuffer,
+    size_t framebufferWidth,
+    size_t framebufferHeight,
+    float sourceLeft,
+    float sourceTop,
+    float sourceWidth,
+    float sourceHeight,
+    size_t destinationWidth,
+    size_t destinationHeight,
+    std::vector<u8>& rgba);
+bool FilterTextureCopyRgba(
+    const u8* framebuffer,
+    size_t framebufferWidth,
+    size_t framebufferHeight,
+    float sourceLeft,
+    float sourceTop,
+    float sourceWidth,
+    float sourceHeight,
+    size_t destinationWidth,
+    size_t destinationHeight,
+    const CopyFilterState& filter,
+    std::vector<u8>& rgba);
+bool FilterTextureCopyDepth(
+    const float* framebuffer,
+    size_t framebufferWidth,
+    size_t framebufferHeight,
+    float sourceLeft,
+    float sourceTop,
+    float sourceWidth,
+    float sourceHeight,
+    size_t destinationWidth,
+    size_t destinationHeight,
+    const CopyFilterState& filter,
+    std::vector<u8>& depthBytes);
 bool DecodeCanonicalTextureMipLevelToRgba(
     const TextureState& texture,
     const u8* canonicalBytes,
@@ -115,6 +168,59 @@ bool DecodeTextureToRgba(
     const TextureState& texture,
     const std::vector<u8>& palette,
     std::vector<u8>& rgba);
+
+// Image identity deliberately excludes GX sampler parameters. One decoded
+// OpenGL image can therefore be reused by different materials and texture-map
+// units while a sampler object supplies each binding's wrap/filter/LOD state.
+struct TextureSourceKey {
+  const void* data = nullptr;
+  u16 width = 0;
+  u16 height = 0;
+  GXTexFmt format = GX_TF_I4;
+  bool mipmap = false;
+  size_t mipLevelCount = 0;
+  TextureState::SourceEncoding sourceEncoding =
+      TextureState::SourceEncoding::CanonicalBigEndian;
+  bool usesTlut = false;
+  u32 tlutName = 0;
+  GXTlutFmt tlutFormat = GX_TL_IA8;
+  u16 tlutEntries = 0;
+  u64 tlutRevision = 0;
+  TlutState::SourceEncoding tlutSourceEncoding =
+      TlutState::SourceEncoding::CanonicalBigEndian;
+
+  bool operator==(const TextureSourceKey& other) const noexcept;
+};
+
+struct TextureSourceKeyHash {
+  size_t operator()(const TextureSourceKey& key) const noexcept;
+};
+
+TextureSourceKey MakeTextureSourceKey(
+    const TextureState& texture,
+    const TlutState* tlut = nullptr);
+size_t GetDecodedTextureByteSize(const TextureState& texture);
+
+struct TextureCacheEntry {
+  unsigned int texture = 0;
+  TextureContentSnapshot snapshot;
+  u64 validatedInvalidationRevision = 0;
+  u64 lastUsedSerial = 0;
+  size_t decodedByteSize = 0;
+};
+
+struct DrawableScissorRect {
+  int x = 0;
+  int y = 0;
+  int width = 0;
+  int height = 0;
+};
+
+DrawableScissorRect ComputeDrawableScissor(
+    const ViewportState& viewport,
+    const ScissorState& scissor,
+    int drawableWidth,
+    int drawableHeight);
 
 enum RenderStateDirty : u32 {
   RenderStateViewport = 1u << 0u,
@@ -178,6 +284,7 @@ enum class ShaderUniform : size_t {
   UseTextures,
   StageTextures,
   StageTexCoords,
+  StageTexCoordScales,
   StageRasterChannels,
   TevColorInputs,
   TevAlphaInputs,
@@ -236,6 +343,7 @@ struct ShaderUniformValues {
   std::array<int, MaxTevStages> useTextures = {};
   std::array<int, MaxTevStages> stageTextures = {};
   std::array<int, MaxTevStages> stageTexCoords = {};
+  std::array<float, MaxTevStages * 2u> stageTexCoordScales = {};
   std::array<int, MaxTevStages> stageRasterChannels = {};
   std::array<int, MaxTevStages * 4u> tevColorInputs = {};
   std::array<int, MaxTevStages * 4u> tevAlphaInputs = {};
@@ -353,6 +461,7 @@ class ShaderUniformLocationCache {
       "u_use_texture[0]",
       "u_stage_texture[0]",
       "u_stage_texcoord[0]",
+      "u_stage_texcoord_scale[0]",
       "u_stage_raster_channel[0]",
       "u_tev_color_inputs[0]",
       "u_tev_alpha_inputs[0]",
@@ -401,6 +510,7 @@ class GlRenderer {
 
  private:
   void Initialize();
+  void TrimTextureCache(size_t incomingDecodedBytes);
   void DrawPersistentVertices(
       const std::vector<RenderVertex>& vertices,
       GXPrimitive primitive);
@@ -411,17 +521,21 @@ class GlRenderer {
 
   static constexpr size_t VertexStreamPageCount = 3u;
   static constexpr size_t VertexStreamPageCapacity = 65535u;
+  static constexpr size_t TextureMapCount = 8u;
+  static constexpr size_t MaximumTextureCacheEntries = 4096u;
+  static constexpr size_t MaximumTextureCacheBytes = 512u * 1024u * 1024u;
 
   unsigned int mVertexArray = 0;
   unsigned int mVertexBuffer = 0;
   unsigned int mOverflowVertexArray = 0;
   unsigned int mOverflowVertexBuffer = 0;
   unsigned int mShaderProgram = 0;
-  std::array<unsigned int, 8> mTextures = {};
-  std::array<u64, 8> mTextureRevisions = {};
-  std::array<u64, 8> mTextureInvalidationRevisions = {};
-  std::array<u64, 8> mTextureTlutRevisions = {};
-  std::array<TextureContentSnapshot, 8> mTextureSnapshots = {};
+  std::unordered_map<
+      Detail::TextureSourceKey,
+      Detail::TextureCacheEntry,
+      Detail::TextureSourceKeyHash> mTextureCache;
+  size_t mTextureCacheDecodedBytes = 0u;
+  u64 mTextureUseSerial = 0u;
   Detail::ShaderUniformLocationCache mUniformLocations;
   Detail::ShaderUniformValueCache mUniformValues;
   Detail::ShaderUniformValues mUniformScratch = {};

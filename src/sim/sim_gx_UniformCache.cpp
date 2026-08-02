@@ -67,6 +67,10 @@ u64 ShaderUniformValueCache::Update(const ShaderUniformValues& values) {
         mValues.stageTexCoords,
         values.stageTexCoords);
     update(
+        ShaderUniform::StageTexCoordScales,
+        mValues.stageTexCoordScales,
+        values.stageTexCoordScales);
+    update(
         ShaderUniform::StageRasterChannels,
         mValues.stageRasterChannels,
         values.stageRasterChannels);

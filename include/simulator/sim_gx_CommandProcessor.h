@@ -10,6 +10,9 @@
 extern "C" {
 #endif
 
+#define SIM_GX_SOURCE_CANONICAL_BIG_ENDIAN 0u
+#define SIM_GX_SOURCE_NATIVE_U16 1u
+
 void SIM_GX_CommandProcessor_Init();
 
 void SIM_GX_CommandProcessor_SendU8(u8 data);
@@ -17,7 +20,6 @@ void SIM_GX_CommandProcessor_SendU16(u16 data);
 void SIM_GX_CommandProcessor_SendS16(s16 data);
 void SIM_GX_CommandProcessor_SendU32(u32 data);
 void SIM_GX_CommandProcessor_SendF32(f32 data);
-void SIM_GX_CommandProcessor_SendU64(u64 data);
 
 GXBool SIM_GX_CommandProcessor_BeginDisplayList(void* list, u32 size);
 u32 SIM_GX_CommandProcessor_EndDisplayList(void);
@@ -26,6 +28,10 @@ void SIM_GX_CommandProcessor_CallDisplayList(const void* list, u32 size);
 void SIM_GX_CommandProcessor_SetVertexArray(GXAttr attr, void * ptr, int stride);
 void SIM_GX_CommandProcessor_SetVertexArrayU32(
     GXAttr attr, void * ptr, int stride);
+void SIM_GX_CommandProcessor_SetVertexArraySized(
+    GXAttr attr, void* ptr, u32 size, int stride);
+void SIM_GX_CommandProcessor_SetVertexArrayU32Sized(
+    GXAttr attr, void* ptr, u32 size, int stride);
 void SIM_GX_CommandProcessor_LoadTlut(
     u32 id, const void* data, u32 format, u16 entries);
 void SIM_GX_CommandProcessor_LoadTlutNativeU16(
@@ -40,6 +46,15 @@ void SIM_GX_CommandProcessor_LoadTextureNativeU16(
     u32 wrap_s, u32 wrap_t, u32 min_filter, u32 mag_filter,
     u32 mipmap, f32 min_lod, f32 max_lod, f32 lod_bias,
     u32 tlut_name);
+void SIM_GX_CommandProcessor_LoadTlutEx(
+    u32 id, const void* data, u32 data_size, u32 format, u16 entries,
+    u32 source_encoding, u32 object_id, u32 data_revision);
+void SIM_GX_CommandProcessor_LoadTextureEx(
+    u32 id, const void* data, u32 data_size, u16 width, u16 height,
+    u32 format, u32 wrap_s, u32 wrap_t, u32 min_filter, u32 mag_filter,
+    u32 mipmap, f32 min_lod, f32 max_lod, f32 lod_bias,
+    u32 tlut_name, u32 source_encoding, u32 object_id,
+    u32 data_revision);
 
 #ifdef __cplusplus
 }

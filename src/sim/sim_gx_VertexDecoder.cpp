@@ -243,12 +243,7 @@ bool ResolveAttributeSource(
     }
 
     const auto& array = state.GetVertexArray(attribute);
-    if (array.mArrayPtr == nullptr || array.mStride < 0) {
-        return false;
-    }
-    source = static_cast<const u8*>(array.mArrayPtr) +
-             index * static_cast<size_t>(array.mStride);
-    return true;
+    return array.ResolveRange(index, directSize, source);
 }
 
 bool DecodeVector(
@@ -385,6 +380,8 @@ bool DecodeVertexStream(
 
             if (independentlyIndexed) {
                 for (size_t group = 0; group < 3; ++group) {
+                    const size_t groupOffset =
+                        group * 3u * componentSize;
                     const u8* source = nullptr;
                     bool sourceBigEndian = false;
                     bool disabled = false;
@@ -392,7 +389,7 @@ bool DecodeVertexStream(
                             state,
                             GX_VA_NRM,
                             normalDescriptor,
-                            3 * componentSize,
+                            groupOffset + 3u * componentSize,
                             cursor,
                             end,
                             bigEndian,
@@ -404,7 +401,7 @@ bool DecodeVertexStream(
                     }
                     vertexDisabled = vertexDisabled || disabled;
                     if (!disabled) {
-                        source += group * 3 * componentSize;
+                        source += groupOffset;
                         if (!DecodeVector(
                                 source,
                                 3,

@@ -18,6 +18,7 @@ uniform int u_num_tev_stages;
 uniform int u_use_texture[MAX_TEV_STAGES];
 uniform sampler2D u_stage_texture[MAX_TEV_STAGES];
 uniform int u_stage_texcoord[MAX_TEV_STAGES];
+uniform vec2 u_stage_texcoord_scale[MAX_TEV_STAGES];
 uniform int u_stage_raster_channel[MAX_TEV_STAGES];
 uniform ivec4 u_tev_color_inputs[MAX_TEV_STAGES];
 uniform ivec4 u_tev_alpha_inputs[MAX_TEV_STAGES];
@@ -63,8 +64,18 @@ vec3 selectTextureCoordinate(int index)
 
 vec4 sampleStageTexture(int stage, vec3 coordinate)
 {
+    // A disabled TEV texture input is white.  If texturing is enabled while
+    // no texture coordinates exist, Flipper produces black instead (the
+    // renderer communicates that case with a negative value).
     if (u_use_texture[stage] == 0) return vec4(1.0);
-    vec2 projected = coordinate.xy / coordinate.z;
+    if (u_use_texture[stage] < 0) return vec4(0.0);
+    vec2 projected = coordinate.z == 0.0
+        ? coordinate.xy
+        : coordinate.xy / coordinate.z;
+    // The setup unit first converts generated coordinates to texel space
+    // using SU_SSIZE/SU_TSIZE.  OpenGL samples normalized coordinates, so
+    // each stage carries (SU size / bound texture size).
+    projected *= u_stage_texcoord_scale[stage];
     if (stage == 0) return texture(u_stage_texture[0], projected);
     if (stage == 1) return texture(u_stage_texture[1], projected);
     if (stage == 2) return texture(u_stage_texture[2], projected);
@@ -85,10 +96,12 @@ vec4 sampleStageTexture(int stage, vec3 coordinate)
 
 vec4 rasterColor(int channel)
 {
+    if (channel == 0) return color0;
     if (channel == 1) return color1;
-    // RAS1_CC_Z is emitted for both GX_COLOR_ZERO and GX_COLOR_NULL.
-    if (channel == 7) return vec4(0.0);
-    return color0;
+    // Channels 2-4 are invalid, 5-6 are indirect-texture alpha bump
+    // channels, and 7 is GX_COLOR_ZERO/GX_COLOR_NULL.  Alpha bump requires
+    // the indirect TEV path; never alias any of these channels to COLOR0.
+    return vec4(0.0);
 }
 
 vec4 swapColor(vec4 inputColor, int tableIndex)
@@ -149,22 +162,108 @@ float alphaInput(
     return 0.0;
 }
 
-float operationScale(int scale)
+ivec3 tevByte(vec3 value)
 {
-    if (scale == 1) return 2.0;
-    if (scale == 2) return 4.0;
-    if (scale == 3) return 0.5;
-    return 1.0;
+    return ivec3(floor(value * 255.0 + vec3(0.5))) & ivec3(255);
 }
 
-ivec3 quantizeTevColor(vec3 value)
+int tevByte(float value)
 {
-    return ivec3(floor(clamp(value, 0.0, 1.0) * 255.0 + 0.5));
+    return int(floor(value * 255.0 + 0.5)) & 255;
 }
 
-int quantizeTevAlpha(float value)
+vec4 tevOverflow(vec4 value)
 {
-    return int(floor(clamp(value, 0.0, 1.0) * 255.0 + 0.5));
+    ivec4 bytes =
+        ivec4(floor(value * 255.0 + vec4(0.5))) & ivec4(255);
+    return vec4(bytes) / 255.0;
+}
+
+ivec3 tevSignedValue(vec3 value)
+{
+    return ivec3(floor(value * 255.0 + vec3(0.5)));
+}
+
+int tevSignedValue(float value)
+{
+    return int(floor(value * 255.0 + 0.5));
+}
+
+ivec3 tevLerp(
+    ivec3 a,
+    ivec3 b,
+    ivec3 c,
+    ivec3 d,
+    int bias,
+    int operation,
+    int scale)
+{
+    // Flipper interpolates in byte space.  C is expanded from 0..255 to
+    // 0..256 and the scale is moved inside the lerp before rounding.
+    c += c >> 7;
+    if (bias == 1) d += ivec3(128);
+    if (bias == 2) d -= ivec3(128);
+
+    ivec3 lerp = (a << 8) + (b - a) * c;
+    if (scale != 3) {
+        int multiplier = 1 << scale;
+        lerp *= multiplier;
+        d *= multiplier;
+        lerp += operation == 1 ? ivec3(127) : ivec3(128);
+    }
+
+    ivec3 result = lerp >> 8;
+    result = operation == 1 ? d - result : d + result;
+    if (scale == 3) result >>= 1;
+    return result;
+}
+
+int tevLerp(
+    int a,
+    int b,
+    int c,
+    int d,
+    int bias,
+    int operation,
+    int scale)
+{
+    c += c >> 7;
+    if (bias == 1) d += 128;
+    if (bias == 2) d -= 128;
+
+    int lerp = (a << 8) + (b - a) * c;
+    if (scale != 3) {
+        int multiplier = 1 << scale;
+        lerp *= multiplier;
+        d *= multiplier;
+        lerp += operation == 1 ? 127 : 128;
+    }
+
+    int result = lerp >> 8;
+    result = operation == 1 ? d - result : d + result;
+    if (scale == 3) result >>= 1;
+    return result;
+}
+
+bool tevColorCompare(int operation, ivec3 a, ivec3 b)
+{
+    if (operation == 8) return a.r > b.r;
+    if (operation == 9) return a.r == b.r;
+
+    int packedA;
+    int packedB;
+    if (operation == 10 || operation == 11) {
+        // R is the low byte and G is the high byte.
+        packedA = a.r | (a.g << 8);
+        packedB = b.r | (b.g << 8);
+    } else {
+        // BGR24 likewise compares the packed little-endian RGB value.
+        packedA = a.r | (a.g << 8) | (a.b << 16);
+        packedB = b.r | (b.g << 8) | (b.b << 16);
+    }
+    return (operation & 1) == 0
+        ? packedA > packedB
+        : packedA == packedB;
 }
 
 vec3 applyColorOperation(
@@ -177,47 +276,33 @@ vec3 applyColorOperation(
     vec3 c,
     vec3 d)
 {
-    vec3 result;
+    ivec3 inputA = tevByte(a);
+    ivec3 inputB = tevByte(b);
+    ivec3 inputC = tevByte(c);
+    ivec3 inputD = tevSignedValue(d);
+    ivec3 result;
     if (operation < 8) {
-        vec3 blend = mix(a, b, c);
-        result = operation == 1 ? d - blend : d + blend;
-        if (bias == 1) result += 0.5;
-        if (bias == 2) result -= 0.5;
-        result *= operationScale(scale);
-    } else if (operation == 8 || operation == 9) {
-        int qa = quantizeTevColor(a).r;
-        int qb = quantizeTevColor(b).r;
-        bool passes = operation == 8 ? qa > qb : qa == qb;
-        result = d + (passes ? c : vec3(0.0));
-    } else if (operation == 10 || operation == 11) {
-        ivec3 qa = quantizeTevColor(a);
-        ivec3 qb = quantizeTevColor(b);
-        int packedA = qa.r * 256 + qa.g;
-        int packedB = qb.r * 256 + qb.g;
-        bool passes = operation == 10
-            ? packedA > packedB
-            : packedA == packedB;
-        result = d + (passes ? c : vec3(0.0));
-    } else if (operation == 12 || operation == 13) {
-        ivec3 qa = quantizeTevColor(a);
-        ivec3 qb = quantizeTevColor(b);
-        int packedA = qa.b * 65536 + qa.g * 256 + qa.r;
-        int packedB = qb.b * 65536 + qb.g * 256 + qb.r;
-        bool passes = operation == 12
-            ? packedA > packedB
-            : packedA == packedB;
-        result = d + (passes ? c : vec3(0.0));
+        result = tevLerp(
+            inputA, inputB, inputC, inputD,
+            bias, operation, scale);
+    } else if (operation < 14) {
+        result = inputD +
+            (tevColorCompare(operation, inputA, inputB)
+                ? inputC
+                : ivec3(0));
     } else {
-        ivec3 qa = quantizeTevColor(a);
-        ivec3 qb = quantizeTevColor(b);
         bvec3 passes = operation == 14
-            ? greaterThan(qa, qb)
-            : equal(qa, qb);
-        result = d + mix(vec3(0.0), c, passes);
+            ? greaterThan(inputA, inputB)
+            : equal(inputA, inputB);
+        result = inputD + ivec3(
+            passes.r ? inputC.r : 0,
+            passes.g ? inputC.g : 0,
+            passes.b ? inputC.b : 0);
     }
-    return clampEnabled != 0
-        ? clamp(result, 0.0, 1.0)
-        : clamp(result, -1024.0 / 255.0, 1023.0 / 255.0);
+    result = clampEnabled != 0
+        ? clamp(result, ivec3(0), ivec3(255))
+        : clamp(result, ivec3(-1024), ivec3(1023));
+    return vec3(result) / 255.0;
 }
 
 float applyAlphaOperation(
@@ -228,24 +313,39 @@ float applyAlphaOperation(
     float a,
     float b,
     float c,
-    float d)
+    float d,
+    vec3 colorA,
+    vec3 colorB)
 {
-    float result;
+    int inputA = tevByte(a);
+    int inputB = tevByte(b);
+    int inputC = tevByte(c);
+    int inputD = tevSignedValue(d);
+    int result;
     if (operation < 8) {
-        float blend = mix(a, b, c);
-        result = operation == 1 ? d - blend : d + blend;
-        if (bias == 1) result += 0.5;
-        if (bias == 2) result -= 0.5;
-        result *= operationScale(scale);
+        result = tevLerp(
+            inputA, inputB, inputC, inputD,
+            bias, operation, scale);
     } else {
-        int qa = quantizeTevAlpha(a);
-        int qb = quantizeTevAlpha(b);
-        bool passes = (operation & 1) == 0 ? qa > qb : qa == qb;
-        result = d + (passes ? c : 0.0);
+        bool passes;
+        if (operation < 14) {
+            // Alpha compare modes R8/GR16/BGR24 compare the color combiner's
+            // A and B inputs; only A8 (ops 14/15) uses alpha A and B.
+            passes = tevColorCompare(
+                operation,
+                tevByte(colorA),
+                tevByte(colorB));
+        } else {
+            passes = (operation & 1) == 0
+                ? inputA > inputB
+                : inputA == inputB;
+        }
+        result = inputD + (passes ? inputC : 0);
     }
-    return clampEnabled != 0
-        ? clamp(result, 0.0, 1.0)
-        : clamp(result, -1024.0 / 255.0, 1023.0 / 255.0);
+    result = clampEnabled != 0
+        ? clamp(result, 0, 255)
+        : clamp(result, -1024, 1023);
+    return float(result) / 255.0;
 }
 
 bool alphaComparisonPasses(int comparison, int value, int reference)
@@ -321,11 +421,9 @@ void main()
     registers[1] = u_tev_registers[1];
     registers[2] = u_tev_registers[2];
     registers[3] = u_tev_registers[3];
+    vec3 finalStageColor = registers[0].rgb;
+    float finalStageAlpha = registers[0].a;
     vec4 lastTextureColor = vec4(0.0);
-    int lastStage = clamp(
-        u_num_tev_stages - 1,
-        0,
-        MAX_TEV_STAGES - 1);
 
     for (int stage = 0; stage < MAX_TEV_STAGES; ++stage) {
         if (stage >= u_num_tev_stages) break;
@@ -334,7 +432,7 @@ void main()
         vec4 rawTextureColor = sampleStageTexture(
             stage,
             selectTextureCoordinate(u_stage_texcoord[stage]));
-        if (stage == lastStage) {
+        if (u_use_texture[stage] > 0) {
             lastTextureColor = rawTextureColor;
         }
         vec4 textureColor = swapColor(
@@ -348,55 +446,62 @@ void main()
         ivec4 colorOperation = u_tev_color_operation[stage];
         ivec4 alphaOperation = u_tev_alpha_operation[stage];
 
+        vec3 colorA = colorInput(
+            colorInputs.x,
+            registers[0], registers[1], registers[2], registers[3],
+            textureColor, raster, u_tev_konst_color[stage].rgb);
+        vec3 colorB = colorInput(
+            colorInputs.y,
+            registers[0], registers[1], registers[2], registers[3],
+            textureColor, raster, u_tev_konst_color[stage].rgb);
+        vec3 colorC = colorInput(
+            colorInputs.z,
+            registers[0], registers[1], registers[2], registers[3],
+            textureColor, raster, u_tev_konst_color[stage].rgb);
+        vec3 colorD = colorInput(
+            colorInputs.w,
+            registers[0], registers[1], registers[2], registers[3],
+            textureColor, raster, u_tev_konst_color[stage].rgb);
+        float alphaA = alphaInput(
+            alphaInputs.x,
+            registers[0], registers[1], registers[2], registers[3],
+            textureColor, raster, u_tev_konst_alpha[stage]);
+        float alphaB = alphaInput(
+            alphaInputs.y,
+            registers[0], registers[1], registers[2], registers[3],
+            textureColor, raster, u_tev_konst_alpha[stage]);
+        float alphaC = alphaInput(
+            alphaInputs.z,
+            registers[0], registers[1], registers[2], registers[3],
+            textureColor, raster, u_tev_konst_alpha[stage]);
+        float alphaD = alphaInput(
+            alphaInputs.w,
+            registers[0], registers[1], registers[2], registers[3],
+            textureColor, raster, u_tev_konst_alpha[stage]);
+
         vec3 resultColor = applyColorOperation(
             colorOperation.x,
             colorOperation.y,
             colorOperation.z,
             colorOperation.w,
-            colorInput(
-                colorInputs.x,
-                registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster, u_tev_konst_color[stage].rgb),
-            colorInput(
-                colorInputs.y,
-                registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster, u_tev_konst_color[stage].rgb),
-            colorInput(
-                colorInputs.z,
-                registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster, u_tev_konst_color[stage].rgb),
-            colorInput(
-                colorInputs.w,
-                registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster, u_tev_konst_color[stage].rgb));
+            colorA, colorB, colorC, colorD);
         float resultAlpha = applyAlphaOperation(
             alphaOperation.x,
             alphaOperation.y,
             alphaOperation.z,
             alphaOperation.w,
-            alphaInput(
-                alphaInputs.x,
-                registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster, u_tev_konst_alpha[stage]),
-            alphaInput(
-                alphaInputs.y,
-                registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster, u_tev_konst_alpha[stage]),
-            alphaInput(
-                alphaInputs.z,
-                registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster, u_tev_konst_alpha[stage]),
-            alphaInput(
-                alphaInputs.w,
-                registers[0], registers[1], registers[2], registers[3],
-                textureColor, raster, u_tev_konst_alpha[stage]));
+            alphaA, alphaB, alphaC, alphaD,
+            colorA, colorB);
 
         ivec2 outputs = u_tev_output_registers[stage];
         registers[outputs.x].rgb = resultColor;
         registers[outputs.y].a = resultAlpha;
+        finalStageColor = resultColor;
+        finalStageAlpha = resultAlpha;
     }
 
-    color = registers[0];
+    // The last TEV stage is displayed regardless of which register it wrote.
+    color = tevOverflow(vec4(finalStageColor, finalStageAlpha));
     color.rgb = mix(color.rgb, u_fog_color, fogDensity());
 
     int alpha = int(floor(clamp(color.a, 0.0, 1.0) * 255.0 + 0.5));
@@ -416,12 +521,11 @@ void main()
     }
     if (!passes) discard;
 
-    if (u_ztexture_operation != 0 &&
-        u_use_texture[lastStage] != 0) {
+    if (u_ztexture_operation != 0) {
         uint textureDepth;
         if (u_ztexture_format == 0) {
             textureDepth = uint(
-                floor(lastTextureColor.r * 255.0 + 0.5));
+                floor(lastTextureColor.a * 255.0 + 0.5));
         } else if (u_ztexture_format == 1) {
             uint highByte = uint(
                 floor(lastTextureColor.a * 255.0 + 0.5));
@@ -439,15 +543,18 @@ void main()
 
         uint depth = textureDepth;
         if (u_ztexture_operation == 1) {
-            uint referenceDepth = uint(
-                floor(
-                    clamp(gl_FragCoord.z, 0.0, 1.0) *
-                        16777215.0 +
-                    0.5));
+            // GX projection occupies OpenGL window depth 0..0.5.  Recover
+            // the 24-bit GX depth before applying GX_ZT_ADD.
+            uint referenceDepth = min(
+                uint(clamp(gl_FragCoord.z * 2.0, 0.0, 1.0) *
+                    16777216.0),
+                0x00ffffffu);
             depth += referenceDepth;
         }
         depth = (depth + u_ztexture_bias) & 0x00ffffffu;
-        gl_FragDepth = float(depth) / 16777215.0;
+        // Convert the resulting GX depth back to this renderer's OpenGL
+        // window-depth range.
+        gl_FragDepth = float(depth) / 33554432.0;
     } else {
         gl_FragDepth = gl_FragCoord.z;
     }

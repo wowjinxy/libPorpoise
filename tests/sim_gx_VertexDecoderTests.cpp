@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -92,7 +93,12 @@ bool TestIndependentlyIndexedNbt() {
     normals[9 + 3 + 1] = 16384;
     state.SetVertexArray(
         GX_VA_NBT,
-        {normals.data(), static_cast<int>(9 * sizeof(s16))});
+        {
+            normals.data(),
+            static_cast<int>(9 * sizeof(s16)),
+            false,
+            30u,
+        });
 
     const std::vector<u8> stream = {0, 1, 0};
     std::vector<SIM::GX::RenderVertex> decoded;
@@ -102,10 +108,26 @@ bool TestIndependentlyIndexedNbt() {
     }
 
     const auto& vertex = decoded.front();
+    if (!NearlyEqual(vertex.normal.x, 1.0f) ||
+        !NearlyEqual(vertex.binormal.y, 1.0f) ||
+        !NearlyEqual(vertex.tangent.z, -1.0f)) {
+        return false;
+    }
+
+    // The binormal index reaches byte 30 exactly after its in-record offset.
+    // One byte less must fail before advancing to that vector.
+    state.SetVertexArray(
+        GX_VA_NBT,
+        {
+            normals.data(),
+            static_cast<int>(9 * sizeof(s16)),
+            false,
+            29u,
+        });
+    decoded.assign(1, SIM::GX::RenderVertex{});
     return
-        NearlyEqual(vertex.normal.x, 1.0f) &&
-        NearlyEqual(vertex.binormal.y, 1.0f) &&
-        NearlyEqual(vertex.tangent.z, -1.0f);
+        !SIM::GX::DecodeVertexStream(state, stream, true, decoded) &&
+        decoded.empty();
 }
 
 bool TestIndexedVertexSuppression() {
@@ -321,6 +343,146 @@ bool TestTexGenTypeDecode() {
         reinterpret_cast<const u8*>(&matrix3x4),
         1);
     return state.GetTexCoordGenState(0).function == GX_TG_MTX3x4;
+}
+
+bool TestIndexedAttributeArrayBounds() {
+    const auto rejects = [](
+        const SIM::GX::GlobalState& state, std::span<const u8> stream) {
+        std::vector<SIM::GX::RenderVertex> decoded(1);
+        return
+            !SIM::GX::DecodeVertexStream(state, stream, true, decoded) &&
+            decoded.empty();
+    };
+
+    std::array<s16, 6> positions = {
+        16, 32, 48,
+        -16, -32, -48,
+    };
+    SIM::GX::GlobalState positionState;
+    positionState.SetVertexDescriptor(GX_VA_POS, GX_INDEX8);
+    positionState.SetVertexFormatComponents(
+        GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ);
+    positionState.SetVertexFormatDataType(
+        GX_VTXFMT0, GX_VA_POS, GX_S16);
+    positionState.SetVertexFormatFraction(GX_VTXFMT0, GX_VA_POS, 4);
+    positionState.SetVertexArray(
+        GX_VA_POS,
+        {
+            positions.data(),
+            static_cast<int>(3 * sizeof(s16)),
+            false,
+            sizeof(positions),
+        });
+
+    std::vector<SIM::GX::RenderVertex> decoded;
+    const std::array<u8, 1> finalPosition = {1u};
+    if (!SIM::GX::DecodeVertexStream(
+            positionState, finalPosition, true, decoded) ||
+        decoded.size() != 1u ||
+        !NearlyEqual(decoded[0].position.x, -1.0f)) {
+        return false;
+    }
+    const std::array<u8, 1> pastPosition = {2u};
+    if (!rejects(positionState, pastPosition)) {
+        return false;
+    }
+
+    // A zero size deliberately preserves legacy/ordinary pointer behavior.
+    positionState.SetVertexArray(
+        GX_VA_POS,
+        {
+            positions.data(),
+            static_cast<int>(3 * sizeof(s16)),
+            false,
+            0u,
+        });
+    decoded.clear();
+    if (!SIM::GX::DecodeVertexStream(
+            positionState, finalPosition, true, decoded) ||
+        decoded.size() != 1u) {
+        return false;
+    }
+
+    positionState.SetVertexDescriptor(GX_VA_POS, GX_INDEX16);
+    positionState.SetVertexArray(
+        GX_VA_POS,
+        {
+            positions.data(),
+            static_cast<int>(3 * sizeof(s16)),
+            false,
+            sizeof(positions),
+        });
+    const std::array<u8, 2> largePositionIndex = {0xffu, 0xfeu};
+    if (!rejects(positionState, largePositionIndex)) {
+        return false;
+    }
+
+    std::array<s8, 3> normal = {64, 0, 0};
+    SIM::GX::GlobalState normalState;
+    normalState.SetVertexDescriptor(GX_VA_NRM, GX_INDEX8);
+    normalState.SetVertexFormatComponents(
+        GX_VTXFMT0, GX_VA_NRM, GX_NRM_XYZ);
+    normalState.SetVertexFormatDataType(
+        GX_VTXFMT0, GX_VA_NRM, GX_S8);
+    normalState.SetVertexArray(
+        GX_VA_NRM,
+        {normal.data(), static_cast<int>(normal.size()), false, normal.size()});
+    const std::array<u8, 1> firstIndex = {0u};
+    decoded.clear();
+    if (!SIM::GX::DecodeVertexStream(
+            normalState, firstIndex, true, decoded) ||
+        decoded.size() != 1u ||
+        !NearlyEqual(decoded[0].normal.x, 1.0f)) {
+        return false;
+    }
+    const std::array<u8, 1> secondIndex = {1u};
+    if (!rejects(normalState, secondIndex)) {
+        return false;
+    }
+
+    std::array<u8, 4> color = {10u, 20u, 30u, 40u};
+    SIM::GX::GlobalState colorState;
+    colorState.SetVertexDescriptor(GX_VA_CLR0, GX_INDEX8);
+    colorState.SetVertexFormatComponents(
+        GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA);
+    colorState.SetVertexFormatDataType(
+        GX_VTXFMT0, GX_VA_CLR0, GX_RGBA8);
+    colorState.SetVertexArray(
+        GX_VA_CLR0,
+        {color.data(), static_cast<int>(color.size()), false, color.size()});
+    decoded.clear();
+    if (!SIM::GX::DecodeVertexStream(
+            colorState, firstIndex, true, decoded) ||
+        decoded.size() != 1u ||
+        !NearlyEqual(decoded[0].color0.a, 40.0f / 255.0f) ||
+        !rejects(colorState, secondIndex)) {
+        return false;
+    }
+
+    std::array<s16, 2> texCoord = {2, -4};
+    SIM::GX::GlobalState texCoordState;
+    texCoordState.SetVertexDescriptor(GX_VA_TEX0, GX_INDEX8);
+    texCoordState.SetVertexFormatComponents(
+        GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST);
+    texCoordState.SetVertexFormatDataType(
+        GX_VTXFMT0, GX_VA_TEX0, GX_S16);
+    texCoordState.SetVertexFormatFraction(GX_VTXFMT0, GX_VA_TEX0, 1);
+    texCoordState.SetVertexArray(
+        GX_VA_TEX0,
+        {
+            texCoord.data(),
+            static_cast<int>(sizeof(texCoord)),
+            false,
+            sizeof(texCoord),
+        });
+    decoded.clear();
+    return
+        SIM::GX::DecodeVertexStream(
+            texCoordState, firstIndex, true, decoded) &&
+        decoded.size() == 1u &&
+        NearlyEqual(decoded[0].texCoords[0].s, 1.0f) &&
+        NearlyEqual(decoded[0].texCoords[0].t, -2.0f) &&
+        rejects(texCoordState, secondIndex);
 }
 
 bool TestActiveTexGenCount() {
@@ -632,6 +794,84 @@ bool TestTextureContentSnapshot() {
         !canonicalSnapshot.Matches(nativeTexture);
 }
 
+bool TestTextureSourceKey() {
+    alignas(32) std::array<u8, 96> firstSource = {};
+    alignas(32) std::array<u8, 96> secondSource = {};
+
+    SIM::GX::TextureState texture;
+    texture.data = firstSource.data();
+    texture.width = 8u;
+    texture.height = 8u;
+    texture.format = GX_TF_CMPR;
+    texture.mipmap = true;
+    texture.maxLod = 2.0f;
+    const auto sourceKey =
+        SIM::GX::Detail::MakeTextureSourceKey(texture);
+    if (sourceKey.mipLevelCount != 3u ||
+        SIM::GX::Detail::GetDecodedTextureByteSize(texture) != 336u) {
+        return false;
+    }
+
+    // Sampler-only changes must share the decoded OpenGL image.
+    SIM::GX::TextureState samplerVariant = texture;
+    samplerVariant.wrapS = GX_REPEAT;
+    samplerVariant.wrapT = GX_MIRROR;
+    samplerVariant.minFilter = GX_LIN_MIP_LIN;
+    samplerVariant.magFilter = GX_LINEAR;
+    samplerVariant.minLod = 1.0f;
+    samplerVariant.maxLod = 2.75f;
+    samplerVariant.lodBias = -1.5f;
+    if (!(sourceKey ==
+          SIM::GX::Detail::MakeTextureSourceKey(samplerVariant))) {
+        return false;
+    }
+
+    SIM::GX::TextureState different = texture;
+    different.data = secondSource.data();
+    if (sourceKey == SIM::GX::Detail::MakeTextureSourceKey(different)) {
+        return false;
+    }
+    different = texture;
+    different.maxLod = 1.0f;
+    if (sourceKey == SIM::GX::Detail::MakeTextureSourceKey(different)) {
+        return false;
+    }
+    different = texture;
+    different.sourceEncoding =
+        SIM::GX::TextureState::SourceEncoding::NativeU16;
+    if (sourceKey == SIM::GX::Detail::MakeTextureSourceKey(different)) {
+        return false;
+    }
+
+    SIM::GX::TextureState indexed = texture;
+    indexed.format = static_cast<GXTexFmt>(GX_TF_C8);
+    indexed.mipmap = false;
+    indexed.maxLod = 0.0f;
+    indexed.tlutName = 4u;
+    SIM::GX::TlutState tlut;
+    tlut.format = GX_TL_RGB5A3;
+    tlut.entries = 256u;
+    tlut.revision = 19u;
+    const auto indexedKey =
+        SIM::GX::Detail::MakeTextureSourceKey(indexed, &tlut);
+    SIM::GX::TextureState indexedSamplerVariant = indexed;
+    indexedSamplerVariant.wrapS = GX_REPEAT;
+    if (!(indexedKey == SIM::GX::Detail::MakeTextureSourceKey(
+            indexedSamplerVariant, &tlut))) {
+        return false;
+    }
+
+    SIM::GX::TlutState changedTlut = tlut;
+    changedTlut.revision = 20u;
+    if (indexedKey == SIM::GX::Detail::MakeTextureSourceKey(
+            indexed, &changedTlut)) {
+        return false;
+    }
+    indexed.tlutName = 5u;
+    return !(indexedKey ==
+        SIM::GX::Detail::MakeTextureSourceKey(indexed, &tlut));
+}
+
 bool TestTlutRevisionInvalidatesIndexedTexture() {
     using SIM::GX::Detail::ShouldValidateTexture;
 
@@ -693,7 +933,7 @@ bool TestShaderUniformLocationCache() {
     SIM::GX::Detail::ShaderUniformLocationCache cache;
     constexpr size_t locationCount =
         SIM::GX::Detail::ShaderUniformLocationCache::LocationCount();
-    static_assert(locationCount == 35u);
+    static_assert(locationCount == 36u);
 
     size_t resolverCalls = 0;
     std::string_view firstName;
@@ -726,7 +966,8 @@ bool TestShaderUniformLocationCache() {
 
     const auto& changedProgram = cache.Resolve(8u, resolver);
     if (resolverCalls != locationCount * 2u ||
-        changedProgram[SIM::GX::Detail::ShaderUniform::Projection] != 836) {
+        changedProgram[SIM::GX::Detail::ShaderUniform::Projection] !=
+            static_cast<int>(801u + locationCount)) {
         return false;
     }
 
@@ -757,6 +998,11 @@ bool TestShaderUniformValueCache() {
     values.useTextures[3] = 1;
     if (cache.Update(values) !=
         ShaderUniformMask(ShaderUniform::UseTextures)) {
+        return false;
+    }
+    values.stageTexCoordScales[7] = 0.5f;
+    if (cache.Update(values) !=
+        ShaderUniformMask(ShaderUniform::StageTexCoordScales)) {
         return false;
     }
     values.tevKonstColors[7] = 0.5f;
@@ -988,6 +1234,9 @@ int main() {
     if (!TestIndexedPackedU32Color()) {
         return 4;
     }
+    if (!TestIndexedAttributeArrayBounds()) {
+        return 23;
+    }
     if (!TestMalformedStreamClearsOutput()) {
         return 5;
     }
@@ -1014,6 +1263,9 @@ int main() {
     }
     if (!TestTextureContentSnapshot()) {
         return 13;
+    }
+    if (!TestTextureSourceKey()) {
+        return 24;
     }
     if (!TestActiveTexGenCount()) {
         return 14;

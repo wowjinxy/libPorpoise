@@ -24,6 +24,10 @@ struct VertexArray {
     void * mArrayPtr = nullptr;
     int mStride = 0;
     bool mHostPackedU32 = false;
+    size_t mArraySize = 0;
+
+    bool ResolveRange(
+        size_t index, size_t requiredBytes, const u8*& source) const;
 };
 
 struct BlendState {
@@ -40,6 +44,14 @@ struct DepthState {
     bool compareEnabled = true;
     GXCompare function = GX_LEQUAL;
     bool updateEnabled = true;
+};
+
+struct PixelEngineState {
+    GXPixelFmt pixelFormat = GX_PF_RGB8_Z24;
+    GXZFmt16 zFormat = GX_ZC_LINEAR;
+    bool zCompareBeforeTexture = false;
+    bool destinationAlphaEnabled = false;
+    u8 destinationAlpha = 0;
 };
 
 struct ZTextureState {
@@ -111,11 +123,41 @@ struct ViewportState {
 };
 
 struct ScissorState {
-    u32 left = 0;
-    u32 top = 0;
+    s32 left = 0;
+    s32 top = 0;
     u32 width = 640;
     u32 height = 480;
+    s32 offsetX = 0;
+    s32 offsetY = 0;
     bool valid = false;
+};
+
+struct CopyFilterState {
+    // BP 0x53/0x54 store seven six-bit vertical-filter taps. Flipper
+    // combines them into one coefficient for each sampled EFB row.
+    std::array<u8, 7> coefficients = {0, 0, 21, 22, 21, 0, 0};
+    bool halfScale = false;
+
+    std::array<u32, 3> EffectiveCoefficients() const {
+        return {
+            static_cast<u32>(coefficients[0]) + coefficients[1],
+            static_cast<u32>(coefficients[2]) + coefficients[3] +
+                coefficients[4],
+            static_cast<u32>(coefficients[5]) + coefficients[6],
+        };
+    }
+};
+
+struct TexCoordScaleState {
+    // BP stores each texture-coordinate size as (size - 1).
+    u16 scaleS = 0;
+    u16 scaleT = 0;
+    bool biasS = false;
+    bool biasT = false;
+    bool cylindricalWrapS = false;
+    bool cylindricalWrapT = false;
+    bool lineOffset = false;
+    bool pointOffset = false;
 };
 
 struct TextureState {
@@ -237,8 +279,10 @@ class GlobalState {
   const std::array<float, 6>& GetViewportTransform() const;
   const ViewportState& GetViewportState() const;
   const ScissorState& GetScissorState() const;
+  const CopyFilterState& GetCopyFilterState() const;
   const BlendState& GetBlendState() const;
   const DepthState& GetDepthState() const;
+  const PixelEngineState& GetPixelEngineState() const;
   const ZTextureState& GetZTextureState() const;
   const AlphaCompareState& GetAlphaCompareState() const;
   const FogState& GetFogState() const;
@@ -250,6 +294,7 @@ class GlobalState {
   u64 GetTextureInvalidationRevision() const;
   u64 GetUniformStateRevision() const;
   const TexCoordGenState& GetTexCoordGenState(size_t index) const;
+  const TexCoordScaleState& GetTexCoordScaleState(size_t index) const;
   const std::array<float, 16>& GetTexCoordGenMatrix(size_t index) const;
   const std::array<float, 16>& GetTexCoordGenPostMatrix(size_t index) const;
   const TevStageState& GetTevStageState(size_t index) const;
@@ -323,8 +368,10 @@ class GlobalState {
   u32 mCopySourceWidth = 640;
   u32 mCopySourceHeight = 480;
   bool mCopySourceValid = false;
+  CopyFilterState mCopyFilterState = {};
   BlendState mBlendState = {};
   DepthState mDepthState = {};
+  PixelEngineState mPixelEngineState = {};
   ZTextureState mZTextureState = {};
   AlphaCompareState mAlphaCompareState = {};
   FogState mFogState = {};
@@ -334,6 +381,7 @@ class GlobalState {
   std::array<TextureState, 8> mTextures = {};
   std::array<TlutState, 20> mTluts = {};
   std::array<TevStageState, 16> mTevStages = {};
+  std::array<TexCoordScaleState, 8> mTexCoordScales = {};
   std::array<std::array<u8, 4>, 4> mTevSwapTables = {};
   std::array<std::array<float, 4>, 4> mTevColors = {};
   std::array<std::array<float, 4>, 4> mTevKonstColors = {};

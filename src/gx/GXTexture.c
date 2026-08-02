@@ -4,192 +4,444 @@
 #ifdef LIBPORPOISE_PORT
 #include <simulator/sim_gx_CommandProcessor.h>
 #include <stdint.h>
+#include <stdlib.h>
 
-#define GX_HOST_TEX_USER_DATA_SLOTS 1024
+#define GX_HOST_METADATA_INITIAL_CAPACITY 256U
+#define GX_HOST_METADATA_HASH_INITIAL_CAPACITY 512U
+#define GX_HOST_TEX_COOKIE_TAG 0xA5000000U
+#define GX_HOST_TEX_COOKIE_TAG_MASK 0xFF000000U
+#define GX_HOST_TEX_COOKIE_INDEX_MASK 0x00FFFFFFU
+#define GX_HOST_TLUT_REGISTER_TAG 0x64000000U
+#define GX_HOST_TLUT_COOKIE_TAG 0x00A00000U
+#define GX_HOST_TLUT_COOKIE_TAG_MASK 0x00E00000U
+#define GX_HOST_TLUT_COOKIE_INDEX_MASK 0x001FFFFFU
 
-typedef struct GXHostTexUserDataEntry {
-	const GXTexObj* object;
-	void* userData;
-} GXHostTexUserDataEntry;
-
-typedef struct GXHostTexImageDataEntry {
-	const GXTexObj* object;
+/*
+ * Host pointers cannot fit in the SDK's fixed-size GX objects.  Store an
+ * immutable metadata cookie in bytes that already belong to the ABI instead
+ * of keying metadata by the address of the object.  The cookie therefore
+ * follows ordinary structure assignment and memcpy, just like the remaining
+ * GX descriptor words.
+ *
+ * Texture cookies use GXTexObjPriv::userData.  The public user-data value is
+ * held in the record below.  TLUT cookies use the host-only payload of the
+ * load-TLUT source register; the simulator receives the full source pointer
+ * through SIM_GX_CommandProcessor_LoadTlut and does not dereference that BP
+ * payload.
+ *
+ * Records are immutable.  A setter interns the complete host-only value and
+ * updates only the destination object's cookie, so an unobservable memcpy
+ * alias keeps its original metadata.  Interning bounds repeated descriptor
+ * initialization (for example, movie textures rebuilt every frame) by the
+ * number of distinct pointer/user-data/encoding tuples instead of frame
+ * count.  Tagged cookies reject ordinary SDK user-data values and stale raw
+ * TLUT source fields instead of accidentally resolving another record.
+ */
+typedef struct GXHostTexMetadata {
 	void* imageData;
+	void* userData;
 	GXBool nativeU16;
-} GXHostTexImageDataEntry;
+} GXHostTexMetadata;
 
-typedef struct GXHostTlutDataEntry {
-	const GXTlutObj* object;
+typedef struct GXHostTlutMetadata {
 	void* data;
 	GXBool nativeU16;
-} GXHostTlutDataEntry;
+} GXHostTlutMetadata;
 
-static GXHostTexUserDataEntry gxHostTexUserData[GX_HOST_TEX_USER_DATA_SLOTS];
-static GXHostTexImageDataEntry gxHostTexImageData[GX_HOST_TEX_USER_DATA_SLOTS];
-static GXHostTlutDataEntry gxHostTlutData[GX_HOST_TEX_USER_DATA_SLOTS];
+static GXHostTexMetadata* gxHostTexMetadata;
+static u32 gxHostTexMetadataCount;
+static u32 gxHostTexMetadataCapacity;
+static u32* gxHostTexMetadataHash;
+static u32 gxHostTexMetadataHashCapacity;
+static GXHostTlutMetadata* gxHostTlutMetadata;
+static u32 gxHostTlutMetadataCount;
+static u32 gxHostTlutMetadataCapacity;
+static u32* gxHostTlutMetadataHash;
+static u32 gxHostTlutMetadataHashCapacity;
+static u32 gxHostNextDataRevision = 1;
 
-static void GXHostSetTexUserData(const GXTexObj* object, void* userData)
+static u32 GXHostAllocateCounter(u32* counter)
 {
-	s32 firstFree = -1;
-	u32 i;
+	u32 value = *counter;
 
-	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
-		if (gxHostTexUserData[i].object == object) {
-			if (userData == NULL) {
-				gxHostTexUserData[i].object = NULL;
+	if (value == 0) {
+		abort();
+	}
+	*counter = value + 1;
+	return value;
+}
+
+static u32 GXHostHashBytes(u32 hash, const void* data, size_t size)
+{
+	const u8* bytes = (const u8*)data;
+	size_t i;
+
+	for (i = 0; i < size; ++i) {
+		hash ^= bytes[i];
+		hash *= 16777619U;
+	}
+	return hash;
+}
+
+static u32 GXHostHashTexMetadata(const GXHostTexMetadata* metadata)
+{
+	uintptr_t imageData = (uintptr_t)metadata->imageData;
+	uintptr_t userData = (uintptr_t)metadata->userData;
+	u32 hash = 2166136261U;
+
+	hash = GXHostHashBytes(hash, &imageData, sizeof(imageData));
+	hash = GXHostHashBytes(hash, &userData, sizeof(userData));
+	return GXHostHashBytes(
+		hash, &metadata->nativeU16, sizeof(metadata->nativeU16));
+}
+
+static u32 GXHostHashTlutMetadata(const GXHostTlutMetadata* metadata)
+{
+	uintptr_t data = (uintptr_t)metadata->data;
+	u32 hash = 2166136261U;
+
+	hash = GXHostHashBytes(hash, &data, sizeof(data));
+	return GXHostHashBytes(
+		hash, &metadata->nativeU16, sizeof(metadata->nativeU16));
+}
+
+static GXBool GXHostTexMetadataEqual(
+	const GXHostTexMetadata* lhs, const GXHostTexMetadata* rhs)
+{
+	return lhs->imageData == rhs->imageData &&
+		lhs->userData == rhs->userData &&
+		lhs->nativeU16 == rhs->nativeU16;
+}
+
+static GXBool GXHostTlutMetadataEqual(
+	const GXHostTlutMetadata* lhs, const GXHostTlutMetadata* rhs)
+{
+	return lhs->data == rhs->data && lhs->nativeU16 == rhs->nativeU16;
+}
+
+static void GXHostEnsureTexMetadataCapacity(void)
+{
+	u32 newCapacity;
+	GXHostTexMetadata* resized;
+
+	if (gxHostTexMetadataCount < gxHostTexMetadataCapacity) {
+		return;
+	}
+	newCapacity = gxHostTexMetadataCapacity == 0
+		? GX_HOST_METADATA_INITIAL_CAPACITY
+		: gxHostTexMetadataCapacity * 2;
+	if (newCapacity > GX_HOST_TEX_COOKIE_INDEX_MASK) {
+		newCapacity = GX_HOST_TEX_COOKIE_INDEX_MASK;
+	}
+	if (newCapacity <= gxHostTexMetadataCapacity) {
+		abort();
+	}
+	resized = (GXHostTexMetadata*)realloc(
+		gxHostTexMetadata, (size_t)newCapacity * sizeof(*resized));
+	if (resized == NULL) {
+		abort();
+	}
+	gxHostTexMetadata = resized;
+	gxHostTexMetadataCapacity = newCapacity;
+}
+
+static void GXHostEnsureTlutMetadataCapacity(void)
+{
+	u32 newCapacity;
+	GXHostTlutMetadata* resized;
+
+	if (gxHostTlutMetadataCount < gxHostTlutMetadataCapacity) {
+		return;
+	}
+	newCapacity = gxHostTlutMetadataCapacity == 0
+		? GX_HOST_METADATA_INITIAL_CAPACITY
+		: gxHostTlutMetadataCapacity * 2;
+	if (newCapacity > GX_HOST_TLUT_COOKIE_INDEX_MASK) {
+		newCapacity = GX_HOST_TLUT_COOKIE_INDEX_MASK;
+	}
+	if (newCapacity <= gxHostTlutMetadataCapacity) {
+		abort();
+	}
+	resized = (GXHostTlutMetadata*)realloc(
+		gxHostTlutMetadata, (size_t)newCapacity * sizeof(*resized));
+	if (resized == NULL) {
+		abort();
+	}
+	gxHostTlutMetadata = resized;
+	gxHostTlutMetadataCapacity = newCapacity;
+}
+
+static void GXHostRebuildTexMetadataHash(u32 newCapacity)
+{
+	u32* resized;
+	u32 index;
+
+	resized = (u32*)calloc((size_t)newCapacity, sizeof(*resized));
+	if (resized == NULL) {
+		abort();
+	}
+	for (index = 1; index <= gxHostTexMetadataCount; ++index) {
+		u32 slot = GXHostHashTexMetadata(
+			&gxHostTexMetadata[index - 1]) & (newCapacity - 1);
+
+		while (resized[slot] != 0) {
+			slot = (slot + 1) & (newCapacity - 1);
+		}
+		resized[slot] = index;
+	}
+	free(gxHostTexMetadataHash);
+	gxHostTexMetadataHash = resized;
+	gxHostTexMetadataHashCapacity = newCapacity;
+}
+
+static void GXHostRebuildTlutMetadataHash(u32 newCapacity)
+{
+	u32* resized;
+	u32 index;
+
+	resized = (u32*)calloc((size_t)newCapacity, sizeof(*resized));
+	if (resized == NULL) {
+		abort();
+	}
+	for (index = 1; index <= gxHostTlutMetadataCount; ++index) {
+		u32 slot = GXHostHashTlutMetadata(
+			&gxHostTlutMetadata[index - 1]) & (newCapacity - 1);
+
+		while (resized[slot] != 0) {
+			slot = (slot + 1) & (newCapacity - 1);
+		}
+		resized[slot] = index;
+	}
+	free(gxHostTlutMetadataHash);
+	gxHostTlutMetadataHash = resized;
+	gxHostTlutMetadataHashCapacity = newCapacity;
+}
+
+static void GXHostEnsureTexMetadataHashCapacity(void)
+{
+	u32 newCapacity;
+
+	if (gxHostTexMetadataHashCapacity != 0 &&
+	    gxHostTexMetadataCount + 1 <=
+		gxHostTexMetadataHashCapacity -
+		gxHostTexMetadataHashCapacity / 4) {
+		return;
+	}
+	newCapacity = gxHostTexMetadataHashCapacity == 0
+		? GX_HOST_METADATA_HASH_INITIAL_CAPACITY
+		: gxHostTexMetadataHashCapacity * 2;
+	if (newCapacity <= gxHostTexMetadataHashCapacity) {
+		abort();
+	}
+	GXHostRebuildTexMetadataHash(newCapacity);
+}
+
+static void GXHostEnsureTlutMetadataHashCapacity(void)
+{
+	u32 newCapacity;
+
+	if (gxHostTlutMetadataHashCapacity != 0 &&
+	    gxHostTlutMetadataCount + 1 <=
+		gxHostTlutMetadataHashCapacity -
+		gxHostTlutMetadataHashCapacity / 4) {
+		return;
+	}
+	newCapacity = gxHostTlutMetadataHashCapacity == 0
+		? GX_HOST_METADATA_HASH_INITIAL_CAPACITY
+		: gxHostTlutMetadataHashCapacity * 2;
+	if (newCapacity <= gxHostTlutMetadataHashCapacity) {
+		abort();
+	}
+	GXHostRebuildTlutMetadataHash(newCapacity);
+}
+
+static u32 GXHostInternTexMetadata(const GXHostTexMetadata* metadata)
+{
+	u32 slot;
+	u32 index;
+
+	if (gxHostTexMetadataHashCapacity != 0) {
+		slot = GXHostHashTexMetadata(metadata) &
+			(gxHostTexMetadataHashCapacity - 1);
+		while ((index = gxHostTexMetadataHash[slot]) != 0) {
+			if (GXHostTexMetadataEqual(
+				    &gxHostTexMetadata[index - 1], metadata)) {
+				return GX_HOST_TEX_COOKIE_TAG | index;
 			}
-			gxHostTexUserData[i].userData = userData;
+			slot = (slot + 1) & (gxHostTexMetadataHashCapacity - 1);
+		}
+	}
+
+	if (gxHostTexMetadataCount >= GX_HOST_TEX_COOKIE_INDEX_MASK) {
+		abort();
+	}
+	GXHostEnsureTexMetadataCapacity();
+	GXHostEnsureTexMetadataHashCapacity();
+	index = ++gxHostTexMetadataCount;
+	gxHostTexMetadata[index - 1] = *metadata;
+	slot = GXHostHashTexMetadata(metadata) &
+		(gxHostTexMetadataHashCapacity - 1);
+	while (gxHostTexMetadataHash[slot] != 0) {
+		slot = (slot + 1) & (gxHostTexMetadataHashCapacity - 1);
+	}
+	gxHostTexMetadataHash[slot] = index;
+	return GX_HOST_TEX_COOKIE_TAG | index;
+}
+
+static u32 GXHostInternTlutMetadata(const GXHostTlutMetadata* metadata)
+{
+	u32 slot;
+	u32 index;
+
+	if (gxHostTlutMetadataHashCapacity != 0) {
+		slot = GXHostHashTlutMetadata(metadata) &
+			(gxHostTlutMetadataHashCapacity - 1);
+		while ((index = gxHostTlutMetadataHash[slot]) != 0) {
+			if (GXHostTlutMetadataEqual(
+				    &gxHostTlutMetadata[index - 1], metadata)) {
+				return GX_HOST_TLUT_COOKIE_TAG | index;
+			}
+			slot = (slot + 1) & (gxHostTlutMetadataHashCapacity - 1);
+		}
+	}
+
+	if (gxHostTlutMetadataCount >= GX_HOST_TLUT_COOKIE_INDEX_MASK) {
+		abort();
+	}
+	GXHostEnsureTlutMetadataCapacity();
+	GXHostEnsureTlutMetadataHashCapacity();
+	index = ++gxHostTlutMetadataCount;
+	gxHostTlutMetadata[index - 1] = *metadata;
+	slot = GXHostHashTlutMetadata(metadata) &
+		(gxHostTlutMetadataHashCapacity - 1);
+	while (gxHostTlutMetadataHash[slot] != 0) {
+		slot = (slot + 1) & (gxHostTlutMetadataHashCapacity - 1);
+	}
+	gxHostTlutMetadataHash[slot] = index;
+	return GX_HOST_TLUT_COOKIE_TAG | index;
+}
+
+static const GXHostTexMetadata* GXHostResolveTexMetadata(
+	const GXTexObj* object)
+{
+	const GXTexObjPriv* texture = (const GXTexObjPriv*)object;
+	u32 cookie = texture->userData;
+	u32 index;
+
+	if ((cookie & GX_HOST_TEX_COOKIE_TAG_MASK) != GX_HOST_TEX_COOKIE_TAG) {
+		return NULL;
+	}
+	index = cookie & GX_HOST_TEX_COOKIE_INDEX_MASK;
+	if (index == 0 || index > gxHostTexMetadataCount) {
+		return NULL;
+	}
+	return &gxHostTexMetadata[index - 1];
+}
+
+static const GXHostTlutMetadata* GXHostResolveTlutMetadata(
+	const GXTlutObj* object)
+{
+	const GXTlutObjPriv* tlut = (const GXTlutObjPriv*)object;
+	u32 cookie = tlut->loadTlut0;
+	u32 index;
+
+	if ((cookie & 0xFF000000U) != GX_HOST_TLUT_REGISTER_TAG ||
+	    (cookie & GX_HOST_TLUT_COOKIE_TAG_MASK) !=
+		GX_HOST_TLUT_COOKIE_TAG) {
+		return NULL;
+	}
+	index = cookie & GX_HOST_TLUT_COOKIE_INDEX_MASK;
+	if (index == 0 || index > gxHostTlutMetadataCount) {
+		return NULL;
+	}
+	return &gxHostTlutMetadata[index - 1];
+}
+
+static void GXHostInitTexMetadata(
+	GXTexObj* object, void* imageData, GXBool nativeU16)
+{
+	GXHostTexMetadata metadata;
+	GXTexObjPriv* texture = (GXTexObjPriv*)object;
+
+	metadata.imageData = imageData;
+	metadata.userData = NULL;
+	metadata.nativeU16 = nativeU16;
+	texture->userData = GXHostInternTexMetadata(&metadata);
+}
+
+static void GXHostSetTexUserData(GXTexObj* object, void* userData)
+{
+	const GXHostTexMetadata* current = GXHostResolveTexMetadata(object);
+	GXHostTexMetadata metadata;
+	GXTexObjPriv* texture = (GXTexObjPriv*)object;
+
+	if (current != NULL) {
+		if (current->userData == userData) {
 			return;
 		}
-		if (firstFree < 0 && gxHostTexUserData[i].object == NULL) {
-			firstFree = (s32)i;
-		}
+		metadata = *current;
+	} else {
+		metadata.imageData = NULL;
+		metadata.nativeU16 = GX_FALSE;
 	}
-
-	if (userData == NULL) {
-		return;
-	}
-	if (firstFree >= 0) {
-		gxHostTexUserData[firstFree].object = object;
-		gxHostTexUserData[firstFree].userData = userData;
-		return;
-	}
-
-	i = (u32)(((uintptr_t)object >> 2) % GX_HOST_TEX_USER_DATA_SLOTS);
-	gxHostTexUserData[i].object = object;
-	gxHostTexUserData[i].userData = userData;
+	metadata.userData = userData;
+	texture->userData = GXHostInternTexMetadata(&metadata);
 }
 
 static void* GXHostGetTexUserData(const GXTexObj* object)
 {
-	u32 i;
+	const GXHostTexMetadata* metadata = GXHostResolveTexMetadata(object);
 
-	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
-		if (gxHostTexUserData[i].object == object) {
-			return gxHostTexUserData[i].userData;
-		}
-	}
-	return NULL;
+	return metadata != NULL ? metadata->userData : NULL;
 }
 
 static void GXHostSetTexImageData(
-	const GXTexObj* object, void* imageData, GXBool nativeU16)
+	GXTexObj* object, void* imageData, GXBool nativeU16)
 {
-	s32 firstFree = -1;
-	u32 i;
+	const GXHostTexMetadata* current = GXHostResolveTexMetadata(object);
+	GXHostTexMetadata metadata;
+	GXTexObjPriv* texture = (GXTexObjPriv*)object;
 
-	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
-		if (gxHostTexImageData[i].object == object) {
-			if (imageData == NULL) {
-				gxHostTexImageData[i].object = NULL;
-			}
-			gxHostTexImageData[i].imageData = imageData;
-			gxHostTexImageData[i].nativeU16 = nativeU16;
+	if (current != NULL) {
+		if (current->imageData == imageData &&
+		    current->nativeU16 == nativeU16) {
 			return;
 		}
-		if (firstFree < 0 && gxHostTexImageData[i].object == NULL) {
-			firstFree = (s32)i;
-		}
+		metadata = *current;
+	} else {
+		metadata.userData = NULL;
 	}
-
-	if (imageData == NULL) {
-		return;
-	}
-	if (firstFree >= 0) {
-		gxHostTexImageData[firstFree].object = object;
-		gxHostTexImageData[firstFree].imageData = imageData;
-		gxHostTexImageData[firstFree].nativeU16 = nativeU16;
-		return;
-	}
-
-	i = (u32)(((uintptr_t)object >> 2) % GX_HOST_TEX_USER_DATA_SLOTS);
-	gxHostTexImageData[i].object = object;
-	gxHostTexImageData[i].imageData = imageData;
-	gxHostTexImageData[i].nativeU16 = nativeU16;
+	metadata.imageData = imageData;
+	metadata.nativeU16 = nativeU16;
+	texture->userData = GXHostInternTexMetadata(&metadata);
 }
 
 static void* GXHostGetTexImageData(const GXTexObj* object)
 {
-	u32 i;
+	const GXHostTexMetadata* metadata = GXHostResolveTexMetadata(object);
 
-	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
-		if (gxHostTexImageData[i].object == object) {
-			return gxHostTexImageData[i].imageData;
-		}
-	}
-	return NULL;
+	return metadata != NULL ? metadata->imageData : NULL;
 }
 
-static void GXHostSetTlutData(
-	const GXTlutObj* object, void* data, GXBool nativeU16)
+static void GXHostInitTlutMetadata(
+	GXTlutObj* object, void* data, GXBool nativeU16)
 {
-	s32 firstFree = -1;
-	u32 i;
+	GXHostTlutMetadata metadata;
+	GXTlutObjPriv* tlut = (GXTlutObjPriv*)object;
+	u32 cookie;
 
-	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
-		if (gxHostTlutData[i].object == object) {
-			if (data == NULL) {
-				gxHostTlutData[i].object = NULL;
-			}
-			gxHostTlutData[i].data = data;
-			gxHostTlutData[i].nativeU16 = nativeU16;
-			return;
-		}
-		if (firstFree < 0 && gxHostTlutData[i].object == NULL) {
-			firstFree = (s32)i;
-		}
-	}
-
-	if (data == NULL) {
-		return;
-	}
-	if (firstFree >= 0) {
-		gxHostTlutData[firstFree].object = object;
-		gxHostTlutData[firstFree].data = data;
-		gxHostTlutData[firstFree].nativeU16 = nativeU16;
-		return;
-	}
-
-	i = (u32)(((uintptr_t)object >> 2) % GX_HOST_TEX_USER_DATA_SLOTS);
-	gxHostTlutData[i].object = object;
-	gxHostTlutData[i].data = data;
-	gxHostTlutData[i].nativeU16 = nativeU16;
+	metadata.data = data;
+	metadata.nativeU16 = nativeU16;
+	cookie = GXHostInternTlutMetadata(&metadata);
+	tlut->loadTlut0 =
+		(tlut->loadTlut0 & 0xFF000000U) | cookie;
 }
 
 static void* GXHostGetTlutData(const GXTlutObj* object)
 {
-	u32 i;
+	const GXHostTlutMetadata* metadata = GXHostResolveTlutMetadata(object);
 
-	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
-		if (gxHostTlutData[i].object == object) {
-			return gxHostTlutData[i].data;
-		}
-	}
-	return NULL;
-}
-
-static GXBool GXHostTexImageUsesNativeU16(const GXTexObj* object)
-{
-	u32 i;
-
-	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
-		if (gxHostTexImageData[i].object == object) {
-			return gxHostTexImageData[i].nativeU16;
-		}
-	}
-	return GX_FALSE;
-}
-
-static GXBool GXHostTlutUsesNativeU16(const GXTlutObj* object)
-{
-	u32 i;
-
-	for (i = 0; i < GX_HOST_TEX_USER_DATA_SLOTS; ++i) {
-		if (gxHostTlutData[i].object == object) {
-			return gxHostTlutData[i].nativeU16;
-		}
-	}
-	return GX_FALSE;
+	return metadata != NULL ? metadata->data : NULL;
 }
 
 static u32 GXHostFloorLog2(u32 value)
@@ -391,7 +643,7 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFm
 	 * GXTexObj is fixed at 0x20 bytes by the SDK ABI. Keep native image and
 	 * application pointers in host-side tables instead of enlarging it.
 	 */
-	GXHostSetTexImageData(obj, image_ptr, GX_FALSE);
+	GXHostInitTexMetadata(obj, image_ptr, GX_FALSE);
 	GXHostSetTexUserData(obj, NULL);
 #else
 	memset(t, 0, 0x20);
@@ -1014,36 +1266,41 @@ void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion* region, GXTexMapID id)
 	gx->tMode0[id]  = t->mode0;
 	gx->dirtyState |= 1;
 #ifdef LIBPORPOISE_PORT
-	if (GXHostTexImageUsesNativeU16(obj)) {
-		SIM_GX_CommandProcessor_LoadTextureNativeU16(
-		    id, GXHostGetTexImageData(obj),
-		    (u16)(GET_REG_FIELD(t->image0, 10, 0) + 1),
-		    (u16)(GET_REG_FIELD(t->image0, 10, 10) + 1),
-		    (u32)t->format,
-		    GET_REG_FIELD(t->mode0, 2, 0),
-		    GET_REG_FIELD(t->mode0, 2, 2),
-		    HW2GXFiltConv[GET_REG_FIELD(t->mode0, 3, 5)],
-		    GET_REG_FIELD(t->mode0, 1, 4),
-		    (t->flags & 1) != 0,
-		    (f32)GET_REG_FIELD(t->mode1, 8, 0) / 16.0f,
-		    (f32)GET_REG_FIELD(t->mode1, 8, 8) / 16.0f,
-		    (f32)(s8)GET_REG_FIELD(t->mode0, 8, 9) / 32.0f,
-		    t->tlutName);
-	} else {
-		SIM_GX_CommandProcessor_LoadTexture(
-		    id, GXHostGetTexImageData(obj),
-		    (u16)(GET_REG_FIELD(t->image0, 10, 0) + 1),
-		    (u16)(GET_REG_FIELD(t->image0, 10, 10) + 1),
-		    (u32)t->format,
-		    GET_REG_FIELD(t->mode0, 2, 0),
-		    GET_REG_FIELD(t->mode0, 2, 2),
-		    HW2GXFiltConv[GET_REG_FIELD(t->mode0, 3, 5)],
-		    GET_REG_FIELD(t->mode0, 1, 4),
-		    (t->flags & 1) != 0,
-		    (f32)GET_REG_FIELD(t->mode1, 8, 0) / 16.0f,
-		    (f32)GET_REG_FIELD(t->mode1, 8, 8) / 16.0f,
-		    (f32)(s8)GET_REG_FIELD(t->mode0, 8, 9) / 32.0f,
-		    t->tlutName);
+	{
+		const GXHostTexMetadata* metadata =
+			GXHostResolveTexMetadata(obj);
+		const u16 width =
+			(u16)(GET_REG_FIELD(t->image0, 10, 0) + 1);
+		const u16 height =
+			(u16)(GET_REG_FIELD(t->image0, 10, 10) + 1);
+		const u32 mipmapped = (t->flags & 1) != 0;
+		const u8 maxLod =
+			(u8)GET_REG_FIELD(t->mode1, 8, 8) / 16;
+
+		OSAssertMsgLine(
+			0x41A, metadata != NULL,
+			"%s: host texture metadata is missing",
+			"GXLoadTexObj/PreLoaded");
+		SIM_GX_CommandProcessor_LoadTextureEx(
+			id, metadata->imageData,
+			GXGetTexBufferSize(
+				width, height, (u32)t->format,
+				(u8)mipmapped, maxLod),
+			width, height, (u32)t->format,
+			GET_REG_FIELD(t->mode0, 2, 0),
+			GET_REG_FIELD(t->mode0, 2, 2),
+			HW2GXFiltConv[GET_REG_FIELD(t->mode0, 3, 5)],
+			GET_REG_FIELD(t->mode0, 1, 4),
+			mipmapped,
+			(f32)GET_REG_FIELD(t->mode1, 8, 0) / 16.0f,
+			(f32)GET_REG_FIELD(t->mode1, 8, 8) / 16.0f,
+			(f32)(s8)GET_REG_FIELD(t->mode0, 8, 9) / 32.0f,
+			t->tlutName,
+			metadata->nativeU16
+				? SIM_GX_SOURCE_NATIVE_U16
+				: SIM_GX_SOURCE_CANONICAL_BIG_ENDIAN,
+			t->userData & GX_HOST_TEX_COOKIE_INDEX_MASK,
+			GXHostAllocateCounter(&gxHostNextDataRevision));
 	}
 #endif
 #if OS_BUILD_VERSION >= 20011002L
@@ -1083,14 +1340,14 @@ void GXInitTlutObj(GXTlutObj* tlut_obj, void* lut, GXTlutFmt fmt, u16 n_entries)
 	CHECK_GXBEGIN(0x453, "GXInitTlutObj");
 	OSAssertMsgLine(0x456, n_entries <= 0x4000, "%s: number of entries exceeds maximum", "GXInitTlutObj");
 	OSAssertMsgLine(0x458, ((u32)lut & 0x1F) == 0, "%s: %s pointer not aligned to 32B", "GXInitTlutObj", "Tlut");
-#ifdef LIBPORPOISE_PORT
-	GXHostSetTlutData(tlut_obj, lut, GX_FALSE);
-#endif
 	t->tlut = 0;
 	SET_REG_FIELD(0x45B, t->tlut, 2, 10, fmt);
 	SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, ((u32)lut & 0x3FFFFFFF) >> 5);
 	SET_REG_FIELD(0x45D, t->loadTlut0, 8, 24, 0x64);
 	t->numEntries = n_entries;
+#ifdef LIBPORPOISE_PORT
+	GXHostInitTlutMetadata(tlut_obj, lut, GX_FALSE);
+#endif
 }
 
 #ifdef LIBPORPOISE_PORT
@@ -1105,12 +1362,12 @@ void GXInitTlutObjHostNativeU16(
 	/* Unlike a hardware DMA source, native host scalars do not require 32-byte
 	 * alignment because GXLoadTlut snapshots and canonicalizes them in host
 	 * memory before the renderer observes the TLUT. */
-	GXHostSetTlutData(tlut_obj, lut, GX_TRUE);
 	t->tlut = 0;
 	SET_REG_FIELD(0x45B, t->tlut, 2, 10, fmt);
 	SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, ((u32)lut & 0x3FFFFFFF) >> 5);
 	SET_REG_FIELD(0x45D, t->loadTlut0, 8, 24, 0x64);
 	t->numEntries = n_entries;
+	GXHostInitTlutMetadata(tlut_obj, lut, GX_TRUE);
 }
 #endif
 
@@ -1195,18 +1452,24 @@ void GXLoadTlut(GXTlutObj* tlut_obj, u32 tlut_name)
 	SET_REG_FIELD(0x4B9, t->tlut, 10, 0, tlut_offset);
 	r->tlutObj = *t;
 #ifdef LIBPORPOISE_PORT
-	if (GXHostTlutUsesNativeU16(tlut_obj)) {
-		SIM_GX_CommandProcessor_LoadTlutNativeU16(
-		    tlut_name,
-		    (const u16*)GXHostGetTlutData(tlut_obj),
-		    GET_REG_FIELD(t->tlut, 2, 10),
-		    t->numEntries);
-	} else {
-		SIM_GX_CommandProcessor_LoadTlut(
-		    tlut_name,
-		    GXHostGetTlutData(tlut_obj),
-		    GET_REG_FIELD(t->tlut, 2, 10),
-		    t->numEntries);
+	{
+		const GXHostTlutMetadata* metadata =
+			GXHostResolveTlutMetadata(tlut_obj);
+
+		OSAssertMsgLine(
+			0x4BA, metadata != NULL,
+			"%s: host TLUT metadata is missing", "GXLoadTlut");
+		SIM_GX_CommandProcessor_LoadTlutEx(
+			tlut_name,
+			metadata->data,
+			(u32)t->numEntries * 2u,
+			GET_REG_FIELD(t->tlut, 2, 10),
+			t->numEntries,
+			metadata->nativeU16
+				? SIM_GX_SOURCE_NATIVE_U16
+				: SIM_GX_SOURCE_CANONICAL_BIG_ENDIAN,
+			t->loadTlut0 & GX_HOST_TLUT_COOKIE_INDEX_MASK,
+			GXHostAllocateCounter(&gxHostNextDataRevision));
 	}
 #endif
 }

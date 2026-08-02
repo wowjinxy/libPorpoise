@@ -54,6 +54,38 @@ SIM::GX::RenderVector3 Normalize(
     };
 }
 
+const std::array<float, 16>& ResolveTexGenMatrix(
+    const SIM::GX::GlobalState& state,
+    const SIM::GX::RenderVertex& vertex,
+    size_t generatorIndex) {
+    const GXAttr matrixAttribute = static_cast<GXAttr>(
+        GX_VA_TEX0MTXIDX + generatorIndex);
+    if (state.GetVertexDescriptor(matrixAttribute) == GX_NONE) {
+        return state.GetTexCoordGenMatrix(generatorIndex);
+    }
+
+    // TEXnMTXIDX is a row index in the shared XF position/texture matrix
+    // address space.  SDK matrix IDs are aligned to three rows.
+    const u8 matrixId = vertex.textureMatrixIndices[generatorIndex];
+    if (matrixId <= GX_PNMTX9 && (matrixId % 3u) == 0u) {
+        return state.GetPositionMatrix(
+            static_cast<size_t>(matrixId / 3u));
+    }
+    if (matrixId >= GX_TEXMTX0 && matrixId <= GX_TEXMTX9 &&
+        ((matrixId - GX_TEXMTX0) % 3u) == 0u) {
+        return state.GetTextureMatrix(
+            static_cast<size_t>((matrixId - GX_TEXMTX0) / 3u));
+    }
+
+    static const std::array<float, 16> identity = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
+    return identity;
+}
+
 }
 
 namespace SIM::GX {
@@ -208,7 +240,10 @@ void ApplyTextureCoordinateGeneration(
                 };
             }
 
-            const auto& matrix = state.GetTexCoordGenMatrix(index);
+            const auto& matrix = ResolveTexGenMatrix(
+                state,
+                vertex,
+                index);
             generated[index].s =
                 matrix[0] * source[0] + matrix[1] * source[1] +
                 matrix[2] * source[2] + matrix[3] * source[3];
