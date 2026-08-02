@@ -6,6 +6,7 @@
 #include <stddef.h>
 #ifdef LIBPORPOISE_PORT
 #include <simulator/sim.h>
+#include <simulator/sim_host_Benchmark.h>
 #include <SDL2/SDL_mutex.h>
 #include <SDL2/SDL_thread.h>
 #include <SDL2/SDL_timer.h>
@@ -1359,7 +1360,19 @@ static void __VIHostAdvanceRetrace(void)
 	/* Pace after presentation so CPU rendering and a driver v-sync wait count
 	 * toward the same hardware retrace budget instead of being serialized with
 	 * a second full-frame delay. */
-	__VIHostPaceRetrace();
+	if (SIM_HostBenchmarkEnabled()) {
+		const Uint64 paceFrequency = SDL_GetPerformanceFrequency();
+		const Uint64 paceStart = SDL_GetPerformanceCounter();
+		if (!SIM_HostBenchmarkNoPacing()) {
+			__VIHostPaceRetrace();
+		}
+		SIM_HostBenchmarkOnRetraceEnd(
+			retraceCount,
+			SDL_GetPerformanceCounter() - paceStart,
+			paceFrequency);
+	} else {
+		__VIHostPaceRetrace();
+	}
 	hostRetraceInProgress = FALSE;
 	OSWakeupThread(&retraceQueue);
 }

@@ -12,7 +12,8 @@ libsim_srcs = files(
     'sim_gx_TextureCache.cpp',
     'sim_gx_UniformCache.cpp',
     'sim_gx_VertexDecoder.cpp',
-    'sim_host_Allocator.cpp'
+    'sim_host_Allocator.cpp',
+    'sim_host_Benchmark.cpp'
 )
 
 libsim = library('sim',

@@ -1,6 +1,9 @@
 #include <dolphin/pad.h>
 #include <dolphin/PADConfig.h>
 #include <dolphin/os.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_host_Benchmark.h>
+#endif
 
 #include <SDL2/SDL.h>
 #include <stddef.h>
@@ -401,6 +404,19 @@ u32 PADRead(PADStatus* status)
         }
         return 0;
     }
+#ifdef LIBPORPOISE_PORT
+    if (SIM_HostBenchmarkNeutralInput()) {
+        for (chan = 0; chan < PAD_MAX_CONTROLLERS; ++chan) {
+            memset(&status[chan], 0, sizeof(status[chan]));
+            status[chan].err =
+                chan == PAD_CHAN0 ? PAD_ERR_NONE : PAD_ERR_NO_CONTROLLER;
+        }
+        if (SamplingCallback != NULL) {
+            SamplingCallback();
+        }
+        return 0;
+    }
+#endif
 
     ScanControllers();
     if (SamplingCallback != NULL) {

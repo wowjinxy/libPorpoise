@@ -5,6 +5,7 @@
 #include <simulator/sim_gx_CommandProcessor.h>
 #include <simulator/sim_gx_GlRenderer.hpp>
 #include <simulator/sim_gx_State.hpp>
+#include <simulator/sim_host_Benchmark.h>
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
 #include <atomic>
@@ -13,12 +14,16 @@ static SDL_Window * window;
 static SDL_threadID contextThread;
 static SDL_mutex* contextMutex;
 static std::atomic<bool> drawableViewportChanged{false};
+static int currentDrawableWidth;
+static int currentDrawableHeight;
 
 static void UpdateDrawableViewport() {
     int drawableWidth = 0;
     int drawableHeight = 0;
     SDL_GL_GetDrawableSize(window, &drawableWidth, &drawableHeight);
     if (drawableWidth > 0 && drawableHeight > 0) {
+        currentDrawableWidth = drawableWidth;
+        currentDrawableHeight = drawableHeight;
         glViewport(0, 0, drawableWidth, drawableHeight);
         SIM::GX::GetGlRenderer().SetDrawableSize(
             drawableWidth,
@@ -159,6 +164,9 @@ static void ProcessWindowEvent(const SDL_Event& event) {
 }
 
 int main(int argc, char** argv) {
+    if (!SIM_HostBenchmarkConfigureFromEnvironment()) {
+        return 2;
+    }
     if (SDL_Init(
             SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER |
             SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC | SDL_INIT_EVENTS) != 0) {
@@ -199,6 +207,9 @@ int main(int argc, char** argv) {
     if (!gladLoadGLLoader(SDL_GL_GetProcAddress)) {
         fprintf(stderr, "OpenGL function loading failed\n");
         return 1;
+    }
+    if (!SIM_HostBenchmarkInitializeGl()) {
+        return 2;
     }
     /* The emulated VI provides the hardware cadence after presentation.
      * Disable driver v-sync because a frame just slower than the monitor can
@@ -352,9 +363,26 @@ void SIM_Render() {
         UpdateDrawableViewport();
     }
 
+    const BOOL benchmarkEnabled = SIM_HostBenchmarkEnabled();
+    const u32 retraceId = VIGetRetraceCount();
+    Uint64 swapStart = 0u;
+    Uint64 swapTicks = 0u;
+    Uint64 performanceFrequency = 0u;
+    if (benchmarkEnabled) {
+        SIM_HostBenchmarkBeforeSwap(
+            retraceId,
+            currentDrawableWidth,
+            currentDrawableHeight);
+        performanceFrequency = SDL_GetPerformanceFrequency();
+        swapStart = SDL_GetPerformanceCounter();
+    }
+
     // Present the EFB contents, then apply a requested GX copy clear to the
     // next frame just as GXCopyDisp(..., GX_TRUE) does on the console.
     SDL_GL_SwapWindow(window);
+    if (benchmarkEnabled) {
+        swapTicks = SDL_GetPerformanceCounter() - swapStart;
+    }
     auto& gxState = SIM::GX::GetGlobalState();
     if (gxState.ConsumeCopyClearRequest()) {
         const auto& clearColor = gxState.GetCopyClearColor();
@@ -385,5 +413,11 @@ void SIM_Render() {
         if (scissorEnabled) {
             glEnable(GL_SCISSOR_TEST);
         }
+    }
+    if (benchmarkEnabled) {
+        SIM_HostBenchmarkAfterSwap(
+            retraceId,
+            swapTicks,
+            performanceFrequency);
     }
 }
