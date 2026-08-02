@@ -2,6 +2,9 @@
 #include <dolphin/os.h>
 #include <ctype.h>
 #include <stddef.h>
+#ifdef LIBPORPOISE_PORT
+#include "simulator/sim_dvd.h"
+#endif
 
 typedef struct FSTEntry FSTEntry;
 
@@ -203,10 +206,17 @@ BOOL DVDOpen(const char* fileName, DVDFileInfo* fileInfo)
 {
 	#ifdef LIBPORPOISE_PORT
 	if(fileName && fileName[0] == '/') {
-		fileName++;
+		const char * dvdRoot = SIM_DVDGetRootPath();
+		int combinedLen = strlen(fileName) + strlen(dvdRoot) + 1;
+		char * combinedFileNameBuf = malloc(sizeof(char) * combinedLen);
+		memset(combinedFileNameBuf, 0, combinedLen);
+		strcpy(combinedFileNameBuf, dvdRoot);
+		strcat(combinedFileNameBuf, fileName);
+		fileInfo->pcFilePtr = fopen(combinedFileNameBuf, "rb");
+		free(combinedFileNameBuf);
+	} else {
+		fileInfo->pcFilePtr = fopen(fileName, "rb");
 	}
-	
-	fileInfo->pcFilePtr = fopen(fileName, "rb");
 
 	if(!fileInfo->pcFilePtr) {
 		OSReport("Warning: DVDOpen(): file %s could not be opened.\n", fileName);

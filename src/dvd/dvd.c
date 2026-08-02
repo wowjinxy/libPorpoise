@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <string.h>
 
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_dvd.h>
+#endif
+
 // forward declarations for local functions, as needed:
 static void cbForCancelSync(s32 result, DVDCommandBlock* block);
 static void cbForStateBusy(u32 p1);
@@ -110,6 +114,11 @@ void DVDInit()
 		FirstTimeInBootrom = TRUE;
 		OSReport("bootrom\n");
 	}
+	#endif
+
+	#ifdef LIBPORPOISE_PORT
+	// Set up simulated DVD filesystem
+	SIM_DVDInit();
 	#endif
 }
 
