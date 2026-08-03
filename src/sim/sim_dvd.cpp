@@ -29,11 +29,13 @@ static std::string GetExeDir() {
     bytes = std::min<int>(readlink("/proc/self/exe", exeNameBuf, 511), 511 - 1);
     if(bytes >= 0)
         exeNameBuf[bytes] = '\0';
+    char * lastSlash = strrchr(exeNameBuf, '/');
 #endif
 #ifdef LIBPORPOISE_BUILD_WIN64
     bytes = GetModuleFileName(NULL, exeNameBuf, 511);
+    char * lastSlash = strrchr(exeNameBuf, '\\');
 #endif
-    char * lastSlash = strrchr(exeNameBuf, '/');
+    
     *lastSlash = '\0';
 
     return std::string(exeNameBuf);
