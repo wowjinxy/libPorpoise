@@ -1,7 +1,4 @@
 #include <dolphin/os.h>
-#ifdef LIBPORPOISE_PORT
-#include <SDL2/SDL_mutex.h>
-#endif
 
 /**
  * @TODO: Documentation
@@ -14,9 +11,6 @@ void OSInitMessageQueue(OSMessageQueue* queue, OSMessage* msgArray, s32 msgCount
 	queue->msgCount   = msgCount;
 	queue->firstIndex = 0;
 	queue->usedCount  = 0;
-	#ifdef LIBPORPOISE_PORT
-	queue->sdlSemaphore = (void*)SDL_CreateSemaphore(0);
-	#endif
 }
 
 /**
@@ -42,10 +36,6 @@ BOOL OSSendMessage(OSMessageQueue* queue, OSMessage msg, s32 flags)
 	queue->msgArray[mesgId] = msg;
 	queue->usedCount++;
 
-	#ifdef LIBPORPOISE_PORT
-	SDL_SemPost((SDL_sem*)queue->sdlSemaphore);
-	#endif
-
 	OSWakeupThread(&queue->queueReceive);
 	OSRestoreInterrupts(interrupt);
 	return TRUE;
@@ -60,11 +50,6 @@ BOOL OSReceiveMessage(OSMessageQueue* queue, OSMessage* buffer, s32 flags)
 
 	interrupt = OSDisableInterrupts();
 
-	#ifdef LIBPORPOISE_PORT
-	if(queue->usedCount == 0) {
-		SDL_SemWait((SDL_sem*)queue->sdlSemaphore);
-	}
-	#else
 	while (queue->usedCount == 0) {
 		if (!(flags & OS_MSG_PERSISTENT)) {
 			OSRestoreInterrupts(interrupt);
@@ -73,7 +58,6 @@ BOOL OSReceiveMessage(OSMessageQueue* queue, OSMessage* buffer, s32 flags)
 
 		OSSleepThread(&queue->queueReceive);
 	}
-	#endif
 
 	if (buffer) {
 		buffer[0] = queue->msgArray[queue->firstIndex];

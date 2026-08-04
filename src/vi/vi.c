@@ -6,7 +6,6 @@
 #include <stddef.h>
 #ifdef LIBPORPOISE_PORT
 #include <simulator/sim.h>
-#include <simulator/sim_vi.h>
 #endif
 
 // Useful macros.
@@ -246,9 +245,6 @@ VIRetraceCallback VISetPreRetraceCallback(VIRetraceCallback callback)
 
 	interrupt = OSDisableInterrupts();
 	PreCB     = callback;
-	#ifdef LIBPORPOISE_PORT
-	SIM_VISetPreRetraceCallback(callback);
-	#endif
 	OSRestoreInterrupts(interrupt);
 
 	return oldCallback;
@@ -266,9 +262,6 @@ VIRetraceCallback VISetPostRetraceCallback(VIRetraceCallback callback)
 
 	interrupt = OSDisableInterrupts();
 	PostCB    = callback;
-	#ifdef LIBPORPOISE_PORT
-	SIM_VISetPostRetraceCallback(callback);
-	#endif
 	OSRestoreInterrupts(interrupt);
 
 	return oldCallback;
@@ -553,7 +546,7 @@ void VIWaitForRetrace(void)
 	interrupt  = OSDisableInterrupts();
 	startCount = retraceCount;
 	#ifdef LIBPORPOISE_PORT
-	SIM_VIWaitForRetrace();
+	SIM_Render();
 	#else
 	do {
 		OSSleepThread(&retraceQueue);
@@ -1018,11 +1011,7 @@ void VISet3D(void)
  */
 u32 VIGetRetraceCount(void)
 {
-	#ifdef LIBPORPOISE_PORT
-	return SIM_VIGetRetraceCount();
-	#else
 	return retraceCount;
-	#endif
 }
 
 /**

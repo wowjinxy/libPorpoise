@@ -22,9 +22,6 @@ struct OSMesgQueue_s {
 	s32 msgCount;               // _14, array limit size.
 	s32 firstIndex;             // _18, first message index in array.
 	s32 usedCount;              // _1C, actual number of used messages.
-	#ifdef LIBPORPOISE_PORT
-	void * sdlSemaphore;  // Kept as void * here to avoid bringing in SDL.h in this file.
-	#endif
 };
 
 // Defines for message flags for sending/receiving.

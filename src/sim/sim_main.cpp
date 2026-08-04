@@ -5,7 +5,6 @@
 #include <simulator/sim.h>
 #include <simulator/sim_gx_CommandProcessor.h>
 #include <simulator/sim_gx_State.hpp>
-#include <simulator/sim_vi.h>
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
 #ifdef LIBPORPOISE_BUILD_LINUX
@@ -19,7 +18,6 @@
 
 static SDL_GLContext context;
 static SDL_Window * window;
-static SDL_Thread* s_dolphinMainThread;
 
 extern const char * SIM_GXVertexShader;
 extern const char * SIM_GXFragmentShader;
@@ -110,27 +108,6 @@ extern "C" {
 void DolphinMain();
 }
 
-static int RunDolphinMainThread(void * arg) {
-    DolphinMain();
-    return 0;
-}
-
-
-namespace SIM {
-void MainLoop() {
-    while(true) {
-        //Read PAD
-
-        //Call Pre Vblank Callback
-        SIM::VI::HandlePreRetrace();
-        //Render & Vblank
-        SIM_Render();
-        //Call Post Vblank callback
-        SIM::VI::HandlePostRetrace();
-    }
-}
-}
-
 int main(int argc, char** argv) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK) != 0) {
         fprintf(stderr, "SDL initialization failed: %s\n", SDL_GetError());
@@ -197,11 +174,7 @@ int main(int argc, char** argv) {
     SIM::GX::InitGlobalState();
     SIM_GX_CommandProcessor_Init();
 
-    SIM::VI::Init();
-
-    // Spawn a new thread for DolphinMain
-    s_dolphinMainThread = SDL_CreateThread(RunDolphinMainThread, "DolphinMain", NULL);
-    SIM::MainLoop();
+    DolphinMain();
 }
 
 void SIM_VIInit() {
