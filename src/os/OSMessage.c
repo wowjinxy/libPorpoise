@@ -62,14 +62,14 @@ BOOL OSReceiveMessage(OSMessageQueue* queue, OSMessage* buffer, s32 flags)
 	interrupt = OSDisableInterrupts();
 
 	while (queue->usedCount == 0) {
-		#ifdef LIBPORPOISE_PORT
-		SDL_SemWait((SDL_sem*)queue->sdlSemaphore);
-		#else
 		if (!(flags & OS_MSG_PERSISTENT)) {
 			OSRestoreInterrupts(interrupt);
 			return FALSE;
 		}
 
+		#ifdef LIBPORPOISE_PORT
+		SDL_SemWait((SDL_sem*)queue->sdlSemaphore);
+		#else
 		OSSleepThread(&queue->queueReceive);
 		#endif
 	}

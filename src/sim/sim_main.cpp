@@ -189,15 +189,21 @@ bool AcquireRenderContext(void) {
 
 
 void MainLoop() {
+    int waitForRetraceTimeout = 0;
+
+    static constexpr auto HalfFrametime = 8;
+    static constexpr auto WaitRetraceMax = 3;
     while(true) {
 
         // Wait a few MS (maybe half the target frame time)
-        SDL_Delay(6);
+        SDL_Delay(HalfFrametime);
 
-        //TODO: do something better than spinning for these
-        // Wait for at least one thread to call VI_WaitForRetrace
-        while(!SIM::VI::GetWaitForRetraceCount()) {
+
+        // Wait for at least one thread to call VI_WaitForRetrace, there is also a timeout in case no threads call it.
+        waitForRetraceTimeout = 0;
+        while(!SIM::VI::GetWaitForRetraceCount() && waitForRetraceTimeout < WaitRetraceMax) {
             SDL_Delay(1);
+            waitForRetraceTimeout++;
         }
 
 
