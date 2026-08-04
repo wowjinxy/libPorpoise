@@ -3,7 +3,6 @@
 #include <cstring>
 
 #include <dolphin.h>
-#include <simulator/sim_gx_CommandProcessor.h>
 #include <simulator/sim_gx_CommandProcessor.hpp>
 #include <simulator/sim_gx_State.hpp>
 #include <simulator/sim.h>
@@ -301,52 +300,4 @@ void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
     }
 }
 
-}
-
-static SIM::GX::CommandProcessor * sCommandProcessor;
-
-void SIM_GX_CommandProcessor_Init() {
-    sCommandProcessor = new SIM::GX::CommandProcessor();
-
-    // TODO: the gl stuff might move to another file
-    //glGenVertexArrays(1, &gpuVertexArray);
-    //glBindVertexArray(gpuVertexArray);
-    //glGenBuffers(1, &gpuVertexBuffer);
-
-    //glBindVertexArray(gpuVertexArray);
-    //glBindBuffer(GL_ARRAY_BUFFER, gpuVertexBuffer);
-    //glEnableVertexAttribArray(0);
-    //glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SIM::Vertex), (void*)offsetof(SIM::Vertex, x));
-}
-
-// C APIs for GX CommandProcessor
-void SIM_GX_CommandProcessor_SendU8(u8 data) {
-    sCommandProcessor->AddFifoData<u8>(data);
-}
-
-void SIM_GX_CommandProcessor_SendU16(u16 data) {
-    sCommandProcessor->AddFifoData<u16>(data);
-}
-
-void SIM_GX_CommandProcessor_SendS16(s16 data) {
-    sCommandProcessor->AddFifoData<s16>(data);
-}
-
-void SIM_GX_CommandProcessor_SendU32(u32 data) {
-    sCommandProcessor->AddFifoData<u32>(data);
-}
-
-void SIM_GX_CommandProcessor_SendF32(f32 data) {
-    sCommandProcessor->AddFifoData<f32>(data);
-}
-
-void SIM_GX_CommandProcessor_SendU64(u64 data) {
-    sCommandProcessor->AddFifoData<u64>(data);
-}
-
-void SIM_GX_CommandProcessor_SetVertexArray(GXAttr attr, void * ptr, int stride) {
-    SIM::GX::VertexArray vtxArray;
-    vtxArray.mArrayPtr = ptr;
-    vtxArray.mStride = stride;
-    SIM::GX::GetGlobalState().SetVertexArray(attr, vtxArray);
 }
