@@ -12,6 +12,10 @@
 #ifdef LIBPORPOISE_BUILD_LINUX
 #include <signal.h>
 #endif
+#ifdef LIBPORPOISE_BUILD_WIN64
+#undef IsDebuggerPresent
+#include <windows.h>
+#endif
 #include <format>
 #include <string>
 #ifdef TRACY_ENABLE
@@ -236,6 +240,12 @@ void MainLoop() {
 }
 
 int main(int argc, char** argv) {
+#ifdef LIBPORPOISE_BUILD_WIN64
+    //Set Unicode Codepage
+    SetConsoleCP(65001);
+    SetConsoleOutputCP(65001);
+#endif
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK) != 0) {
         fprintf(stderr, "SDL initialization failed: %s\n", SDL_GetError());
         return 1;
