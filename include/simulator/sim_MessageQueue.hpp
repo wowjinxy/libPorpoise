@@ -34,7 +34,7 @@ public:
         // spin until some capacity frees up
         //TODO:maybe dont spin
         while(in_use >= capacity) {
-            printf("queue full\n");
+            //SDL_Delay(1);
         }
 
         // construct copy of object in-place into buffer

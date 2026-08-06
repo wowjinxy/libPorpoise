@@ -18,9 +18,15 @@ extern u32 __OSCoreClock AT_ADDRESS(OS_BASE_CACHED | 0x00FC);
 
 OSTime __OSGetSystemTime();
 
+#ifdef LIBPORPOISE_PORT
+#define OS_BUS_CLOCK   0x09a7ec80 /* 162 MHz*/
+#define OS_CORE_CLOCK  0x1cf7c580 /* 486 MHz*/
+#define OS_TIMER_CLOCK (OS_BUS_CLOCK / 4)
+#else
 #define OS_BUS_CLOCK   __OSBusClock
 #define OS_CORE_CLOCK  __OSCoreClock
 #define OS_TIMER_CLOCK (OS_BUS_CLOCK / 4)
+#endif
 
 // Tick conversions.
 #define OSTicksToCycles(ticks)       (((ticks) * ((OS_CORE_CLOCK * 2) / OS_TIMER_CLOCK)) / 2)
