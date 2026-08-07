@@ -2,8 +2,8 @@
 #define __DEMO_H__
 
 #include <dolphin.h>
-#include <charPipeline/texPalette.h>
 #include <stdio.h>
+#include <dolphin/tpl.h>
 
 #include <demo/DEMOPad.h>
 #include <demo/DEMOPuts.h>

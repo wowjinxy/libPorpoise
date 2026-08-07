@@ -126,6 +126,7 @@ static inline void GXNormal3f32(const f32 x, const f32 y, const f32 z)
 
 static inline void GXColor1x8(const u8 x)
 {
+	
 	GX_WRITE_U8(x);
 }
 
@@ -140,6 +141,11 @@ static inline void GXColor4u8(const u8 r, const u8 g, const u8 b, const u8 a)
 	GX_WRITE_U8(g);
 	GX_WRITE_U8(b);
 	GX_WRITE_U8(a);
+}
+
+static inline void GXTexCoord1x8(const s8 x)
+{
+	GX_WRITE_U8((u8)x);
 }
 
 static inline void GXTexCoord2s8(const s8 u, const s8 v)

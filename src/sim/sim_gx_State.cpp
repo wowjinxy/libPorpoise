@@ -91,7 +91,11 @@ size_t GlobalState::GetDescriptorSize(GXAttrType descriptorType, GXCompType data
 size_t GlobalState::GetNumBytesPerVertex() {
     size_t totalBytes = 0;
     auto& format = mVertexFormats[mCurrentVertexFormat];
-    // Get bytes from position
+
+
+
+
+    // Get bytes from position (vtx attribute 9)
     size_t posComponents = 1;
     if(mVertexDescriptors[GX_VA_POS] == GX_DIRECT) {
         posComponents = format.mAttributes[GX_VA_POS].mComponents == GX_POS_XYZ ? 3 : 2;
@@ -99,8 +103,10 @@ size_t GlobalState::GetNumBytesPerVertex() {
 
     totalBytes += posComponents * GetDescriptorSize(mVertexDescriptors[GX_VA_POS], format.mAttributes[GX_VA_POS].mDataType);
 
-    // Get bytes from color0
+    // Get bytes from color0 (vtx attribute 11)
     totalBytes += GetDescriptorSize(mVertexDescriptors[GX_VA_CLR0], format.mAttributes[GX_VA_CLR0].mDataType, true);
+
+    
 
     return totalBytes;
 }
