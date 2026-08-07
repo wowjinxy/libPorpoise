@@ -44,6 +44,25 @@ class GlobalState {
     }
   };
 
+  static inline size_t GetNumNormalComponents(GXCompCnt compType) {
+    //Normal always has 3 components
+    return 3;
+  };
+
+  static inline size_t GetNumColorComponents(GXCompCnt compType) {
+    return 1;
+  };
+
+  static inline size_t GetNumTexCoordComponents(GXCompCnt compType) {
+    switch(compType) {
+        case GX_TEX_S:
+            return 1;
+        default:
+        case GX_TEX_ST:
+            return 2;
+    }
+  };
+
   inline GXPrimitive GetCurrentPrimitive() const {return mCurrentPrimitive;};
   inline GXAttrType GetVertexDescriptor(GXAttr attr) {return mVertexDescriptors[attr];};
   inline const VertexFormat& GetCurrentVertexFormat() {return mVertexFormats[mCurrentVertexFormat];};

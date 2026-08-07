@@ -284,13 +284,20 @@ void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
                 if(regAddr >= 0x70 && regAddr <= 0x77) {
                     GXVtxFmt formatIndex = (GXVtxFmt)(regAddr - 0x70);
                     auto& gxState = GetGlobalState();
+                    //Position
                     gxState.SetVertexFormatComponents(formatIndex, GX_VA_POS, static_cast<GXCompCnt>(GetRegValue(value, 1, 0)));
                     gxState.SetVertexFormatDataType(formatIndex, GX_VA_POS, static_cast<GXCompType>(GetRegValue(value, 3, 1)));
                     gxState.SetVertexFormatFraction(formatIndex, GX_VA_POS, static_cast<u8>(GetRegValue(value, 5, 4)));
                     //TODO: Normal component
 
+                    //Color0
                     gxState.SetVertexFormatComponents(formatIndex, GX_VA_CLR0, static_cast<GXCompCnt>(GetRegValue(value, 1, 13)));
                     gxState.SetVertexFormatDataType(formatIndex, GX_VA_CLR0, static_cast<GXCompType>(GetRegValue(value, 3, 14)));
+
+                    //texCoord0
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_TEX0, static_cast<GXCompCnt>(GetRegValue(value, 1, 21)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_TEX0, static_cast<GXCompType>(GetRegValue(value, 3, 22)));
+                    gxState.SetVertexFormatFraction(formatIndex, GX_VA_TEX0, static_cast<u8>(GetRegValue(value, 5, 25)));
                 } else if(regAddr >= 0x80 && regAddr <= 0x87) {
 
                 } else if(regAddr >= 0x90 && regAddr <= 0x97) {

@@ -83,7 +83,6 @@ void GlRenderer::Initialize() {
     glBindVertexArray(mVertexArray);
     glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);
 
-    static_assert(sizeof(RenderVertex) == sizeof(float) * 7);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(
         0,

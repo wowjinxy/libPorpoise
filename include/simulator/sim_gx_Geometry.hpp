@@ -28,6 +28,14 @@ struct RenderVertex {
         };
         float values[4];
     } color0;
+
+    union {
+        struct {
+            float s;
+            float t;
+        };
+        float coords[2];
+    } texCoords;
 };
 
 class GeometryProcessor {
