@@ -5,6 +5,7 @@
 #include "simulator/sim_gx_Thread.h"
 #include "simulator/sim_gx_CommandProcessor.hpp"
 #include "simulator/sim_gx_State.hpp"
+#include "simulator/sim_gx_TextureManager.hpp"
 #include "simulator/sim_MessageQueue.hpp"
 
 #include <SDL2/SDL.h>
@@ -35,6 +36,31 @@ int MainThread(void * arg) {
             case ThreadMessageType::Fifo:
                 sCommandProcessor.ProcessFifoData(msg.mData, msg.mDataLen);
                 break;
+            case ThreadMessageType::SetVertexArray:
+                {
+                    u8 * msgData = msg.mData;
+                    SIM::GX::VertexArray* vtxArray = (SIM::GX::VertexArray*)msgData;
+                    SIM::GX::GetGlobalState().SetVertexArray(vtxArray->attribute, *vtxArray);
+                } break;
+            case ThreadMessageType::InitTexObj:
+                {
+                    auto& manager = SIM::GX::TextureManager::GetInstance();
+
+                    manager.InitTexObj(msg.mInitTexObj.obj, 
+                                       msg.mInitTexObj.imagePtr, 
+                                       msg.mInitTexObj.width, 
+                                       msg.mInitTexObj.height, 
+                                       msg.mInitTexObj.format, 
+                                       msg.mInitTexObj.wrapS, 
+                                       msg.mInitTexObj.wrapT, 
+                                       msg.mInitTexObj.mipmap);
+                } break;
+            case ThreadMessageType::LoadTexObj:
+                {
+                    auto& manager = SIM::GX::TextureManager::GetInstance();
+
+                    manager.LoadTexObj(msg.mLoadTexObj.obj, msg.mLoadTexObj.map);
+                } break;
             case ThreadMessageType::TakeRenderContext:
                 {
                     //Release render context
@@ -75,6 +101,10 @@ void SendFifoMessage(T data) {
 
     std::memcpy(msg.mData, &data, dataLen);
     msg.mDataLen = dataLen;
+    sMessageQueue.SendMessage(msg);
+}
+
+void SendThreadMessage(ThreadMessage& msg) {
     sMessageQueue.SendMessage(msg);
 }
 
@@ -130,9 +160,11 @@ void SIM_GX_Fifo_SendU64(u64 data) {
 }
 
 void SIM_GX_CommandProcessor_SetVertexArray(GXAttr attr, void * ptr, int stride) {
-    SIM::GX::VertexArray vtxArray;
-    vtxArray.mArrayPtr = ptr;
-    vtxArray.mStride = stride;
-    SIM::GX::GetGlobalState().SetVertexArray(attr, vtxArray);
+    SIM::GX::ThreadMessage msg;
+    msg.mType = SIM::GX::ThreadMessageType::SetVertexArray;
+    msg.mDataLen = sizeof(SIM::GX::VertexArray);
+    msg.mVertexArray.attribute = attr;
+    msg.mVertexArray.mArrayPtr = ptr;
+    msg.mVertexArray.mStride = stride;
+    sMessageQueue.SendMessage(msg);
 }
-

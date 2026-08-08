@@ -3,6 +3,7 @@
 
 #include <dolphin.h>
 
+#include <simulator/sim_gx_Thread.hpp>
 #include <simulator/glad/glad.h>
 
 static SIM::GX::TextureManager sGXTextureManager = {};
@@ -550,6 +551,7 @@ TextureManager& TextureManager::GetInstance() {
 }
 
 void TextureManager::InitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFmt format, GXTexWrapMode wrap_s, GXTexWrapMode wrap_t, u8 mipmap) {
+    // This needs to happen on the GX thread
     GXTexObjPriv* privObj = (GXTexObjPriv*)obj;
 
     privObj->fullAddress = image_ptr;
@@ -590,15 +592,31 @@ void TextureManager::LoadTexObj(GXTexObj* obj, GXTexMapID map) {
 }
 
 // C APIs
-
 void SIM_GX_TextureManager_InitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFmt format, GXTexWrapMode wrap_s, GXTexWrapMode wrap_t, u8 mipmap) {
-    auto& manager = SIM::GX::TextureManager::GetInstance();
+    // Send a message to the GX thread
+    SIM::GX::ThreadMessage msg;
+    msg.mType = SIM::GX::ThreadMessageType::InitTexObj;
 
-    manager.InitTexObj(obj, image_ptr, width, height, format, wrap_s, wrap_t, mipmap);
+    msg.mInitTexObj.obj = obj;
+    msg.mInitTexObj.imagePtr = image_ptr;
+    msg.mInitTexObj.width = width;
+    msg.mInitTexObj.height = height;
+    msg.mInitTexObj.format = format;
+    msg.mInitTexObj.wrapS = wrap_s;
+    msg.mInitTexObj.wrapT = wrap_t;
+    msg.mInitTexObj.mipmap = mipmap;
+    SIM::GX::SendThreadMessage(msg);
 }
 
 void SIM_GX_TextureManager_LoadTexObj(GXTexObj* obj, GXTexMapID map) {
-    auto& manager = SIM::GX::TextureManager::GetInstance();
+    //auto& manager = SIM::GX::TextureManager::GetInstance();
+//
+    //manager.LoadTexObj(obj, map);
 
-    manager.LoadTexObj(obj, map);
+    SIM::GX::ThreadMessage msg;
+    msg.mType = SIM::GX::ThreadMessageType::LoadTexObj;
+
+    msg.mLoadTexObj.obj = obj;
+    msg.mLoadTexObj.map = map;
+    SIM::GX::SendThreadMessage(msg);
 }

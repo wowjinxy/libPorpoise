@@ -21,6 +21,7 @@ struct VertexFormat {
 };
 
 struct VertexArray {
+    GXAttr attribute;
     void * mArrayPtr = nullptr;
     int mStride = 0;
 };
