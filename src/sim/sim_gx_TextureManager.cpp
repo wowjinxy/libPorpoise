@@ -7,6 +7,77 @@
 
 static SIM::GX::TextureManager sGXTextureManager = {};
 
+// Texture conversion functions
+static void ByteSwapRGB565(u8 * in, u8* out, size_t numBytes) {
+    size_t numPixels = numBytes >> 1;
+
+    u16 * inPtr = (u16*)(in);
+    u16 * outPtr = (u16*)(out);
+
+    for(size_t i=0; i < numPixels; i++) {
+        u16 inputVal = *inPtr;
+        u8 r = (inputVal & 0xF8) >> 11;
+        u8 g = (inputVal & 0x07E0) >> 5;
+        u8 b = (inputVal & 0x1F);
+
+        *outPtr = (r) | (g << 5) | (b << 11);
+        //*outPtr = (r) | (g << 8) | (b << 16) | (0xFF000000);
+        
+
+        inPtr++;
+        outPtr++;
+    }
+}
+
+static void ByteSwapRGBA(u8 * in, u8 * out, size_t numBytes) {
+    size_t numPixels = numBytes >> 2;
+
+    u32 * inPtr = (u32*)(in);
+    u32 * outPtr = (u32*)(out);
+
+    for(size_t i=0; i < numPixels; i++) {
+        u32 inputVal = *inPtr;
+
+        u8 r = (inputVal & 0xFF000000) >> 24;
+        u8 g = (inputVal & 0xFF0000) >> 16;
+        u8 b = (inputVal & 0xFF00) >> 8;
+        u8 a = (inputVal & 0xFF);
+
+        *outPtr = (r) | (g << 8) | (b << 16) | (a << 24);
+
+        inPtr++;
+        outPtr++;
+    }
+}
+
+static void ConvertI4(u8* in, u8 * out, size_t numBytes) {
+    size_t numPixels = numBytes >> 2;
+    u32 * outPtr = (u32*)out;
+    for(size_t i=0; i < numPixels/2; i++) {
+        u8 inputVal = *in;
+        u8 lower = (inputVal & 0x0F) << 4;
+        u8 upper = (inputVal & 0xF0);
+        *outPtr = (upper) | (upper << 8) | (upper << 16) | (0xFF000000);
+        outPtr++;
+        *outPtr = (lower) | (lower << 8) | (lower << 16) | (0xFF000000);
+
+        outPtr++;
+        in++;
+    }
+}
+
+static void ConvertI8(u8* in, u8 * out, size_t numBytes) {
+    size_t numPixels = numBytes >> 2;
+    u32 * outPtr = (u32*)out;
+    for(size_t i=0; i < numPixels; i++) {
+        u8 inputVal = *in;
+        *outPtr = (inputVal) | (inputVal << 8) | (inputVal << 16) | (0xFF000000);
+
+        in++;
+        outPtr++;
+    }
+}
+
 namespace SIM::GX {
 
 // Texture
@@ -39,39 +110,36 @@ void Texture::Activate(GXTexMapID mapId) {
 
 void Texture::ConvertToGl() {
     // Determine output format
-    size_t inputBytesPerPixel = 1;
     size_t outputBytesPerPixel = 4;
     GLenum outputGlInternalFormat = GL_RGBA8;
     GLenum outputFormat = GL_RGBA;
     GLenum outputType = GL_UNSIGNED_BYTE;
-    bool nativeFormat = false;
+
+    void (*conversionFunc)(u8*,u8*, size_t) = nullptr;
 
     switch(mGxTexObj.format) {
         case GX_TF_I4:
             // This is a special case since there are two pixels per byte
+            conversionFunc = ConvertI4;
             break;
         case GX_TF_I8:
-            inputBytesPerPixel = 1;
+            conversionFunc = ConvertI8;
             break;
         case GX_TF_IA4:
             // Intensity + alpha 8 bits(4+4).
-            inputBytesPerPixel = 1;
 
             break;
         case GX_TF_IA8:
             // Intensity + alpha 16 bits(8+8)
-            inputBytesPerPixel = 2;
 
             break;
         case GX_TF_RGB565:
-            // GL supports this format natively
-            inputBytesPerPixel = 2;
             outputBytesPerPixel = 2;
             // NOTES: maybe unsigned_short_5_6_5_rev for bigendian?
             outputFormat = GL_RGB;
             outputType = GL_UNSIGNED_SHORT_5_6_5_REV;
-            outputGlInternalFormat = GL_RGB16;
-            nativeFormat = true;
+            //outputGlInternalFormat = GL_RGB16;
+            conversionFunc = ByteSwapRGB565;
             break;
         case GX_TF_RGB5A3:
             // When MSB=1, RGB555 format (opaque), when MSB=0, RGBA4443 format (transparent).
@@ -79,12 +147,10 @@ void Texture::ConvertToGl() {
             break;
         default:
         case GX_TF_RGBA8:
-            // GL supports this format natively
-            inputBytesPerPixel = 4;
             outputBytesPerPixel = 4;
             outputFormat = GL_RGBA;
             outputType = GL_UNSIGNED_BYTE;
-            nativeFormat = true;
+            conversionFunc = ByteSwapRGBA;
             break;
         case GX_TF_CMPR:
             // Another special case with 4-bit texels
@@ -109,15 +175,16 @@ void Texture::ConvertToGl() {
 
     mTextureBuf = new u8[textureSize];
 
-    void * texSourceAddr = mGxTexObj.fullAddress;
+    u8 * texSourceAddr = (u8*)mGxTexObj.fullAddress;
 
 
-    // If the texture is a natively supported format, just copy it
-    if(nativeFormat) {
-        memcpy(mTextureBuf, texSourceAddr, textureSize);
+    // Perform texture conversion
+    if(conversionFunc) {
+        conversionFunc(texSourceAddr, mTextureBuf, textureSize);
     } else {
-        // Convert to RGBA
-
+        // No conversion function defined, just perform a copy
+        // Note that this will likely result in an incorrect texture
+        memcpy(mTextureBuf, texSourceAddr, textureSize);
     }
 
     glBindTexture(GL_TEXTURE_2D, mGlTextureId);
