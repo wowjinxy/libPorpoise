@@ -8,73 +8,124 @@
 static SIM::GX::TextureManager sGXTextureManager = {};
 
 // Texture conversion functions
-static void ByteSwapRGB565(u8 * in, u8* out, size_t numBytes) {
-    size_t numPixels = numBytes >> 1;
+static void ByteSwapRGB565(u8 * in, u8* out, u16 width, u16 height) {
+    // 4x4 tiled blocks, 16bpp
+    const int blockW = 4, blockH = 4;
+    int bw = (width + blockW - 1) / blockW;
+    int bh = (height + blockH - 1) / blockH;
 
     u16 * inPtr = (u16*)(in);
     u16 * outPtr = (u16*)(out);
 
-    for(size_t i=0; i < numPixels; i++) {
-        u16 inputVal = *inPtr;
-        u8 r = (inputVal & 0xF8) >> 11;
-        u8 g = (inputVal & 0x07E0) >> 5;
-        u8 b = (inputVal & 0x1F);
+    for (int by = 0; by < bh; by++) {
+        for (int bx = 0; bx < bw; bx++) {
+            for (int y = 0; y < blockH; y++) {
+                for (int x = 0; x < blockW; x++) {
+                    u16 inputVal = *inPtr++;
+                    int px = bx * blockW + x;
+                    int py = by * blockH + y;
 
-        *outPtr = (r) | (g << 5) | (b << 11);
-        //*outPtr = (r) | (g << 8) | (b << 16) | (0xFF000000);
-        
+                    u8 r = (inputVal & 0xF8) >> 11;
+                    u8 g = (inputVal & 0x07E0) >> 5;
+                    u8 b = (inputVal & 0x1F);
 
-        inPtr++;
-        outPtr++;
+                    u16 outVal = (r) | (g << 5) | (b << 11);
+
+                    if (px < width && py < height) {
+                        outPtr[py * width + px] = outVal;
+                    }
+                }
+            }
+        }
     }
 }
 
-static void ByteSwapRGBA(u8 * in, u8 * out, size_t numBytes) {
-    size_t numPixels = numBytes >> 2;
+static void ByteSwapRGBA(u8 * in, u8 * out, u16 width, u16 height) {
+    // 4x4 tiled blocks, 32bpp (two passes per block: AR then GB)
+    const int blockW = 4, blockH = 4;
+    int bw = (width + blockW - 1) / blockW;
+    int bh = (height + blockH - 1) / blockH;
 
-    u32 * inPtr = (u32*)(in);
-    u32 * outPtr = (u32*)(out);
-
-    for(size_t i=0; i < numPixels; i++) {
-        u32 inputVal = *inPtr;
-
-        u8 r = (inputVal & 0xFF000000) >> 24;
-        u8 g = (inputVal & 0xFF0000) >> 16;
-        u8 b = (inputVal & 0xFF00) >> 8;
-        u8 a = (inputVal & 0xFF);
-
-        *outPtr = (r) | (g << 8) | (b << 16) | (a << 24);
-
-        inPtr++;
-        outPtr++;
-    }
-}
-
-static void ConvertI4(u8* in, u8 * out, size_t numBytes) {
-    size_t numPixels = numBytes >> 2;
+    u8 * inPtr = in;
     u32 * outPtr = (u32*)out;
-    for(size_t i=0; i < numPixels/2; i++) {
-        u8 inputVal = *in;
-        u8 lower = (inputVal & 0x0F) << 4;
-        u8 upper = (inputVal & 0xF0);
-        *outPtr = (upper) | (upper << 8) | (upper << 16) | (0xFF000000);
-        outPtr++;
-        *outPtr = (lower) | (lower << 8) | (lower << 16) | (0xFF000000);
 
-        outPtr++;
-        in++;
+    for (int by = 0; by < bh; by++) {
+        for (int bx = 0; bx < bw; bx++) {
+            u8 ar[16][2];
+            for (int i = 0; i < 16; i++) {
+                ar[i][0] = *inPtr++; // A
+                ar[i][1] = *inPtr++; // R
+            }
+            for (int i = 0; i < 16; i++) {
+                u8 g = *inPtr++;
+                u8 b = *inPtr++;
+                int x = i % blockW, y = i / blockW;
+                int px = bx * blockW + x;
+                int py = by * blockH + y;
+                if (px < width && py < height) {
+                    u8 r = ar[i][1], a = ar[i][0];
+                    outPtr[py * width + px] = (r) | (g << 8) | (b << 16) | (a << 24);
+                }
+            }
+        }
     }
 }
 
-static void ConvertI8(u8* in, u8 * out, size_t numBytes) {
-    size_t numPixels = numBytes >> 2;
-    u32 * outPtr = (u32*)out;
-    for(size_t i=0; i < numPixels; i++) {
-        u8 inputVal = *in;
-        *outPtr = (inputVal) | (inputVal << 8) | (inputVal << 16) | (0xFF000000);
+static void ConvertI4(u8* in, u8 * out, u16 width, u16 height) {
+    // 8x8 tiled blocks, 4bpp (2 pixels per byte)
+    const int blockW = 8, blockH = 8;
+    int bw = (width + blockW - 1) / blockW;
+    int bh = (height + blockH - 1) / blockH;
 
-        in++;
-        outPtr++;
+    u8 * inPtr = in;
+    u32 * outPtr = (u32*)out;
+
+    for (int by = 0; by < bh; by++) {
+        for (int bx = 0; bx < bw; bx++) {
+            for (int y = 0; y < blockH; y++) {
+                for (int x = 0; x < blockW; x += 2) {
+                    u8 inputVal = *inPtr++;
+                    u8 upper = (inputVal & 0xF0) | (inputVal >> 4);
+                    u8 lower = (inputVal & 0x0F) | ((inputVal & 0x0F) << 4);
+
+                    int px0 = bx * blockW + x;
+                    int px1 = px0 + 1;
+                    int py = by * blockH + y;
+
+                    if (px0 < width && py < height) {
+                        outPtr[py * width + px0] = (upper) | (upper << 8) | (upper << 16) | (0xFF000000);
+                    }
+                    if (px1 < width && py < height) {
+                        outPtr[py * width + px1] = (lower) | (lower << 8) | (lower << 16) | (0xFF000000);
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void ConvertI8(u8* in, u8 * out, u16 width, u16 height) {
+    // 8x4 tiled blocks, 8bpp
+    const int blockW = 8, blockH = 4;
+    int bw = (width + blockW - 1) / blockW;
+    int bh = (height + blockH - 1) / blockH;
+
+    u8 * inPtr = in;
+    u32 * outPtr = (u32*)out;
+
+    for (int by = 0; by < bh; by++) {
+        for (int bx = 0; bx < bw; bx++) {
+            for (int y = 0; y < blockH; y++) {
+                for (int x = 0; x < blockW; x++) {
+                    u8 inputVal = *inPtr++;
+                    int px = bx * blockW + x;
+                    int py = by * blockH + y;
+                    if (px < width && py < height) {
+                        outPtr[py * width + px] = (inputVal) | (inputVal << 8) | (inputVal << 16) | (0xFF000000);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -115,7 +166,7 @@ void Texture::ConvertToGl() {
     GLenum outputFormat = GL_RGBA;
     GLenum outputType = GL_UNSIGNED_BYTE;
 
-    void (*conversionFunc)(u8*,u8*, size_t) = nullptr;
+    void (*conversionFunc)(u8*, u8*, u16, u16) = nullptr;
 
     switch(mGxTexObj.format) {
         case GX_TF_I4:
@@ -180,7 +231,7 @@ void Texture::ConvertToGl() {
 
     // Perform texture conversion
     if(conversionFunc) {
-        conversionFunc(texSourceAddr, mTextureBuf, textureSize);
+        conversionFunc(texSourceAddr, mTextureBuf, mWidth, mHeight);
     } else {
         // No conversion function defined, just perform a copy
         // Note that this will likely result in an incorrect texture
