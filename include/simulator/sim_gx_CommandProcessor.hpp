@@ -8,8 +8,10 @@
 #include <vector>
 
 #include <dolphin/gx/GXAttr.h>
+#include <SDL2/SDL.h>
 
 #include "simulator/sim_gx_Geometry.hpp"
+#include "simulator/sim_MessageQueue.hpp"
 
 namespace SIM::GX {
 

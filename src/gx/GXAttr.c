@@ -5,7 +5,7 @@
 #include <stddef.h>
 
 #ifdef LIBPORPOISE_PORT
-#include <simulator/sim_gx_CommandProcessor.h>
+#include <simulator/sim_gx_Thread.h>
 #endif
 
 #define CHECK_ATTRPTR(line, attrPtr) OSAssertMsgLine(line, (attrPtr) != NULL, "GXSetVtxDescv: attrPtr is NULL")
