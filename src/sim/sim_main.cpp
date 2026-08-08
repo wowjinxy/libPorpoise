@@ -5,6 +5,7 @@
 #include <simulator/sim.h>
 #include <simulator/sim_gx_CommandProcessor.h>
 #include <simulator/sim_gx_State.hpp>
+#include <simulator/sim_pad.hpp>
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
 #ifdef LIBPORPOISE_BUILD_LINUX
@@ -188,16 +189,26 @@ void SIM_Render() {
 
     while( SDL_PollEvent(&Event))
     {
-        if (Event.type == SDL_QUIT) {
-            SDL_GL_DeleteContext(context);
-            SDL_DestroyWindow(window);
-            SDL_Quit();
-            exit(0);
-        }
-
-        if (Event.type == SDL_WINDOWEVENT &&
-            Event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-            glViewport(0, 0, Event.window.data1, Event.window.data2);
+        switch(Event.type) {
+            case SDL_KEYDOWN:
+                SIM::PAD::HandleKey(Event.key.keysym.sym, true);
+                break;
+            case SDL_KEYUP:
+                SIM::PAD::HandleKey(Event.key.keysym.sym, false);
+                break;
+            case SDL_WINDOWEVENT:
+                if(Event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                    glViewport(0, 0, Event.window.data1, Event.window.data2);
+                }
+                break;
+            case SDL_QUIT:
+                SDL_GL_DeleteContext(context);
+                SDL_DestroyWindow(window);
+                SDL_Quit();
+                exit(0);
+                break;
+            default:
+                break;
         }
     }
 

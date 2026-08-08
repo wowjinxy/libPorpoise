@@ -5,6 +5,9 @@
 #include <dolphin/vi.h>
 #include <stddef.h>
 #include <string.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_pad.h>
+#endif
 
 // For ease of implementing multiple revisions, static variables that were renamed go by their final
 // names everywhere in this file and are silently renamed for older revisions via the below macros.
@@ -830,6 +833,11 @@ u32 PADRead(PADStatus* status)
 	u32 sr;
 	int chanShift;
 	u32 motor;
+
+#ifdef LIBPORPOISE_PORT
+	SIM_PAD_Read(status);
+	return 0;
+#endif
 
 #if OS_BUILD_VERSION >= 20011002L
 	enabled = OSDisableInterrupts();
