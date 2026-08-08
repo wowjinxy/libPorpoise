@@ -35,7 +35,7 @@ struct RenderVertex {
             float t;
         };
         float coords[2];
-    } texCoords;
+    } texCoords[8];
 };
 
 class GeometryProcessor {

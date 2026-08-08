@@ -83,6 +83,7 @@ void GlRenderer::Initialize() {
     glBindVertexArray(mVertexArray);
     glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);
 
+    //location = 0 in vec3 position
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(
         0,
@@ -91,6 +92,7 @@ void GlRenderer::Initialize() {
         GL_FALSE,
         sizeof(RenderVertex),
         reinterpret_cast<void*>(offsetof(RenderVertex, position)));
+    //location = 1 in vec4 vertex_color
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(
         1,
@@ -99,6 +101,15 @@ void GlRenderer::Initialize() {
         GL_FALSE,
         sizeof(RenderVertex),
         reinterpret_cast<void*>(offsetof(RenderVertex, color0)));
+    //location = 2 in vec2 texCoords
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(
+        2,
+        2,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, texCoords)));
 }
 
 void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimitive primitive) {

@@ -38,7 +38,11 @@ typedef struct _GXColorS10 {
 
 // Generic struct for texture objects.
 typedef struct _GXTexObj {
+	#ifdef LIBPORPOISE_PORT
+	u8 pad[0x2C]; /* +4 from userData, +8 from full address pointer*/
+	#else
 	u8 pad[0x20]; // _00
+	#endif
 } GXTexObj;       // size 0x20
 
 // Internal struct for texture objects.
@@ -53,7 +57,14 @@ typedef struct _GXTexObjPriv {
 	u16 loadCount;   // _1C
 	u8 loadFormat;   // _1E
 	u8 flags;        // _1F
-} GXTexObjPriv;
+#ifdef LIBPORPOISE_PORT
+	void * fullAddress;
+#endif
+} 
+#ifdef LIBPORPOISE_PORT
+__attribute__((packed))
+#endif
+GXTexObjPriv;
 
 // Generic struct for texture memory storage.
 typedef struct _GXTexRegion {

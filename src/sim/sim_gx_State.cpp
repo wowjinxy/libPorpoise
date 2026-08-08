@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstring>
 
-static SIM::GX::GlobalState sGXGlobalState ={};
+static SIM::GX::GlobalState sGXGlobalState = {};
 
 namespace SIM::GX {
 

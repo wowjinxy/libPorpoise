@@ -230,7 +230,7 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
         //BuildRenderVertexAttr(GX_VA_CLR1, output.color1.values, DecodeColor);
 
         for(int attribNum = GX_VA_TEX0; attribNum <= GX_VA_TEX7; attribNum++) {
-            BuildRenderVertexAttr(static_cast<GXAttr>(attribNum), output.texCoords.coords, DecodePositionComponent);
+            BuildRenderVertexAttr(static_cast<GXAttr>(attribNum), output.texCoords[attribNum - GX_VA_TEX0].coords, DecodePositionComponent);
         }
 
     }
