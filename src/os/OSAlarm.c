@@ -2,11 +2,42 @@
 #include <dolphin/os.h>
 #include <limits.h>
 #include <stddef.h>
+#ifdef LIBPORPOISE_PORT
+#include <SDL2/SDL.h>
+#include <dolphin/os/OSTime.h>
+#endif
 
 // forward declarations
 static OSAlarmQueue AlarmQueue;
 
 static void DecrementerExceptionHandler(__OSException exception, OSContext* context);
+
+
+#ifdef LIBPORPOISE_PORT
+#ifdef LIBPORPOISE_BUILD_WIN64
+static unsigned int OSSDLTimerCallback(unsigned int interval, void * param)
+#else
+static u32 OSSDLTimerCallback(u32 interval, void * param)
+#endif
+{
+	OSAlarm * myAlarm = (OSAlarm*)param;
+
+
+    if(myAlarm) {
+		SDL_RemoveTimer(myAlarm->sdlTimer);
+
+        if(myAlarm->period == 0) {
+            myAlarm->sdlTimer = 0;
+        } else {
+			myAlarm->sdlTimer = SDL_AddTimer(OSTicksToMilliseconds(myAlarm->period), OSSDLTimerCallback, myAlarm);
+		}
+        if(myAlarm->handler) {
+            myAlarm->handler(myAlarm, NULL);
+        }
+    }
+    return 0;
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -126,6 +157,10 @@ void OSSetAlarm(OSAlarm* alarm, OSTime tick, OSAlarmHandler handler)
 	InsertAlarm(alarm, OSGetTime() + tick, handler);
 #endif
 	OSRestoreInterrupts(enabled);
+
+#ifdef LIBPORPOISE_PORT
+	alarm->sdlTimer = SDL_AddTimer(OSTicksToMilliseconds(alarm->start), OSSDLTimerCallback, alarm);
+#endif
 }
 
 /**
@@ -182,6 +217,11 @@ void OSCancelAlarm(OSAlarm* alarm)
 	alarm->handler = NULL;
 
 	OSRestoreInterrupts(enabled);
+
+#ifdef LIBPORPOISE_PORT
+	SDL_RemoveTimer(alarm->sdlTimer);
+	alarm->sdlTimer = 0;
+#endif
 }
 
 /**

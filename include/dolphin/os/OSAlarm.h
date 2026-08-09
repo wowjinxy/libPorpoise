@@ -24,6 +24,9 @@ struct OSAlarm {
 	OSAlarm* next;          // _14
 	OSTime period;          // _18, period of periodic alarm
 	OSTime start;           // _20, start of periodic alarm
+#ifdef LIBPORPOISE_PORT
+	int sdlTimer; /* SDL timer ID, kept as int here to avoid including SDL.h */
+#endif
 };
 
 // Queue struct for OSAlarm.

@@ -562,9 +562,14 @@ void TextureManager::InitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 h
     tex.SetMipmap(mipmap);
     tex.SetWrapS(wrap_s);
     tex.SetWrapT(wrap_t);
-    tex.GenGlTexture();
 
     void * addr = privObj->fullAddress;
+
+    // Remove the existing texture
+    if(mTextureCache.count(addr) > 0) {
+        mTextureCache[addr].DeleteGlTexture();
+        mTextureCache.erase(addr);
+    }
 
     mTextureCache.emplace(addr, std::move(tex));
 }
@@ -582,6 +587,7 @@ void TextureManager::LoadTexObj(GXTexObj* obj, GXTexMapID map) {
     auto& texture = mTextureCache[addr];
 
     if(!texture.GetIsConvertedToGl()) {
+        texture.GenGlTexture();
         texture.ConvertToGl();
     }
 
