@@ -423,12 +423,12 @@ Texture::~Texture() {
 }
 
 void Texture::GenGlTexture() {
-  glGenTextures(1, &mGlTextureId);
+  glGenTextures(1, (GLuint*)&mGlTextureId);
   glBindTexture(GL_TEXTURE_2D, mGlTextureId);
 }
 
 void Texture::DeleteGlTexture() {
-  glDeleteTextures(1, &mGlTextureId);
+  glDeleteTextures(1, (GLuint*)&mGlTextureId);
 }
 
 void Texture::Activate(GXTexMapID mapId) {
