@@ -96,6 +96,7 @@ if (build_target == 'linux32')
         '-DLIBPORPOISE_BUILD_LINUX',
         '-D_POSIX_C_SOURCE=200112L',
         '-DLIBPORPOISE_32BIT',
+        '-m32',
         '-w'
     ]
 endif

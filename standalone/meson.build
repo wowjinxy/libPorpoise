@@ -9,6 +9,12 @@ if(build_target == 'gc')
     ]
 endif
 
+if(build_target == 'linux32')
+    libporpoise_link_args += [
+        '-m32'
+    ]
+endif
+
 libporpoise_exe = executable(
     'libporpoise',
     sources: files('main.cpp'),
