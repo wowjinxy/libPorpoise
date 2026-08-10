@@ -566,14 +566,18 @@ void L2GlobalInvalidate(void)
 
 	PPCMtl2cr(PPCMfl2cr() | L2CR_L2I);
 
+	#ifndef LIBPORPOISE_PORT
 	while (PPCMfl2cr() & L2CR_L2IP)
 		;
+	#endif
 
 	PPCMtl2cr(PPCMfl2cr() & ~L2CR_L2I);
 
+	#ifndef LIBPORPOISE_PORT
 	while (PPCMfl2cr() & L2CR_L2IP) {
 		DBPrintf(">>> L2 INVALIDATE : SHOULD NEVER HAPPEN\n");
 	}
+	#endif
 }
 
 /**

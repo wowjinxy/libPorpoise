@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
-#ifdef LIBPORPOISE_BUILD_WIN64
+#ifdef LIBPORPOISE_BUILD_WIN
 #include <libloaderapi.h>
 #endif
 
@@ -31,7 +31,7 @@ static std::string GetExeDir() {
         exeNameBuf[bytes] = '\0';
     char * lastSlash = strrchr(exeNameBuf, '/');
 #endif
-#ifdef LIBPORPOISE_BUILD_WIN64
+#ifdef LIBPORPOISE_BUILD_WIN
     bytes = GetModuleFileName(NULL, exeNameBuf, 511);
     char * lastSlash = strrchr(exeNameBuf, '\\');
 #endif

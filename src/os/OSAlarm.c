@@ -14,7 +14,7 @@ static void DecrementerExceptionHandler(__OSException exception, OSContext* cont
 
 
 #ifdef LIBPORPOISE_PORT
-#ifdef LIBPORPOISE_BUILD_WIN64
+#ifdef LIBPORPOISE_BUILD_WIN
 static unsigned int OSSDLTimerCallback(unsigned int interval, void * param)
 #else
 static u32 OSSDLTimerCallback(u32 interval, void * param)

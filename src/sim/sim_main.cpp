@@ -13,7 +13,7 @@
 #ifdef LIBPORPOISE_BUILD_LINUX
 #include <signal.h>
 #endif
-#ifdef LIBPORPOISE_BUILD_WIN64
+#ifdef LIBPORPOISE_BUILD_WIN
 #undef IsDebuggerPresent
 #include <windows.h>
 #endif
@@ -241,7 +241,7 @@ void MainLoop() {
 }
 
 int main(int argc, char** argv) {
-#ifdef LIBPORPOISE_BUILD_WIN64
+#ifdef LIBPORPOISE_BUILD_WIN
     //Set Unicode Codepage
     SetConsoleCP(65001);
     SetConsoleOutputCP(65001);
@@ -373,7 +373,7 @@ void SIM_Render() {
 void SIM_DebugBreak() {
 #ifdef LIBPORPOISE_BUILD_LINUX
     raise(SIGTRAP);
-#elif LIBPORPOISE_BUILD_WIN64
+#elif LIBPORPOISE_BUILD_WIN
     __debugbreak();
 #else
     OSReport("Warning: SIM_DebugBreak called but it is not supported on this platform!\n");
