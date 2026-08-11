@@ -151,15 +151,18 @@ void OSSetAlarm(OSAlarm* alarm, OSTime tick, OSAlarmHandler handler)
 	BOOL enabled;
 	enabled       = OSDisableInterrupts();
 	alarm->period = 0;
+#ifdef GAMECUBE
 #if OS_BUILD_VERSION >= 20011002L
 	InsertAlarm(alarm, __OSGetSystemTime() + tick, handler);
 #else
 	InsertAlarm(alarm, OSGetTime() + tick, handler);
 #endif
+#endif
 	OSRestoreInterrupts(enabled);
 
 #ifdef LIBPORPOISE_PORT
-	alarm->sdlTimer = SDL_AddTimer(OSTicksToMilliseconds(alarm->start), OSSDLTimerCallback, alarm);
+	alarm->handler = handler;
+	alarm->sdlTimer = SDL_AddTimer(OSTicksToMilliseconds(tick), OSSDLTimerCallback, alarm);
 #endif
 }
 
@@ -195,6 +198,7 @@ void OSCancelAlarm(OSAlarm* alarm)
 
 	enabled = OSDisableInterrupts();
 
+	#ifdef GAMECUBE
 	if (alarm->handler == NULL) {
 		OSRestoreInterrupts(enabled);
 		return;
@@ -214,6 +218,7 @@ void OSCancelAlarm(OSAlarm* alarm)
 			SetTimer(next);
 		}
 	}
+	#endif
 	alarm->handler = NULL;
 
 	OSRestoreInterrupts(enabled);
