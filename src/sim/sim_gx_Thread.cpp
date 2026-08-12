@@ -10,6 +10,7 @@
 
 #include <SDL2/SDL.h>
 
+#define COMMAND_PROCESSOR_DEBUG 0
 
 static SIM::GX::CommandProcessor sCommandProcessor = SIM::GX::CommandProcessor();
 static SIM::MessageQueue sMessageQueue = SIM::MessageQueue<SIM::GX::ThreadMessage>(256 * 1024);
@@ -101,7 +102,11 @@ void SendFifoMessage(T data) {
 
     std::memcpy(msg.mData, &data, dataLen);
     msg.mDataLen = dataLen;
+    #if COMMAND_PROCESSOR_DEBUG
+    sCommandProcessor.ProcessFifoData(msg.mData, msg.mDataLen);
+    #else
     sMessageQueue.SendMessage(msg);
+    #endif
 }
 
 void SendThreadMessage(ThreadMessage& msg) {

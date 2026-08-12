@@ -220,12 +220,20 @@ ASM void WriteMTXPS4x2(register const Mtx mtx, register volatile f32* dest) {
 	#endif // clang-format on
 }
 
+#ifdef LIBPORPOISE_PORT
+#define GX_WRITE_MTX_ELEM(addr, value)          \
+	do {                                        \
+		f32 xfData = (value);                   \
+		GX_WRITE_F32(value);                    \
+	} while (0)
+#else
 #define GX_WRITE_MTX_ELEM(addr, value)          \
 	do {                                        \
 		f32 xfData = (value);                   \
 		GX_WRITE_F32(value);                    \
 		VERIF_MTXLIGHT((addr), *(u32*)&xfData); \
 	} while (0)
+#endif
 
 /**
  * @TODO: Documentation
@@ -242,7 +250,7 @@ void GXLoadPosMtxImm(const Mtx mtx, u32 id)
 
 	GX_WRITE_U8(0x10);
 	GX_WRITE_U32(reg);
-#if DEBUG
+#if defined(DEBUG) || defined(LIBPORPOISE_PORT)
 	GX_WRITE_MTX_ELEM(addr + 0, mtx[0][0]);
 	GX_WRITE_MTX_ELEM(addr + 1, mtx[0][1]);
 	GX_WRITE_MTX_ELEM(addr + 2, mtx[0][2]);
@@ -304,7 +312,7 @@ void GXLoadNrmMtxImm(const Mtx mtx, u32 id)
 
 	GX_WRITE_U8(0x10);
 	GX_WRITE_U32(reg);
-#if DEBUG
+#if defined(DEBUG) || defined(LIBPORPOISE_PORT)
 	GX_WRITE_MTX_ELEM(addr + 0, mtx[0][0]);
 	GX_WRITE_MTX_ELEM(addr + 1, mtx[0][1]);
 	GX_WRITE_MTX_ELEM(addr + 2, mtx[0][2]);
@@ -335,7 +343,7 @@ void GXLoadNrmMtxImm3x3(const Mtx33 mtx, u32 id)
 
 	GX_WRITE_U8(0x10);
 	GX_WRITE_U32(reg);
-#if DEBUG
+#if defined(DEBUG) || defined(LIBPORPOISE_PORT)
 	GX_WRITE_MTX_ELEM(addr + 0, mtx[0][0]);
 	GX_WRITE_MTX_ELEM(addr + 1, mtx[0][1]);
 	GX_WRITE_MTX_ELEM(addr + 2, mtx[0][2]);
@@ -404,7 +412,7 @@ void GXLoadTexMtxImm(const Mtx mtx, u32 id, GXTexMtxType type)
 
 	GX_WRITE_U8(0x10);
 	GX_WRITE_U32(reg);
-#if DEBUG
+#if defined(DEBUG) || defined(LIBPORPOISE_PORT)
 	GX_WRITE_MTX_ELEM(addr + 0, mtx[0][0]);
 	GX_WRITE_MTX_ELEM(addr + 1, mtx[0][1]);
 	GX_WRITE_MTX_ELEM(addr + 2, mtx[0][2]);
