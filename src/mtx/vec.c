@@ -23,6 +23,10 @@ void C_VECAdd(const Vec* a, const Vec* b, Vec* ab)
  */
 void PSVECAdd(register const Vec* a, const register Vec* b, register Vec* ab)
 {
+#ifdef LIBPORPOISE_PORT
+	C_VECAdd(a, b, ab);
+	return;
+#endif
 #ifdef __MWERKS__
 	asm {
 		psq_l   fp2, 0x0000 (a), 0, 0
@@ -58,6 +62,10 @@ void C_VECSubtract(const Vec* a, const Vec* b, Vec* a_b)
  */
 void PSVECSubtract(register const Vec* a, register const Vec* b, register Vec* a_b)
 {
+#ifdef LIBPORPOISE_PORT
+	C_VECSubtract(a, b, a_b);
+	return;
+#endif
 #ifdef __MWERKS__
 	asm {
 		psq_l   fp2, 0x0000 (a), 0, 0
@@ -92,6 +100,10 @@ void C_VECScale(const Vec* src, Vec* dst, f32 scale)
  */
 void PSVECScale(register const Vec* src, register Vec* dst, register f32 scale)
 {
+#ifdef LIBPORPOISE_PORT
+	C_VECScale(src, dst, scale);
+	return;
+#endif
 	register f32 vxy, vz, rxy, rz;
 
 #ifdef __MWERKS__
@@ -132,6 +144,10 @@ void C_VECNormalize(const Vec* src, Vec* unit)
  */
 void PSVECNormalize(register const Vec* src, register Vec* unit)
 {
+#ifdef LIBPORPOISE_PORT
+	C_VECNormalize(src, unit);
+	return;
+#endif
 	register f32 c_half;
 	register f32 c_three;
 	register f32 v1_xy;
@@ -185,6 +201,9 @@ f32 C_VECSquareMag(const Vec* v)
  * @note This must be a file-scope ASM function for matching purposes.
  */
 ASM f32 PSVECSquareMag(register const Vec* v) {
+#ifdef LIBPORPOISE_PORT
+	return C_VECSquareMag(v);
+#endif
 #ifdef __MWERKS__ // clang-format off
 	psq_l    fp2, 0x0000 (v), 0, 0
 	ps_mul   fp3, fp2, fp2
@@ -212,6 +231,9 @@ f32 C_VECMag(const Vec* v)
  */
 f32 PSVECMag(register const Vec* v)
 {
+#ifdef LIBPORPOISE_PORT
+	return C_VECMag(v);
+#endif
 	register f32 res, tmp0, tmp1, tmp2;
 	register f32 c_three;
 	register f32 c_half;
@@ -271,6 +293,9 @@ f32 C_VECDotProduct(const Vec* a, const Vec* b)
  */
 f32 PSVECDotProduct(register const Vec* a, register const Vec* b)
 {
+#ifdef LIBPORPOISE_PORT
+	return C_VECDotProduct(a, b);
+#endif
 	register f32 res;
 
 #ifdef __MWERKS__
@@ -314,6 +339,10 @@ void C_VECCrossProduct(const Vec* a, const Vec* b, Vec* axb)
  */
 void PSVECCrossProduct(register const Vec* a, register const Vec* b, register Vec* axb)
 {
+#ifdef LIBPORPOISE_PORT
+	C_VECCrossProduct(a, b, axb);
+	return;
+#endif
 #ifdef __MWERKS__
 	asm {
 		psq_l       fp1, 0x0000 (b), 0, 0
@@ -410,6 +439,9 @@ f32 C_VECSquareDistance(const Vec* a, const Vec* b)
  */
 f32 PSVECSquareDistance(register const Vec* a, register const Vec* b)
 {
+#ifdef LIBPORPOISE_PORT
+	return C_VECSquareDistance(a, b);
+#endif
 	register f32 res;
 
 #ifdef __MWERKS__
@@ -440,6 +472,9 @@ f32 C_VECDistance(const Vec* a, const Vec* b)
 
 f32 PSVECDistance(register const Vec* a, register const Vec* b)
 {
+#ifdef LIBPORPOISE_PORT
+	return C_VECDistance(a, b);
+#endif
 	register f32 res;
 	register f32 c_half;
 	register f32 c_three;
