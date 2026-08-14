@@ -180,6 +180,7 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
     };
 
     ProcessAttribute(GX_VA_POS, gxState.GetNumPositionComponents);
+    ProcessAttribute(GX_VA_NRM, gxState.GetNumNormalComponents);
 
     ProcessAttribute(GX_VA_CLR0, gxState.GetNumColorComponents);
     ProcessAttribute(GX_VA_CLR1, gxState.GetNumColorComponents);   
@@ -225,6 +226,7 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
         RenderVertex& output = mRenderVerts[vertexIndex];
 
         BuildRenderVertexAttr(GX_VA_POS, output.position.coords, DecodePositionComponent);
+        BuildRenderVertexAttr(GX_VA_NRM, output.normal.coords, DecodePositionComponent);
 
         BuildRenderVertexAttr(GX_VA_CLR0, output.color0.values, DecodeColor);
         //BuildRenderVertexAttr(GX_VA_CLR1, output.color1.values, DecodeColor);

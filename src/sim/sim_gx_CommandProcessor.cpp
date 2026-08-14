@@ -148,6 +148,21 @@ void CommandProcessor::ProcessOpcode() {
             break;
         case Opcode::LoadBpReg:
             {
+                auto& gxState = GetGlobalState();
+                u32 value = *(u32*)mArgsVec.data();
+                u32 regId = value >> 24;
+                if (regId == 0xFE) {
+                  // BP mask write: applies to the next BP register write only
+                  gxState.SetBpRegCache(regId, value & 0x00FFFFFF);
+                } else {
+                    const u32 ssMask = gxState.GetBpRegCache(0xFE);
+                    gxState.SetBpRegCache(0xFE, 0x00FFFFFF);
+                    value = (regId << 24) | (((gxState.GetBpRegCache(regId) & ~ssMask) | (value & ssMask)) & 0x00FFFFFF);
+
+                    gxState.SetBpRegCache((u8)regId, value);
+                    ProcessBpReg(regId, value);
+                }
+            
                 mCurrentState = State::ReadOpcode;
             }
             break;
@@ -235,6 +250,154 @@ void CommandProcessor::ProcessOpcode() {
             break;
     }
     mArgsVec.clear();
+}
+
+void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
+    auto& gxState = GetGlobalState();
+    switch(regAddr) {
+        // GenMode
+        case 0x00:
+            {
+                gxState.SetNumTexGens(GetRegValue(value, 4, 0));
+                gxState.SetNumChannels(GetRegValue(value, 3, 4));
+                gxState.SetNumTevStages(GetRegValue(value, 4, 10) + 1);
+                GXCullMode hwCull = static_cast<GXCullMode>(GetRegValue(value, 2, 14));
+                // BP encodes front/back opposite the GX representation
+                switch (hwCull) {
+                case GX_CULL_FRONT:
+                  gxState.SetCullMode(GX_CULL_BACK);
+                  break;
+                case GX_CULL_BACK:
+                  gxState.SetCullMode(GX_CULL_FRONT);
+                  break;
+                default:
+                  gxState.SetCullMode(hwCull);
+                  break;
+                }
+                //g_gxState.numIndStages = reg_get(value, 3, 16);
+            } break;
+        //0x10-0x1F: TEV indirect stage config
+        case 0x10:
+        case 0x11:
+        case 0x12:
+        case 0x13:
+        case 0x14:
+        case 0x15:
+        case 0x16:
+        case 0x17:
+        case 0x18:
+        case 0x19:
+        case 0x1A:
+        case 0x1B:
+        case 0x1C:
+        case 0x1D:
+        case 0x1E:
+        case 0x1F:
+            {
+                u8 stage = regAddr - 0x10;
+                //if (stage >= GX_MAXTEVSTAGE) {
+                //  return;
+                //}
+                //auto& s = g_gxState.tevStages[stage];
+                //s.indTexStage = static_cast<GXIndTexStageID>(reg_get(value, 2, 0));
+                //s.indTexFormat = static_cast<GXIndTexFormat>(reg_get(value, 2, 2));
+                //s.indTexBiasSel = static_cast<GXIndTexBiasSel>(reg_get(value, 3, 4));
+                //s.indTexAlphaSel = static_cast<GXIndTexAlphaSel>(reg_get(value, 2, 7));
+                //s.indTexMtxId = static_cast<GXIndTexMtxID>(reg_get(value, 4, 9));
+                //s.indTexWrapS = static_cast<GXIndTexWrap>(reg_get(value, 3, 13));
+                //s.indTexWrapT = static_cast<GXIndTexWrap>(reg_get(value, 3, 16));
+                //s.indTexUseOrigLOD = reg_get(value, 1, 19) != 0;
+                //s.indTexAddPrev = reg_get(value, 1, 20) != 0;
+            } break;
+        //TEV Order (0x28-0x2F)
+        case 0x28:
+        case 0x29:
+        case 0x2A:
+        case 0x2B:
+        case 0x2C:
+        case 0x2D:
+        case 0x2F:
+            {
+                u8 idx = regAddr - 0x28;
+
+                // Reverse mapping from hardware to GX
+                static constexpr GXChannelID r2c[] = {GX_COLOR0A0, GX_COLOR1A1,   GX_COLOR0A0,    GX_COLOR1A1,
+                                                      GX_COLOR0A0, GX_ALPHA_BUMP, GX_ALPHA_BUMPN, GX_COLOR_ZERO};
+                
+                for (u8 half = 0; half < 2; ++half) {
+                  const u8 stage = idx * 2 + half;
+                  if (stage >= GX_MAXTEVSTAGE) {
+                    continue;
+                  }
+                  const u32 shift = half * 12;
+                  auto& s = gxState.GetTevStageConfig(stage);
+                  s.mTexMapId = static_cast<GXTexMapID>(GetRegValue(value, 3, shift));
+                  s.mTexCoordId = static_cast<GXTexCoordID>(GetRegValue(value, 3, shift + 3));
+                  if (!GetRegValue(value, 1, shift + 6)) {
+                    s.mTexMapId = GX_TEXMAP_NULL;
+                  }
+                  //u32 chanHw = GetRegValue(value, 3, shift + 7);
+                  //s.channelId = (chanHw < 8) ? r2c[chanHw] : GX_COLOR_NULL;
+                }
+            } break;
+        // TEV color combiner stages (0xC0, 0xC2, ... 0xDE)
+        case 0xC0:
+        case 0xC1:
+        case 0xC2:
+        case 0xC3:
+        case 0xC4:
+        case 0xC5:
+        case 0xC6:
+        case 0xC7:
+        case 0xC8:
+        case 0xC9:
+        case 0xCA:
+        case 0xCB:
+        case 0xCC:
+        case 0xCD:
+        case 0xCE:
+        case 0xCF:
+        case 0xD0:
+        case 0xD1:
+        case 0xD2:
+        case 0xD3:
+        case 0xD4:
+        case 0xD5:
+        case 0xD6:
+        case 0xD7:
+        case 0xD8:
+        case 0xD9:
+        case 0xDA:
+        case 0xDB:
+        case 0xDC:
+        case 0xDD:
+        case 0xDE:
+            {
+                u8 stage = (regAddr - 0xC0) / 2;
+                if (stage >= GX_MAXTEVSTAGE) {
+                  return;
+                }
+                auto& s = gxState.GetTevStageConfig(stage);
+                s.mArgs[3] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 0));
+                s.mArgs[2] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 4));
+                s.mArgs[1] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 8));
+                s.mArgs[0] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 12));
+                //s.mClampMode = static_cast<GXTevClampMode>(GetRegValue(value, 1, 19) != 0);
+                s.mOutReg = static_cast<GXTevRegID>(GetRegValue(value, 2, 22));
+                if (GetRegValue(value, 2, 16) == 3) {
+                  u32 hwOp = GetRegValue(value, 1, 18) | (GetRegValue(value, 2, 20) << 1);
+                  s.mOperation = static_cast<GXTevOp>(hwOp + 8);
+                  s.mBias = GX_TB_ZERO;
+                  s.mScale = GX_CS_SCALE_1;
+                } else {
+                  s.mOperation = static_cast<GXTevOp>(GetRegValue(value, 1, 18));
+                  s.mBias = static_cast<GXTevBias>(GetRegValue(value, 2, 16));
+                  s.mScale = static_cast<GXTevScale>(GetRegValue(value, 2, 20));
+                }
+            } break;
+        default:
+            break;
+    }
 }
 
 void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {

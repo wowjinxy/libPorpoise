@@ -18,6 +18,16 @@ struct RenderVertex {
         float coords[3];
     } position;
 
+    // Normal
+    union{
+        struct {
+            float x;
+            float y;
+            float z;
+        };
+        float coords[3];
+    } normal;
+
     // Color0
     union {
         struct {

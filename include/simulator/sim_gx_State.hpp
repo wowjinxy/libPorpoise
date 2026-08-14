@@ -26,6 +26,18 @@ struct VertexArray {
     int mStride = 0;
 };
 
+struct TevStageConfig {
+  GXTevMode mMode;
+  GXTevOp mOperation;
+  GXTevColorArg mArgs[4];
+  GXTevRegID mOutReg;
+  GXTevClampMode mClampMode;
+  GXTevBias mBias;
+  GXTevScale mScale;
+  GXTexMapID mTexMapId;
+  GXTexCoordID mTexCoordId;
+};
+
 class GlobalState {
  public:
   GlobalState();
@@ -64,6 +76,7 @@ class GlobalState {
     }
   };
 
+  inline u32 GetBpRegCache(u8 regId) const { return mBpRegCache[regId]; };
   inline GXPrimitive GetCurrentPrimitive() const {return mCurrentPrimitive;};
   inline GXAttrType GetVertexDescriptor(GXAttr attr) {return mVertexDescriptors[attr];};
   inline const VertexFormat& GetCurrentVertexFormat() {return mVertexFormats[mCurrentVertexFormat];};
@@ -71,8 +84,16 @@ class GlobalState {
   inline const VertexFormat& GetVertexFormat(GXVtxFmt formatIdx) {return mVertexFormats[formatIdx];};
   const std::array<float, 16>& GetPositionMatrix() const;
   const std::array<float, 16>& GetProjectionMatrix() const;
+  inline u8 GetNumTexGens() const { return mNumTexGens; };
+  inline u8 GetNumChannels() const { return mNumChannels; };
+  inline u8 GetNumTevStages() const { return mNumTevStages; };
+  inline GXCullMode GetCullMode() const { return mCullMode; };
+  inline TevStageConfig& GetTevStageConfig(u8 stage) { return mTevStages[stage]; };
 
   void Reset();
+  inline void SetBpRegCache(u8 regId, u32 value) {
+    mBpRegCache[regId] = value;
+  }
   inline void SetCurrentPrimitive(GXPrimitive primitive) {mCurrentPrimitive = primitive;};
   inline void SetCurrentPositionMatrix(u32 matrixId) {
     const size_t slot = static_cast<size_t>(matrixId / 3);
@@ -93,6 +114,10 @@ class GlobalState {
     mVertexFormats[formatIndex].mAttributes[attrIndex].mFraction = fraction;
   };
   void SetXfData(u32 address, const u8* data, size_t wordCount);
+  inline void SetNumTexGens(u8 numTexGens) { mNumTexGens = numTexGens; };
+  inline void SetNumChannels(u8 numChannels) { mNumChannels = numChannels; };
+  inline void SetNumTevStages(u8 numTevStages) { mNumTevStages = numTevStages; };
+  inline void SetCullMode(GXCullMode cullMode) { mCullMode = cullMode; };
 
  private:
   static std::array<float, 16> IdentityMatrix();
@@ -111,6 +136,12 @@ class GlobalState {
   std::array<bool, 10> mPositionMatrixValid = {};
   std::array<float, 16> mProjectionMatrix = {};
   bool mProjectionMatrixValid = false;
+  std::array<u32, 0x100> mBpRegCache = {};
+  u8 mNumTexGens = 0;
+  u8 mNumChannels = 0;
+  u8 mNumTevStages = 0;
+  GXCullMode mCullMode = GX_CULL_BACK;
+  std::array<TevStageConfig, GX_MAX_TEVSTAGE> mTevStages = {};
 };
 
 void InitGlobalState();
