@@ -152,6 +152,10 @@ void C_MTX44Identity(Mtx44 m)
  */
 void PSMTX44Identity(register Mtx44 m)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Identity(m);
+	return;
+#endif
 	register f32 c1;
 	register f32 c0;
 
@@ -212,6 +216,10 @@ void C_MTX44Copy(const Mtx44 src, Mtx44 dst)
  */
 void PSMTX44Copy(register const Mtx44 src, register Mtx44 dst)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Copy(src, dst);
+	return;
+#endif
 #ifdef __MWERKS__
 	asm {
 		psq_l   f1, 0x0000 (src), 0, 0
@@ -284,6 +292,10 @@ void C_MTX44Concat(const Mtx44 a, const Mtx44 b, Mtx44 ab)
  */
 ASM void PSMTX44Concat(register const Mtx44 a, register const Mtx44 b, register Mtx44 ab)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Concat(a, b, ab);
+	return;
+#endif
 #ifdef __MWERKS__ // clang-format off
 	nofralloc
 	psq_l      f0, 0x00 (a), 0, 0
@@ -402,6 +414,10 @@ void C_MTX44Transpose(const Mtx44 src, Mtx44 xPose)
  * @note UNUSED Size: 000064 (Matching by size)
  */
 ASM void PSMTX44Transpose(register const Mtx44 src, register Mtx44 xPose) {
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Transpose(src, xPose);
+	return;
+#endif
 #ifdef __MWERKS__ // clang-format off
 	nofralloc
 	psq_l       f0, 0x00 (src), 0, 0
@@ -541,6 +557,10 @@ void C_MTX44Trans(Mtx44 m, f32 xT, f32 yT, f32 zT)
  */
 void PSMTX44Trans(register Mtx44 m, register f32 xT, register f32 yT, register f32 zT)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Trans(m, xT, yT, zT);
+	return;
+#endif
 	register f32 c_zero;
 	register f32 c_one;
 	register f32 c_01;
@@ -606,6 +626,10 @@ void C_MTX44TransApply(const Mtx44 src, Mtx44 dst, f32 xT, f32 yT, f32 zT)
  */
 ASM void PSMTX44TransApply(register const Mtx44 src, register Mtx44 dst, register f32 xT, register f32 yT, register f32 zT)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTX44TransApply(src, dst, xT, yT, zT);
+	return;
+#endif
 #ifdef __MWERKS__ // clang-format off
 	nofralloc
 	psq_l    f4, 0x00 (src), 0, 0
@@ -669,6 +693,10 @@ void C_MTX44Scale(Mtx44 m, f32 xS, f32 yS, f32 zS)
  */
 void PSMTX44Scale(register Mtx44 m, register f32 xS, register f32 yS, register f32 zS)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTX44Scale(m, xS, yS, zS);
+	return;
+#endif
 	register f32 c_zero;
 	register f32 c_one;
 
@@ -727,6 +755,10 @@ void C_MTX44ScaleApply(const Mtx44 src, Mtx44 dst, f32 xS, f32 yS, f32 zS)
  */
 ASM void PSMTX44ScaleApply(register const Mtx44 src, register Mtx44 dst, register f32 xS, register f32 yS, register f32 zS)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTX44ScaleApply(src, dst, xS, yS, zS);
+	return;
+#endif
 #ifdef __MWERKS__ // clang-format off
 	nofralloc
 	psq_l     f4, 0x00 (src), 0, 0
@@ -776,6 +808,10 @@ void C_MTX44RotRad(Mtx44 m, char axis, f32 rad)
  */
 void PSMTX44RotRad(Mtx44 m, char axis, f32 rad)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTX44RotRad(m, axis, rad);
+	return;
+#endif
 	f32 sinA;
 	f32 cosA;
 
@@ -877,6 +913,10 @@ void C_MTX44RotTrig(Mtx44 m, char axis, f32 sinA, f32 cosA)
  */
 void PSMTX44RotTrig(register Mtx44 m, register char axis, register f32 sinA, register f32 cosA)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTX44RotTrig(m, axis, sinA, cosA);
+	return;
+#endif
 	register f32 ftmp0;
 	register f32 ftmp1;
 	register f32 ftmp2;
@@ -1012,6 +1052,10 @@ void C_MTX44RotAxisRad(Mtx44 m, const Vec* axis, f32 rad)
  */
 void PSMTX44RotAxisRad(register Mtx44 m, register const Vec* axis, register f32 rad)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTX44RotAxisRad(m, axis, rad);
+	return;
+#endif
 	register f32 sinA;
 	register f32 cosA;
 	register f32 t;

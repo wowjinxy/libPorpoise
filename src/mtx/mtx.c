@@ -40,6 +40,10 @@ void C_MTXIdentity(Mtx m)
  */
 void PSMTXIdentity(register Mtx m)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXIdentity(m);
+	return;
+#endif
 	register f32 c_zero;
 	register f32 c_one;
 	register f32 c_01;
@@ -94,6 +98,10 @@ void C_MTXCopy(const Mtx src, Mtx dst)
  */
 void PSMTXCopy(register const Mtx src, register Mtx dst)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXCopy(src, dst);
+	return;
+#endif
 #ifdef __MWERKS__
 	asm {
 		psq_l   fp0, 0x0000 (src), 0, 0
@@ -152,6 +160,10 @@ void C_MTXConcat(const Mtx a, const Mtx b, Mtx dst)
  */
 ASM void PSMTXConcat(register const Mtx a, register const Mtx b, register Mtx dst)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXConcat(a, b, dst);
+	return;
+#endif
 #ifdef __MWERKS__ // clang-format off
 	nofralloc
 
@@ -257,6 +269,10 @@ void C_MTXTranspose(const Mtx src, Mtx xPose)
  */
 void PSMTXTranspose(register const Mtx src, register Mtx xPose)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXTranspose(src, xPose);
+	return;
+#endif
 	register f32 c_zero;
 	register f32 row0a, row1a, row0b, row1b;
 	register f32 trns0, trns1, trns2;
@@ -339,6 +355,9 @@ u32 C_MTXInverse(const Mtx src, Mtx inv)
  * @TODO: Documentation
  */
 ASM u32 PSMTXInverse(register const Mtx src, register Mtx inv) {
+#ifdef LIBPORPOISE_PORT
+	return C_MTXInverse(src, inv);
+#endif
 #ifdef __MWERKS__ // clang-format off
 	nofralloc
 
@@ -470,6 +489,9 @@ u32 C_MTXInvXpose(const Mtx src, Mtx inv)
  */
 ASM u32 PSMTXInvXpose(register const Mtx src, register Mtx inv)
 {
+#ifdef LIBPORPOISE_PORT
+	return C_MTXInvXpose(src, inv);
+#endif
 #ifdef __MWERKS__ // clang-format off
 	nofralloc
 
@@ -553,6 +575,10 @@ void C_MTXRotRad(Mtx m, char axis, f32 rad)
  */
 void PSMTXRotRad(Mtx m, char axis, f32 rad)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXRotRad(m, axis, rad);
+	return;
+#endif
 	f32 sinA, cosA;
 	sinA = sinf(rad);
 	cosA = cosf(rad);
@@ -637,6 +663,10 @@ void C_MTXRotTrig(Mtx m, char axis, f32 sinA, f32 cosA)
  */
 void PSMTXRotTrig(register Mtx m, register char axis, register f32 sinA, register f32 cosA)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXRotTrig(m, axis, sinA, cosA);
+	return;
+#endif
 	register f32 fc0, fc1, nsinA;
 	register f32 fw0, fw1, fw2, fw3;
 
@@ -744,6 +774,10 @@ void C_MTXRotAxisRad(Mtx m, const Vec* axis, f32 rad)
  */
 void PSMTXRotAxisRad(register Mtx m, const Vec* axis, register f32 rad)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXRotAxisRad(m, axis, rad);
+	return;
+#endif
 	register f32 tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7, tmp8, tmp9;
 
 	register f32 sinA, cosA, t;
@@ -818,6 +852,10 @@ void C_MTXTrans(Mtx m, f32 xT, f32 yT, f32 zT)
  */
 void PSMTXTrans(register Mtx m, register f32 xT, register f32 yT, register f32 zT)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXTrans(m, xT, yT, zT);
+	return;
+#endif
 	register f32 c0;
 	register f32 c1;
 
@@ -837,9 +875,6 @@ void PSMTXTrans(register Mtx m, register f32 xT, register f32 yT, register f32 z
 		stfs    zT, 44 (m)
 		stfs    c1,  0 (m)
 	}
-#endif
-#ifdef LIBPORPOISE_PORT
-	C_MTXTrans(m, xT, yT, zT);
 #endif
 }
 
@@ -872,6 +907,10 @@ void C_MTXTransApply(const Mtx src, Mtx dst, f32 xT, f32 yT, f32 zT)
  */
 ASM void PSMTXTransApply(register const Mtx src, register Mtx dst, register f32 xT, register f32 yT, register f32 zT)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXTransApply(src, dst, xT, yT, zT);
+	return;
+#endif
 #ifdef __MWERKS__ // clang-format off
 	nofralloc
 	psq_l    fp4,  0 (src), 0, 0
@@ -920,6 +959,10 @@ void C_MTXScale(Mtx m, f32 xS, f32 yS, f32 zS)
  */
 void PSMTXScale(register Mtx m, register f32 xS, register f32 yS, register f32 zS)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXScale(m, xS, yS, zS);
+	return;
+#endif
 	register f32 c0;
 
 	c0 = 0.0f;
@@ -966,6 +1009,10 @@ void C_MTXScaleApply(const Mtx src, Mtx dst, f32 xS, f32 yS, f32 zS)
  */
 ASM void PSMTXScaleApply(register const Mtx src, register Mtx dst, register f32 xS, register f32 yS, register f32 zS)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXScaleApply(src, dst, xS, yS, zS);
+	return;
+#endif
 #ifdef __MWERKS__ // clang-format off
 	nofralloc
 	psq_l     fp4,  0 (src), 0, 0
@@ -1035,6 +1082,10 @@ void C_MTXQuat(Mtx m, const Quaternion* quat)
  */
 void PSMTXQuat(register Mtx m, register const Quaternion* quat)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXQuat(m, quat);
+	return;
+#endif
 	register f32 c_zero, c_one, c_two, scale;
 	register f32 tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7, tmp8, tmp9;
 
@@ -1120,6 +1171,10 @@ void C_MTXReflect(Mtx m, const Vec* p, const Vec* n)
  */
 void PSMTXReflect(register Mtx m, const register Vec* p, const register Vec* n)
 {
+#ifdef LIBPORPOISE_PORT
+	C_MTXReflect(m, p, n);
+	return;
+#endif
 	register f32 c_one;
 	register f32 vn_xy, vn_z1, n2vn_xy, n2vn_z1, pdotn;
 	register f32 tmp0, tmp1, tmp2, tmp3;
