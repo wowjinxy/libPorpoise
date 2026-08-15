@@ -19,6 +19,7 @@ class GlRenderer {
 
   unsigned int mVertexArray = 0;
   unsigned int mVertexBuffer = 0;
+  unsigned int mTevStageUniformBuffer = 0;
 };
 
 GlRenderer& GetGlRenderer();

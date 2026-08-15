@@ -26,6 +26,9 @@ struct VertexArray {
     int mStride = 0;
 };
 
+// NOTE: this must match exactly with the struct in fragment.glsl
+// otherwise the shader will not work!
+// Make sure to update the values in the shader if you change them here!
 struct TevStageConfig {
   GXTevMode mMode;
   GXTevOp mOperation;
@@ -89,6 +92,7 @@ class GlobalState {
   inline u8 GetNumTevStages() const { return mNumTevStages; };
   inline GXCullMode GetCullMode() const { return mCullMode; };
   inline TevStageConfig& GetTevStageConfig(u8 stage) { return mTevStages[stage]; };
+  inline TevStageConfig * GetTevStageConfigArray() { return mTevStages.data(); };
 
   void Reset();
   inline void SetBpRegCache(u8 regId, u32 value) {
