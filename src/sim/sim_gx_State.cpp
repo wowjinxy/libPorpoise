@@ -1,3 +1,4 @@
+#include "dolphin/gx/GXEnum.h"
 #include <simulator/sim_gx_State.hpp>
 
 #include <algorithm>
@@ -6,6 +7,11 @@
 #include <cmath>
 
 static SIM::GX::GlobalState sGXGlobalState = {};
+
+
+static u32 GetRegValue(u32 reg, u32 size, u32 shift) {
+  return (reg >> shift) & ((1u << size) - 1u);
+}
 
 namespace SIM::GX {
 
@@ -142,6 +148,32 @@ const std::array<float, 16>& GlobalState::GetProjectionMatrix() const {
 
 void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
     if (data == nullptr || wordCount == 0 || address >= mXfMemory.size()) {
+        return;
+    }
+
+    // TexGen config
+    if(address >= 0x40 && address <= 0x4F) {
+        u32 texGenIdx = address - 0x40;
+        u32 value = *(const u32*)data;
+        if(texGenIdx >= GX_MAX_TEXCOORD) {
+            return;
+        }
+
+        auto& texGenConfig = mTexGenConfigs[texGenIdx];
+        bool proj = GetRegValue(value, 1, 1) != 0;
+        u32 tgType = GetRegValue(value, 3, 4);
+        u32 srcRow = GetRegValue(value, 5, 7);
+
+        if (tgType == 0) {
+          texGenConfig.mType = proj ? GX_TG_MTX3x4 : GX_TG_MTX2x4;
+        } else if (tgType == 1) {
+          // Bump mapping: type encodes emboss light
+          texGenConfig.mType = static_cast<GXTexGenType>(GetRegValue(value, 3, 15) + 2);
+        } else if (tgType == 2 || tgType == 3) {
+          texGenConfig.mType = GX_TG_SRTG;
+          //tcg.src = tgType == 2 ? GX_TG_COLOR0 : GX_TG_COLOR1;
+        }
+
         return;
     }
 

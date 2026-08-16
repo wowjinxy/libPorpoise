@@ -171,6 +171,12 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
             gxState.GetPositionMatrix().data());
     }
 
+    const GLint numTexGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_numTexGens");
+    glUniform1ui(numTexGenLocation, gxState.GetNumTexGens());
+
+    const GLint texGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texGens");
+    glUniform1uiv(texGenLocation, sizeof(TexGenConfig) * GX_MAX_TEXCOORD, (u32*)gxState.GetTexGenArray());
+
     const GLint tevTexMapLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "tevTexMaps");
     glUniform1iv(tevTexMapLocation, GX_MAX_TEVSTAGE, (const GLint*)gxState.GetTevTexMapArray());
 

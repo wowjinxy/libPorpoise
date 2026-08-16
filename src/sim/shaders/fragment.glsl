@@ -4,7 +4,7 @@ uniform uint numTevStages;
 uniform sampler2D tevTexMaps[16];
 
 smooth in vec4 color0;
-smooth in vec2 fragTexCoords;
+smooth in vec2 gxTexCoords[8 /* GX_MAX_TEXCOORD */];
 out vec4 color;
 
 // This is the same as TevStageConfig in sim_gx_State.hpp, just with enums replaced by uints
@@ -174,10 +174,10 @@ void LoadTevColorArg(uint stageNum, uint argNum) {
     case 7u: /* GX_CC_A2 */
       break;
     case 8u: /* GX_CC_TEXC */
-      tevRegs[argNum].rgb = TexMapStage(stageNum, fragTexCoords).rgb;
+      tevRegs[argNum].rgb = TexMapStage(stageNum, gxTexCoords[tevStageConfigs[stageNum].mTexCoordId]).rgb;
       break;
     case 9u: /* GX_CC_TEXA */
-      tevRegs[argNum].rgb = TexMapStage(stageNum, fragTexCoords).rgb;
+      tevRegs[argNum].rgb = TexMapStage(stageNum, gxTexCoords[tevStageConfigs[stageNum].mTexCoordId]).rgb;
       break;
     case 10u: /* GX_CC_RASC */
       // TODO: this isnt always color0
@@ -223,7 +223,7 @@ void LoadTevAlphaArg(uint stageNum, uint argNum) {
     case 3u: /* GX_CA_A2 */
       break;
     case 4u: /* GX_CC_TEXA */
-      tevRegs[argNum].a = TexMapStage(stageNum, fragTexCoords).a;
+      tevRegs[argNum].a = TexMapStage(stageNum, gxTexCoords[tevStageConfigs[stageNum].mTexCoordId]).a;
       break;
     case 5u: /* GX_CA_RASA */
       // TODO: this isnt always color0

@@ -1,6 +1,7 @@
 #ifndef LIBPORPOISE_SIM_GX_STATE_HPP
 #define LIBPORPOISE_SIM_GX_STATE_HPP
 
+#include "dolphin/gx/GXEnum.h"
 #include <array>
 #include <cstddef>
 #include <vector>
@@ -41,6 +42,11 @@ struct TevStageConfig {
   GXTevBias mBias;
   GXTevScale mScale;
   GXTexCoordID mTexCoordId;
+};
+
+struct TexGenConfig {
+  u32 mMatrixId;
+  GXTexGenType mType;
 };
 
 class GlobalState {
@@ -96,6 +102,7 @@ class GlobalState {
   inline TevStageConfig& GetTevStageConfig(u8 stage) { return mTevStages[stage]; };
   inline TevStageConfig * GetTevStageConfigArray() { return mTevStages.data(); };
   inline GXTexMapID* GetTevTexMapArray() {return mTevTexMaps.data(); };
+  inline TexGenConfig* GetTexGenArray() {return mTexGenConfigs.data(); };
 
   void Reset();
   inline void SetBpRegCache(u8 regId, u32 value) {
@@ -141,6 +148,7 @@ class GlobalState {
   std::array<VertexArray, GX_VA_MAX_ATTR> mVertexArrays = {};
   std::array<u32, 0x1100> mXfMemory = {};
   std::array<std::array<float, 16>, 10> mPositionMatrices = {};
+  std::array<std::array<float, 16>, 10> mTextureMatrices = {};
   std::array<bool, 10> mPositionMatrixValid = {};
   std::array<float, 16> mProjectionMatrix = {};
   bool mProjectionMatrixValid = false;
@@ -151,6 +159,7 @@ class GlobalState {
   GXCullMode mCullMode = GX_CULL_BACK;
   std::array<TevStageConfig, GX_MAX_TEVSTAGE> mTevStages = {};
   std::array<GXTexMapID, GX_MAX_TEVSTAGE> mTevTexMaps;
+  std::array<TexGenConfig, GX_MAX_TEXCOORD> mTexGenConfigs = {};
 };
 
 void InitGlobalState();
