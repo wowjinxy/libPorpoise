@@ -331,10 +331,10 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
                   }
                   const u32 shift = half * 12;
                   auto& s = gxState.GetTevStageConfig(stage);
-                  s.mTexMapId = static_cast<GXTexMapID>(GetRegValue(value, 3, shift));
+                  gxState.SetTevTexMap(stage, static_cast<GXTexMapID>(GetRegValue(value, 3, shift)));
                   s.mTexCoordId = static_cast<GXTexCoordID>(GetRegValue(value, 3, shift + 3));
                   if (!GetRegValue(value, 1, shift + 6)) {
-                    s.mTexMapId = GX_TEXMAP_NULL;
+                    gxState.SetTevTexMap(stage, GX_TEXMAP_NULL);
                   }
                   //u32 chanHw = GetRegValue(value, 3, shift + 7);
                   //s.channelId = (chanHw < 8) ? r2c[chanHw] : GX_COLOR_NULL;
@@ -342,35 +342,20 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
             } break;
         // TEV color combiner stages (0xC0, 0xC2, ... 0xDE)
         case 0xC0:
-        case 0xC1:
         case 0xC2:
-        case 0xC3:
         case 0xC4:
-        case 0xC5:
         case 0xC6:
-        case 0xC7:
         case 0xC8:
-        case 0xC9:
         case 0xCA:
-        case 0xCB:
         case 0xCC:
-        case 0xCD:
         case 0xCE:
-        case 0xCF:
         case 0xD0:
-        case 0xD1:
         case 0xD2:
-        case 0xD3:
         case 0xD4:
-        case 0xD5:
         case 0xD6:
-        case 0xD7:
         case 0xD8:
-        case 0xD9:
         case 0xDA:
-        case 0xDB:
         case 0xDC:
-        case 0xDD:
         case 0xDE:
             {
                 u8 stage = (regAddr - 0xC0) / 2;

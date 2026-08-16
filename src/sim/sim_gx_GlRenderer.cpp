@@ -151,6 +151,7 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
     }
 
     auto& gxState = GetGlobalState();
+    glUseProgram(shaderProgram);
     const GLint projectionLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_projection");
     const GLint modelViewLocation =
@@ -170,14 +171,19 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
             gxState.GetPositionMatrix().data());
     }
 
-    const GLint numTevStagesLocation =
-        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "numTevStages");
-    glUniform1i(numTevStagesLocation, gxState.GetNumTevStages());
+    const GLint tevTexMapLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "tevTexMaps");
+    glUniform1iv(tevTexMapLocation, GX_MAX_TEVSTAGE, (const GLint*)gxState.GetTevTexMapArray());
+
+    const GLint tevStageConfigsLocation = glGetUniformBlockIndex(shaderProgram, "tevConfigBlock");
 
     glBindBuffer(GL_UNIFORM_BUFFER, mTevStageUniformBuffer);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(TevStageConfig) * GX_MAX_TEVSTAGE, gxState.GetTevStageConfigArray());
-    glBindBufferBase(GL_UNIFORM_BUFFER, glGetUniformLocation(static_cast<GLuint>(shaderProgram), "tevStageConfigs"), mTevStageUniformBuffer);
+    glBindBufferBase(GL_UNIFORM_BUFFER, tevStageConfigsLocation, mTevStageUniformBuffer);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+    const GLint numTevStagesLocation =
+        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "numTevStages");
+    glUniform1ui(numTevStagesLocation, gxState.GetNumTevStages());
 
     glBindVertexArray(mVertexArray);
     glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);

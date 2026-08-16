@@ -32,12 +32,13 @@ struct VertexArray {
 struct TevStageConfig {
   GXTevMode mMode;
   GXTevOp mOperation;
+  u32 pad1;
+  u32 pad2;
   GXTevColorArg mArgs[4];
   GXTevRegID mOutReg;
   GXTevClampMode mClampMode;
   GXTevBias mBias;
   GXTevScale mScale;
-  GXTexMapID mTexMapId;
   GXTexCoordID mTexCoordId;
 };
 
@@ -93,6 +94,7 @@ class GlobalState {
   inline GXCullMode GetCullMode() const { return mCullMode; };
   inline TevStageConfig& GetTevStageConfig(u8 stage) { return mTevStages[stage]; };
   inline TevStageConfig * GetTevStageConfigArray() { return mTevStages.data(); };
+  inline GXTexMapID* GetTevTexMapArray() {return mTevTexMaps.data(); };
 
   void Reset();
   inline void SetBpRegCache(u8 regId, u32 value) {
@@ -122,6 +124,7 @@ class GlobalState {
   inline void SetNumChannels(u8 numChannels) { mNumChannels = numChannels; };
   inline void SetNumTevStages(u8 numTevStages) { mNumTevStages = numTevStages; };
   inline void SetCullMode(GXCullMode cullMode) { mCullMode = cullMode; };
+  inline void SetTevTexMap(u8 tevStage, GXTexMapID texMap) { mTevTexMaps[tevStage] = texMap; };
 
  private:
   static std::array<float, 16> IdentityMatrix();
@@ -146,6 +149,7 @@ class GlobalState {
   u8 mNumTevStages = 0;
   GXCullMode mCullMode = GX_CULL_BACK;
   std::array<TevStageConfig, GX_MAX_TEVSTAGE> mTevStages = {};
+  std::array<GXTexMapID, GX_MAX_TEVSTAGE> mTevTexMaps;
 };
 
 void InitGlobalState();

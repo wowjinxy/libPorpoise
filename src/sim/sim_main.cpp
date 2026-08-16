@@ -60,6 +60,13 @@ static void CompileVertexShader(GLuint& id, const char * source) {
 static void CompileFragmentShader(GLuint& id, const char * source) {
     id = glCreateShader(GL_FRAGMENT_SHADER);
     CompileShaderCommon(id,source);
+    GLint logLen = 0;
+    glGetShaderiv(id, GL_INFO_LOG_LENGTH, &logLen);
+    if (logLen > 1) {
+        std::vector<char> log(logLen);
+        glGetShaderInfoLog(id, logLen, nullptr, log.data());
+        printf("%s\n", log.data());
+    }
 }
 
 void LinkShader(GLuint id,GLuint vertex,GLuint fragment) {
@@ -79,6 +86,22 @@ void LinkShader(GLuint id,GLuint vertex,GLuint fragment) {
     }
     glValidateProgram(id);
     glUseProgram(id);
+
+    GLint numUniforms = 0;
+    glGetProgramiv(static_cast<GLuint>(id), GL_ACTIVE_UNIFORMS, &numUniforms);
+    printf("numUniforms = %d\n", numUniforms);
+
+
+    for (GLint i = 0; i < numUniforms; ++i) {
+        char name[256];
+        GLsizei length = 0;
+        GLint size = 0;
+        GLenum type = 0;
+        glGetActiveUniform(static_cast<GLuint>(id), static_cast<GLuint>(i), sizeof(name), &length, &size, &type, name);
+        printf("Uniform %d: name='%s' size=%d type=0x%x location=%d\n",
+               i, name, size, type,
+               glGetUniformLocation(static_cast<GLuint>(id), name));
+    }
 
     glGenVertexArrays(1, &gxVertexArray);
     glBindVertexArray(gxVertexArray);
