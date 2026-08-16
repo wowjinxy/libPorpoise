@@ -363,21 +363,63 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
                   return;
                 }
                 auto& s = gxState.GetTevStageConfig(stage);
-                s.mArgs[3] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 0));
-                s.mArgs[2] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 4));
-                s.mArgs[1] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 8));
-                s.mArgs[0] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 12));
+                s.mColorArgs[3] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 0));
+                s.mColorArgs[2] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 4));
+                s.mColorArgs[1] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 8));
+                s.mColorArgs[0] = static_cast<GXTevColorArg>(GetRegValue(value, 4, 12));
                 //s.mClampMode = static_cast<GXTevClampMode>(GetRegValue(value, 1, 19) != 0);
                 s.mOutReg = static_cast<GXTevRegID>(GetRegValue(value, 2, 22));
                 if (GetRegValue(value, 2, 16) == 3) {
                   u32 hwOp = GetRegValue(value, 1, 18) | (GetRegValue(value, 2, 20) << 1);
-                  s.mOperation = static_cast<GXTevOp>(hwOp + 8);
+                  s.mColorOperation = static_cast<GXTevOp>(hwOp + 8);
                   s.mBias = GX_TB_ZERO;
                   s.mScale = GX_CS_SCALE_1;
                 } else {
-                  s.mOperation = static_cast<GXTevOp>(GetRegValue(value, 1, 18));
+                  s.mColorOperation = static_cast<GXTevOp>(GetRegValue(value, 1, 18));
                   s.mBias = static_cast<GXTevBias>(GetRegValue(value, 2, 16));
                   s.mScale = static_cast<GXTevScale>(GetRegValue(value, 2, 20));
+                }
+            } break;
+        // TEV alpha combiner stages (0xC1, 0xC3, ... 0xDF)
+        case 0xC1:
+        case 0xC3:
+        case 0xC5:
+        case 0xC7:
+        case 0xC9:
+        case 0xCB:
+        case 0xCD:
+        case 0xCF:
+        case 0xD1:
+        case 0xD3:
+        case 0xD5:
+        case 0xD7:
+        case 0xD9:
+        case 0xDB:
+        case 0xDD:
+        case 0xDF:
+            {
+                u8 stage = (regAddr - 0xC1) / 2;
+                if (stage >= GX_MAXTEVSTAGE) {
+                  return;
+                }
+                auto& s = gxState.GetTevStageConfig(stage);
+                //s.tevSwapRas = static_cast<GXTevSwapSel>(reg_get(value, 2, 0));
+                //s.tevSwapTex = static_cast<GXTevSwapSel>(reg_get(value, 2, 2));
+                s.mAlphaArgs[3] = static_cast<GXTevAlphaArg>(GetRegValue(value, 3, 4));
+                s.mAlphaArgs[2] = static_cast<GXTevAlphaArg>(GetRegValue(value, 3, 7));
+                s.mAlphaArgs[1] = static_cast<GXTevAlphaArg>(GetRegValue(value, 3, 10));
+                s.mAlphaArgs[0] = static_cast<GXTevAlphaArg>(GetRegValue(value, 3, 13));
+                //s.alphaOp.clamp = reg_get(value, 1, 19) != 0;
+                //s.alphaOp.outReg = static_cast<GXTevRegID>(reg_get(value, 2, 22));
+                if (GetRegValue(value, 2, 16) == 3) {
+                  u32 hwOp = GetRegValue(value, 1, 18) | (GetRegValue(value, 2, 20) << 1);
+                  s.mAlphaOperation = static_cast<GXTevOp>(hwOp + 8);
+                  //s.alphaOp.bias = GX_TB_ZERO;
+                  //s.alphaOp.scale = GX_CS_SCALE_1;
+                } else {
+                  //s.alphaOp.op = static_cast<GXTevOp>(GetRegValue(value, 1, 18));
+                  //s.alphaOp.bias = static_cast<GXTevBias>(GetRegValue(value, 2, 16));
+                  //s.alphaOp.scale = static_cast<GXTevScale>(GetRegValue(value, 2, 20));
                 }
             } break;
         default:

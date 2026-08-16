@@ -31,10 +31,11 @@ struct VertexArray {
 // Make sure to update the values in the shader if you change them here!
 struct TevStageConfig {
   GXTevMode mMode;
-  GXTevOp mOperation;
+  GXTevOp mColorOperation;
+  GXTevOp mAlphaOperation;
   u32 pad1;
-  u32 pad2;
-  GXTevColorArg mArgs[4];
+  GXTevColorArg mColorArgs[4];
+  GXTevAlphaArg mAlphaArgs[4];
   GXTevRegID mOutReg;
   GXTevClampMode mClampMode;
   GXTevBias mBias;
