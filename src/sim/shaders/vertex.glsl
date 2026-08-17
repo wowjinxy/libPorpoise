@@ -25,15 +25,15 @@ vec2 GenerateTexCoords(vec2 texCoordsIn, uint matrixId, uint texGenType)
         case 0u /* GX_TG_MTX2X4 */:
             {
                 mat4 mtx = u_textureMtx[matrixId];
-                mtx[2] = vec4(0.0);
-                mtx[3] = vec4(0.0);
+                //mtx[2] = vec4(0.0);
+                //mtx[3] = vec4(0.0);
                 result = (vec4(texCoordsIn, 0.0, 0.0) * mtx).xy;
             }
             break;
         case 1u /* GX_TG_MTX3X4 */:
             {
                 mat4 mtx = u_textureMtx[matrixId];
-                mtx[3] = vec4(0.0);
+                //mtx[3] = vec4(0.0);
                 result = (vec4(texCoordsIn, 0.0, 0.0) * mtx).xy;
             }
             break;

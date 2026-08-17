@@ -95,6 +95,7 @@ class GlobalState {
   inline const VertexFormat& GetVertexFormat(GXVtxFmt formatIdx) {return mVertexFormats[formatIdx];};
   const std::array<float, 16>& GetPositionMatrix() const;
   const std::array<float, 16>& GetProjectionMatrix() const;
+  const std::array<float, 16>& GetTextureMatrix(int id) const;
   inline u8 GetNumTexGens() const { return mNumTexGens; };
   inline u8 GetNumChannels() const { return mNumChannels; };
   inline u8 GetNumTevStages() const { return mNumTevStages; };
@@ -138,7 +139,7 @@ class GlobalState {
   static std::array<float, 16> IdentityMatrix();
   static float WordToFloat(u32 word);
   void RefreshPositionMatrices(u32 firstAddress, u32 endAddress);
-  void RefreshProjectionMatrix(u32 firstAddress, u32 endAddress);
+  void RefreshTextureMatrices(u32 firstAddress, u32 endAddress);
 
   GXVtxFmt mCurrentVertexFormat = GX_VTXFMT0;
   GXPrimitive mCurrentPrimitive = GX_TRIANGLES;
@@ -150,6 +151,7 @@ class GlobalState {
   std::array<std::array<float, 16>, 10> mPositionMatrices = {};
   std::array<std::array<float, 16>, 10> mTextureMatrices = {};
   std::array<bool, 10> mPositionMatrixValid = {};
+  std::array<bool, 10> mTextureMatrixValid = {};
   std::array<float, 16> mProjectionMatrix = {};
   bool mProjectionMatrixValid = false;
   std::array<u32, 0x100> mBpRegCache = {};

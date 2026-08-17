@@ -156,6 +156,8 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_projection");
     const GLint modelViewLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_modelview");
+    const GLint textureMtxLocation =
+        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_textureMtx");
     if (projectionLocation >= 0) {
         glUniformMatrix4fv(
             projectionLocation,
@@ -170,12 +172,23 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
             GL_TRUE,
             gxState.GetPositionMatrix().data());
     }
+    if(textureMtxLocation >= 0) {
+        for(int i=0; i<10;i++) {
+            glUniformMatrix4fv(
+                textureMtxLocation,
+                1,
+                GL_TRUE,
+                gxState.GetTextureMatrix(i).data()
+            );
+        }
+
+    }
 
     const GLint numTexGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_numTexGens");
     glUniform1ui(numTexGenLocation, gxState.GetNumTexGens());
 
     const GLint texGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texGens");
-    glUniform1uiv(texGenLocation, sizeof(TexGenConfig) * GX_MAX_TEXCOORD, (u32*)gxState.GetTexGenArray());
+    glUniform1uiv(texGenLocation, sizeof(TexGenConfig) * GX_MAX_TEXCOORD, (const GLuint*)gxState.GetTexGenArray());
 
     const GLint tevTexMapLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "tevTexMaps");
     glUniform1iv(tevTexMapLocation, GX_MAX_TEVSTAGE, (const GLint*)gxState.GetTevTexMapArray());
