@@ -3,7 +3,9 @@
 #include <dolphin/dvd.h>
 #include <dolphin/os/OSUtil.h>
 
+#ifdef LIBPORPOISE_PORT
 #include <malloc.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
