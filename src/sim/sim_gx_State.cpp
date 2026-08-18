@@ -1,9 +1,17 @@
+#include "dolphin/gx/GXEnum.h"
 #include <simulator/sim_gx_State.hpp>
 
 #include <algorithm>
 #include <cstring>
 
-static SIM::GX::GlobalState sGXGlobalState ={};
+#include <cmath>
+
+static SIM::GX::GlobalState sGXGlobalState = {};
+
+
+static u32 GetRegValue(u32 reg, u32 size, u32 shift) {
+  return (reg >> shift) & ((1u << size) - 1u);
+}
 
 namespace SIM::GX {
 
@@ -91,16 +99,30 @@ size_t GlobalState::GetDescriptorSize(GXAttrType descriptorType, GXCompType data
 size_t GlobalState::GetNumBytesPerVertex() {
     size_t totalBytes = 0;
     auto& format = mVertexFormats[mCurrentVertexFormat];
-    // Get bytes from position
-    size_t posComponents = 1;
-    if(mVertexDescriptors[GX_VA_POS] == GX_DIRECT) {
-        posComponents = format.mAttributes[GX_VA_POS].mComponents == GX_POS_XYZ ? 3 : 2;
+
+    auto HandleAttribute = [this, format](GXAttr attr, bool colorType, size_t (*numComponentsFunc)(GXCompCnt)) -> size_t {
+
+            auto descriptor = mVertexDescriptors[attr];
+            if(descriptor == GX_NONE) {
+                return 0;
+            }
+
+            size_t components = 1;
+            if(descriptor == GX_DIRECT) {
+                components = numComponentsFunc(format.mAttributes[attr].mComponents);
+            }
+
+            return components * GetDescriptorSize(descriptor, format.mAttributes[attr].mDataType, colorType);
+    };
+
+    totalBytes += HandleAttribute(GX_VA_POS, false, GetNumPositionComponents);
+    totalBytes += HandleAttribute(GX_VA_NRM, false, GetNumNormalComponents);
+    totalBytes += HandleAttribute(GX_VA_CLR0, true, GetNumColorComponents);
+    totalBytes += HandleAttribute(GX_VA_CLR1, true, GetNumColorComponents);
+
+    for(int attrib = GX_VA_TEX0; attrib <= GX_VA_TEX7; attrib++) {
+        totalBytes += HandleAttribute(static_cast<GXAttr>(attrib), false, GetNumTexCoordComponents);
     }
-
-    totalBytes += posComponents * GetDescriptorSize(mVertexDescriptors[GX_VA_POS], format.mAttributes[GX_VA_POS].mDataType);
-
-    // Get bytes from color0
-    totalBytes += GetDescriptorSize(mVertexDescriptors[GX_VA_CLR0], format.mAttributes[GX_VA_CLR0].mDataType, true);
 
     return totalBytes;
 }
@@ -124,21 +146,116 @@ const std::array<float, 16>& GlobalState::GetProjectionMatrix() const {
     return identity;
 }
 
+const std::array<float, 16>& GlobalState::GetTextureMatrix(int id) const {
+    if(mTextureMatrixValid[id]) {
+        return mTextureMatrices[id];
+    }
+
+    static const std::array<float, 16> identity = IdentityMatrix();
+    return identity;
+}
+
 void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
     if (data == nullptr || wordCount == 0 || address >= mXfMemory.size()) {
         return;
     }
 
-    const size_t writableWords =
-        std::min(wordCount, mXfMemory.size() - static_cast<size_t>(address));
-    for (size_t i = 0; i < writableWords; ++i) {
-        std::memcpy(&mXfMemory[address + i], data + i * sizeof(u32), sizeof(u32));
+    const u32* dataWords = (const u32*)data;
+
+    if(address < 0x1000) {
+        // XF memory
+        //if(address < 0x78) {
+        //    //Position matrices
+        //} else if (address < 0xF0) {
+        //    // Texture matrices
+        //} else if(address >= 0x400 && address < 0x45A) {
+        //    // Normal matrices
+        //} else if(address >= 0x500 && address < 0x5F0) {
+        //    // Post transform texture matrices
+        //} else if(address >= 0x600 && address < 0x680) {
+        //    // Lights
+        //}
+        const size_t writableWords =
+            std::min(wordCount, mXfMemory.size() - static_cast<size_t>(address));
+
+        for (size_t i = 0; i < writableWords; ++i) {
+            std::memcpy(&mXfMemory[address + i], data + i * sizeof(u32), sizeof(u32));
+        }
+
+        const u32 endAddress = address + static_cast<u32>(writableWords);
+        RefreshPositionMatrices(address, endAddress);
+        RefreshTextureMatrices(address, endAddress);
+    } else {
+        // XF Registers
+        u32 regAddr = address - 0x1000;
+
+
+        for(u32 i = 0; i< wordCount; i++) {
+            const u32 reg = regAddr + i;
+
+
+            if (reg == 0x20 && wordCount - i >= 7) {
+                // Projection matrix
+                const float p0 = WordToFloat(dataWords[i]);
+                const float p1 = WordToFloat(dataWords[i+1]);
+                const float p2 = WordToFloat(dataWords[i+2]);
+                const float p3 = WordToFloat(dataWords[i+3]);
+                const float p4 = WordToFloat(dataWords[i+4]);
+                const float p5 = WordToFloat(dataWords[i+5]);
+
+                const bool orthographic = dataWords[i+6] == GX_ORTHOGRAPHIC;
+                        
+                mProjectionMatrix.fill(0.0f);
+                mProjectionMatrix[0] = p0;
+                mProjectionMatrix[5] = p2;
+                mProjectionMatrix[10] = p4;
+                mProjectionMatrix[11] = p5;
+                if (orthographic) {
+                    mProjectionMatrix[3] = p1;
+                    mProjectionMatrix[7] = p3;
+                    mProjectionMatrix[15] = 1.0f;
+                } else {
+                    mProjectionMatrix[2] = p1;
+                    mProjectionMatrix[6] = p3;
+                    mProjectionMatrix[14] = -1.0f;
+                }
+                mProjectionMatrixValid = true;
+
+                i += 6;
+            } else if(reg >= 0x40 && reg <= 0x4F) {
+                // TexGen config
+                u32 texGenIdx = reg - 0x40;
+                u32 value = dataWords[i];
+                if(texGenIdx >= GX_MAX_TEXCOORD) {
+                    continue;
+                }
+            
+                auto& texGenConfig = mTexGenConfigs[texGenIdx];
+                bool proj = GetRegValue(value, 1, 1) != 0;
+                u32 tgType = GetRegValue(value, 3, 4);
+                u32 srcRow = GetRegValue(value, 5, 7);
+            
+                if (tgType == 0) {
+                  texGenConfig.mType = proj ? GX_TG_MTX3x4 : GX_TG_MTX2x4;
+                } else if (tgType == 1) {
+                  // Bump mapping: type encodes emboss light
+                  texGenConfig.mType = static_cast<GXTexGenType>(GetRegValue(value, 3, 15) + 2);
+                } else if (tgType == 2 || tgType == 3) {
+                  texGenConfig.mType = GX_TG_SRTG;
+                  //tcg.src = tgType == 2 ? GX_TG_COLOR0 : GX_TG_COLOR1;
+                }
+            }
+        }
     }
 
-    const u32 endAddress = address + static_cast<u32>(writableWords);
-    RefreshPositionMatrices(address, endAddress);
-    RefreshProjectionMatrix(address, endAddress);
+
 }
+
+void GlobalState::SetTevColor(u8 reg, std::array<float, 4>& color) {
+    mInitialTevColors[reg] = color;
+}
+
+
 
 void GlobalState::RefreshPositionMatrices(u32 firstAddress, u32 endAddress) {
     constexpr u32 wordsPerMatrix = 12;
@@ -161,36 +278,25 @@ void GlobalState::RefreshPositionMatrices(u32 firstAddress, u32 endAddress) {
     }
 }
 
-void GlobalState::RefreshProjectionMatrix(u32 firstAddress, u32 endAddress) {
-    constexpr u32 projectionStart = 0x1020;
-    constexpr u32 projectionEnd = projectionStart + 7;
-    if (endAddress <= projectionStart || firstAddress >= projectionEnd) {
-        return;
-    }
+void GlobalState::RefreshTextureMatrices(u32 firstAddress, u32 endAddress) {
+    constexpr u32 wordsPerMatrix = 12;
+    for (size_t slot = 0; slot < mTextureMatrices.size(); ++slot) {
+        const u32 matrixStart = static_cast<u32>(slot) * wordsPerMatrix + 0x078;
+        const u32 matrixEnd = matrixStart + wordsPerMatrix;
+        if (endAddress <= matrixStart || firstAddress >= matrixEnd) {
+            continue;
+        }
 
-    const float p0 = WordToFloat(mXfMemory[0x1020]);
-    const float p1 = WordToFloat(mXfMemory[0x1021]);
-    const float p2 = WordToFloat(mXfMemory[0x1022]);
-    const float p3 = WordToFloat(mXfMemory[0x1023]);
-    const float p4 = WordToFloat(mXfMemory[0x1024]);
-    const float p5 = WordToFloat(mXfMemory[0x1025]);
-    const bool orthographic = mXfMemory[0x1026] == GX_ORTHOGRAPHIC;
-
-    mProjectionMatrix.fill(0.0f);
-    mProjectionMatrix[0] = p0;
-    mProjectionMatrix[5] = p2;
-    mProjectionMatrix[10] = p4;
-    mProjectionMatrix[11] = p5;
-    if (orthographic) {
-        mProjectionMatrix[3] = p1;
-        mProjectionMatrix[7] = p3;
-        mProjectionMatrix[15] = 1.0f;
-    } else {
-        mProjectionMatrix[2] = p1;
-        mProjectionMatrix[6] = p3;
-        mProjectionMatrix[14] = -1.0f;
+        auto& matrix = mTextureMatrices[slot];
+        matrix = IdentityMatrix();
+        for (size_t row = 0; row < 3; ++row) {
+            for (size_t column = 0; column < 4; ++column) {
+                const size_t source = matrixStart + row * 4 + column;
+                matrix[row * 4 + column] = WordToFloat(mXfMemory[source]);
+            }
+        }
+        mTextureMatrixValid[slot] = true;
     }
-    mProjectionMatrixValid = true;
 }
 
 void InitGlobalState() {

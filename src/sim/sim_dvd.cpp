@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
-#ifdef LIBPORPOISE_BUILD_WIN64
+#ifdef LIBPORPOISE_BUILD_WIN
 #include <libloaderapi.h>
 #endif
 
@@ -31,7 +31,7 @@ static std::string GetExeDir() {
         exeNameBuf[bytes] = '\0';
     char * lastSlash = strrchr(exeNameBuf, '/');
 #endif
-#ifdef LIBPORPOISE_BUILD_WIN64
+#ifdef LIBPORPOISE_BUILD_WIN
     bytes = GetModuleFileName(NULL, exeNameBuf, 511);
     char * lastSlash = strrchr(exeNameBuf, '\\');
 #endif
@@ -47,6 +47,7 @@ static constexpr auto RootPathName = "DVDRoot";
 
 void Init() {
     auto exeDir = GetExeDir();
+    std::replace(exeDir.begin(), exeDir.end(), '\\', '/');
     s_dvdRootPath = exeDir + "/" + RootPathName;
 
     // Create DVDRoot if it does not exist
@@ -58,6 +59,7 @@ void Init() {
     for (const auto& dirEntry : recursive_directory_iterator(s_dvdRootPath)) {
         auto entryNum = s_dvdEntrynumIndex.size();
         auto pathStr = dirEntry.path().string();
+        std::replace(pathStr.begin(), pathStr.end(), '\\', '/');
         
         s_dvdEntrynumMap.emplace(pathStr, static_cast<s32>(entryNum));
         s_dvdEntrynumIndex.push_back(pathStr);
@@ -72,8 +74,11 @@ const char * GetRootPath() {
 }
 
 s32 ConvertPathToEntrynum(const char * path) {
-    if(s_dvdEntrynumMap.count(path)) {
-        return s_dvdEntrynumMap[path];
+    std::string newPath(path);
+    std::replace(newPath.begin(), newPath.end(), '\\', '/');
+    
+    if(s_dvdEntrynumMap.count(newPath)) {
+        return s_dvdEntrynumMap[newPath];
     } else {
         return -1;
     }

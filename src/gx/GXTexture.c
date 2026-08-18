@@ -1,6 +1,10 @@
 #include <dolphin/gx.h>
 #include <string.h>
 
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_gx_TextureManager.h>
+#endif
+
 u8 GXTexMode0Ids[8]  = { 0x80, 0x81, 0x82, 0x83, 0xA0, 0xA1, 0xA2, 0xA3 };
 u8 GXTexMode1Ids[8]  = { 0x84, 0x85, 0x86, 0x87, 0xA4, 0xA5, 0xA6, 0xA7 };
 u8 GXTexImage0Ids[8] = { 0x88, 0x89, 0x8A, 0x8B, 0xA8, 0xA9, 0xAA, 0xAB };
@@ -268,6 +272,10 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFm
 	colC         = (height + (1 << colT) - 1) >> colT;
 	t->loadCount = (rowC * colC) & 0x7FFF;
 	t->flags |= 2;
+
+	#ifdef LIBPORPOISE_PORT
+	SIM_GX_TextureManager_InitTexObj(obj, image_ptr, width, height, format, wrap_s, wrap_t, mipmap);
+	#endif
 }
 
 /**
@@ -660,6 +668,10 @@ void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion* region, GXTexMapID id)
 	SET_REG_FIELD(0x407, r->image2, 8, 24, GXTexImage2Ids[id]);
 	SET_REG_FIELD(0x408, t->image3, 8, 24, GXTexImage3Ids[id]);
 
+#ifdef LIBPORPOISE_PORT
+	// TODO: ensure display lists will be supported by this intercepted API!
+	SIM_GX_TextureManager_LoadTexObj(obj, id);
+#else
 	GX_WRITE_RAS_REG(t->mode0);
 	GX_WRITE_RAS_REG(t->mode1);
 	GX_WRITE_RAS_REG(t->image0);
@@ -682,6 +694,7 @@ void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion* region, GXTexMapID id)
 	gx->bpSent = GX_FALSE;
 #else
 	gx->bpSent = GX_TRUE;
+#endif
 #endif
 }
 

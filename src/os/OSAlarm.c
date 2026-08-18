@@ -2,11 +2,42 @@
 #include <dolphin/os.h>
 #include <limits.h>
 #include <stddef.h>
+#ifdef LIBPORPOISE_PORT
+#include <SDL2/SDL.h>
+#include <dolphin/os/OSTime.h>
+#endif
 
 // forward declarations
 static OSAlarmQueue AlarmQueue;
 
 static void DecrementerExceptionHandler(__OSException exception, OSContext* context);
+
+
+#ifdef LIBPORPOISE_PORT
+#ifdef LIBPORPOISE_BUILD_WIN
+static unsigned int OSSDLTimerCallback(unsigned int interval, void * param)
+#else
+static u32 OSSDLTimerCallback(u32 interval, void * param)
+#endif
+{
+	OSAlarm * myAlarm = (OSAlarm*)param;
+
+
+    if(myAlarm) {
+		SDL_RemoveTimer(myAlarm->sdlTimer);
+
+        if(myAlarm->period == 0) {
+            myAlarm->sdlTimer = 0;
+        } else {
+			myAlarm->sdlTimer = SDL_AddTimer(OSTicksToMilliseconds(myAlarm->period), OSSDLTimerCallback, myAlarm);
+		}
+        if(myAlarm->handler) {
+            myAlarm->handler(myAlarm, NULL);
+        }
+    }
+    return 0;
+}
+#endif
 
 /**
  * @TODO: Documentation
@@ -120,12 +151,19 @@ void OSSetAlarm(OSAlarm* alarm, OSTime tick, OSAlarmHandler handler)
 	BOOL enabled;
 	enabled       = OSDisableInterrupts();
 	alarm->period = 0;
+#ifdef GAMECUBE
 #if OS_BUILD_VERSION >= 20011002L
 	InsertAlarm(alarm, __OSGetSystemTime() + tick, handler);
 #else
 	InsertAlarm(alarm, OSGetTime() + tick, handler);
 #endif
+#endif
 	OSRestoreInterrupts(enabled);
+
+#ifdef LIBPORPOISE_PORT
+	alarm->handler = handler;
+	alarm->sdlTimer = SDL_AddTimer(OSTicksToMilliseconds(tick), OSSDLTimerCallback, alarm);
+#endif
 }
 
 /**
@@ -160,6 +198,7 @@ void OSCancelAlarm(OSAlarm* alarm)
 
 	enabled = OSDisableInterrupts();
 
+	#ifdef GAMECUBE
 	if (alarm->handler == NULL) {
 		OSRestoreInterrupts(enabled);
 		return;
@@ -179,9 +218,15 @@ void OSCancelAlarm(OSAlarm* alarm)
 			SetTimer(next);
 		}
 	}
+	#endif
 	alarm->handler = NULL;
 
 	OSRestoreInterrupts(enabled);
+
+#ifdef LIBPORPOISE_PORT
+	SDL_RemoveTimer(alarm->sdlTimer);
+	alarm->sdlTimer = 0;
+#endif
 }
 
 /**

@@ -18,6 +18,16 @@ struct RenderVertex {
         float coords[3];
     } position;
 
+    // Normal
+    union{
+        struct {
+            float x;
+            float y;
+            float z;
+        };
+        float coords[3];
+    } normal;
+
     // Color0
     union {
         struct {
@@ -28,6 +38,14 @@ struct RenderVertex {
         };
         float values[4];
     } color0;
+
+    union {
+        struct {
+            float s;
+            float t;
+        };
+        float coords[2];
+    } texCoords[8];
 };
 
 class GeometryProcessor {

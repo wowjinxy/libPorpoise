@@ -83,7 +83,7 @@ void GlRenderer::Initialize() {
     glBindVertexArray(mVertexArray);
     glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);
 
-    static_assert(sizeof(RenderVertex) == sizeof(float) * 7);
+    //location = 0 in vec3 position
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(
         0,
@@ -92,6 +92,7 @@ void GlRenderer::Initialize() {
         GL_FALSE,
         sizeof(RenderVertex),
         reinterpret_cast<void*>(offsetof(RenderVertex, position)));
+    //location = 1 in vec4 vertex_color
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(
         1,
@@ -100,6 +101,20 @@ void GlRenderer::Initialize() {
         GL_FALSE,
         sizeof(RenderVertex),
         reinterpret_cast<void*>(offsetof(RenderVertex, color0)));
+    //location = 2 in vec2 texCoords
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(
+        2,
+        2,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, texCoords)));
+    
+    glGenBuffers(1, &mTevStageUniformBuffer);
+    glBindBuffer(GL_UNIFORM_BUFFER, mTevStageUniformBuffer);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(TevStageConfig) * GX_MAX_TEVSTAGE, NULL, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
 
 void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimitive primitive) {
@@ -135,11 +150,14 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
         return;
     }
 
-    const auto& gxState = GetGlobalState();
+    auto& gxState = GetGlobalState();
+    glUseProgram(shaderProgram);
     const GLint projectionLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_projection");
     const GLint modelViewLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_modelview");
+    const GLint textureMtxLocation =
+        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_textureMtx");
     if (projectionLocation >= 0) {
         glUniformMatrix4fv(
             projectionLocation,
@@ -154,6 +172,44 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
             GL_TRUE,
             gxState.GetPositionMatrix().data());
     }
+    // TODO: support all texture matrices
+    if(textureMtxLocation >= 0) {
+        for(int i=0; i<1;i++) {
+            glUniformMatrix4fv(
+                textureMtxLocation,
+                1,
+                GL_TRUE,
+                gxState.GetTextureMatrix(i).data()
+            );
+        }
+
+    }
+
+    const GLint numTexGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_numTexGens");
+    glUniform1ui(numTexGenLocation, gxState.GetNumTexGens());
+
+    const GLint texGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texGens");
+    glUniform1uiv(texGenLocation, sizeof(TexGenConfig) * GX_MAX_TEXCOORD, (const GLuint*)gxState.GetTexGenArray());
+
+    const GLint tevTexMapLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "tevTexMaps");
+    glUniform1iv(tevTexMapLocation, GX_MAX_TEVSTAGE, (const GLint*)gxState.GetTevTexMapArray());
+
+    const GLint tevStageConfigsLocation = glGetUniformBlockIndex(shaderProgram, "tevConfigBlock");
+
+    glBindBuffer(GL_UNIFORM_BUFFER, mTevStageUniformBuffer);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(TevStageConfig) * GX_MAX_TEVSTAGE, gxState.GetTevStageConfigArray());
+    glBindBufferBase(GL_UNIFORM_BUFFER, tevStageConfigsLocation, mTevStageUniformBuffer);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+
+    const GLint initialTevColorsLocation =
+        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "initialTevColors");
+    glUniform4fv(initialTevColorsLocation, 4, gxState.GetInitialTevColorsArray());
+
+
+    const GLint numTevStagesLocation =
+        glGetUniformLocation(static_cast<GLuint>(shaderProgram), "numTevStages");
+    glUniform1ui(numTevStagesLocation, gxState.GetNumTevStages());
 
     glBindVertexArray(mVertexArray);
     glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);

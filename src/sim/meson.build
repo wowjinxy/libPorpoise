@@ -7,7 +7,11 @@ libsim_srcs = files(
     'sim_gx_GlRenderer.cpp',
     'sim_gx_Geometry.cpp',
     'sim_gx_Shader.cpp',
-    'sim_gx_State.cpp'
+    'sim_gx_State.cpp',
+    'sim_gx_TextureManager.cpp',
+    'sim_gx_Thread.cpp',
+    'sim_pad.cpp',
+    'sim_vi.cpp'
 )
 
 libsim_dependencies = []
@@ -34,7 +38,7 @@ libsim_args += [
     '-DTRACY_ENABLE'
 ]
 
-if(build_target == 'win64')
+if(build_target == 'win32' or build_target == 'win64')
 ws2_32_lib = meson.get_compiler('c').find_library('ws2_32')
 ws2_32_dep = declare_dependency(dependencies: [ws2_32_lib])
 libsim_dependencies += ws2_32_dep

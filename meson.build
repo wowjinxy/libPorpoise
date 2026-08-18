@@ -68,22 +68,45 @@ if(build_target == 'gc')
         'hardware',
         #'-Cpp_exceptions off',
         #'-pragma "cats off"',
+        '-DLIBPORPOISE_32BIT'
+    ]
+endif
+
+if (build_target == 'win32')
+    libporpoise_shared_args += [
+        '-DLIBPORPOISE_PORT',
+        '-DLIBPORPOISE_BUILD_WIN',
+        '-DLIBPORPOISE_32BIT',
+        '-w'
     ]
 endif
 
 if (build_target == 'win64')
     libporpoise_shared_args += [
         '-DLIBPORPOISE_PORT',
-        '-DLIBPORPOISE_BUILD_WIN64',
+        '-DLIBPORPOISE_BUILD_WIN',
+        '-DLIBPORPOISE_64BIT',
         '-w'
     ]
 endif
 
-if (build_target == 'linux')
+if (build_target == 'linux32')
     libporpoise_shared_args += [
         '-DLIBPORPOISE_PORT',
         '-DLIBPORPOISE_BUILD_LINUX',
         '-D_POSIX_C_SOURCE=200112L',
+        '-DLIBPORPOISE_32BIT',
+        '-m32',
+        '-w'
+    ]
+endif
+
+if (build_target == 'linux64')
+    libporpoise_shared_args += [
+        '-DLIBPORPOISE_PORT',
+        '-DLIBPORPOISE_BUILD_LINUX',
+        '-D_POSIX_C_SOURCE=200112L',
+        '-DLIBPORPOISE_64BIT',
         '-w'
     ]
 endif
@@ -110,6 +133,8 @@ add_project_arguments(libporpoise_cpp_args,
     language: 'cpp',
     native: build_target != 'gc'
 )
+
+libporpoise_libs_native = (build_target == 'win32' or build_target == 'win64' or build_target == 'linux32' or build_target == 'linux64')
 
 ############################################################
 ###                    INCLUDE PATHS                     ###

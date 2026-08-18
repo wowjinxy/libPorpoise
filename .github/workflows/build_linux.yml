@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build_linux:
+  build_linux32:
     permissions:
       contents: write
     runs-on: ubuntu-24.04
@@ -28,4 +28,22 @@ jobs:
         run: ./drun.sh echo done
 
       - name: Build (Linux)
-        run: ./drun.sh ./standalone/scripts/ci_build_linux.sh
+        run: ./drun.sh ./standalone/scripts/ci_build_linux32.sh
+  build_linux64:
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install Software
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends fuse git python3 wget zip
+
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - name: Create build container image
+        run: ./drun.sh echo done
+
+      - name: Build (Linux)
+        run: ./drun.sh ./standalone/scripts/ci_build_linux64.sh

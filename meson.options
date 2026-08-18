@@ -1,4 +1,4 @@
-option('build_target', type: 'combo', choices: ['gc', 'win64', 'linux'], value: 'gc', description: 'Target build platform', yield: true)
+option('build_target', type: 'combo', choices: ['gc', 'win32', 'win64', 'linux32', 'linux64'], value: 'gc', description: 'Target build platform', yield: true)
 option('standalone', type: 'boolean', value: false, description: 'Build libporpoise standalone (for example, in a CI build environment)')
 option('address_sanitizer', type: 'boolean', value: false, description: 'Enable address sanitizer', yield: true)
 option('tracy_enable' , type : 'boolean' , value : false, description : 'Enable profiling', yield: true)

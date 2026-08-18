@@ -2,13 +2,20 @@
 #define SDL_MAIN_HANDLED
 #include <dolphin.h>
 #include <dolphin/dvd.h>
+#include <simulator/sim.hpp>
 #include <simulator/sim.h>
-#include <simulator/sim_gx_CommandProcessor.h>
 #include <simulator/sim_gx_State.hpp>
+#include <simulator/sim_pad.hpp>
+#include <simulator/sim_gx_Thread.hpp>
+#include <simulator/sim_vi.h>
 #include <SDL2/SDL.h>
 #include <simulator/glad/glad.h>
 #ifdef LIBPORPOISE_BUILD_LINUX
 #include <signal.h>
+#endif
+#ifdef LIBPORPOISE_BUILD_WIN
+#undef IsDebuggerPresent
+#include <windows.h>
 #endif
 #include <format>
 #include <string>
@@ -18,6 +25,7 @@
 
 static SDL_GLContext context;
 static SDL_Window * window;
+static SDL_Thread* s_dolphinMainThread;
 
 extern const char * SIM_GXVertexShader;
 extern const char * SIM_GXFragmentShader;
@@ -52,6 +60,13 @@ static void CompileVertexShader(GLuint& id, const char * source) {
 static void CompileFragmentShader(GLuint& id, const char * source) {
     id = glCreateShader(GL_FRAGMENT_SHADER);
     CompileShaderCommon(id,source);
+    GLint logLen = 0;
+    glGetShaderiv(id, GL_INFO_LOG_LENGTH, &logLen);
+    if (logLen > 1) {
+        std::vector<char> log(logLen);
+        glGetShaderInfoLog(id, logLen, nullptr, log.data());
+        printf("%s\n", log.data());
+    }
 }
 
 void LinkShader(GLuint id,GLuint vertex,GLuint fragment) {
@@ -108,7 +123,137 @@ extern "C" {
 void DolphinMain();
 }
 
+static int RunDolphinMainThread(void * arg) {
+    DolphinMain();
+    return 0;
+}
+
+
+namespace SIM {
+
+static SDL_threadID s_renderContextThread = 0;
+static SDL_mutex * s_renderContextMutex = nullptr;
+
+bool ReleaseRenderContext(void) {
+    const SDL_threadID currentThread = SDL_ThreadID();
+
+    if (s_renderContextMutex == NULL) {
+        return FALSE;
+    }
+    SDL_LockMutex(s_renderContextMutex);
+
+    if (context == NULL || s_renderContextThread == 0) {
+        SDL_UnlockMutex(s_renderContextMutex);
+        return TRUE;
+    }
+    if (s_renderContextThread != currentThread) {
+        //fprintf(stderr,
+        //        "libPorpoise SIM: render context release requested from "
+        //        "a non-owner thread.\n");
+        SDL_UnlockMutex(s_renderContextMutex);
+        return FALSE;
+    }
+    if (SDL_GL_GetCurrentContext() == context &&
+        SDL_GL_MakeCurrent(NULL, NULL) != 0) {
+        //fprintf(stderr, "libPorpoise SIM: OpenGL context release failed: %s\n",
+        //        SDL_GetError());
+        SDL_UnlockMutex(s_renderContextMutex);
+        return FALSE;
+    }
+    s_renderContextThread = 0;
+    SDL_UnlockMutex(s_renderContextMutex);
+    return TRUE;
+}
+
+bool AcquireRenderContext(void) {
+    const SDL_threadID currentThread = SDL_ThreadID();
+
+    if (s_renderContextMutex == NULL) {
+        return FALSE;
+    }
+    SDL_LockMutex(s_renderContextMutex);
+
+    if (window == NULL || context == NULL) {
+        SDL_UnlockMutex(s_renderContextMutex);
+        return FALSE;
+    }
+    if (s_renderContextThread != 0 && s_renderContextThread != currentThread) {
+        //fprintf(stderr,
+        //        "libPorpoise SIM: render context acquisition requested "
+        //        "before its previous owner released it.\n");
+        SDL_UnlockMutex(s_renderContextMutex);
+        return FALSE;
+    }
+    if (SDL_GL_GetCurrentContext() != context &&
+        SDL_GL_MakeCurrent(window, context) != 0) {
+        fprintf(stderr, "libPorpoise SIM: OpenGL context acquisition failed: %s\n",
+                SDL_GetError());
+        SDL_UnlockMutex(s_renderContextMutex);
+        return FALSE;
+    }
+    glUseProgram(gxShaderProgramId);
+    //SIM::GX::GetGlRenderer().SetShaderProgram(gxShaderProgramId);
+    s_renderContextThread = currentThread;
+    //UpdateDrawableViewport();
+    SDL_UnlockMutex(s_renderContextMutex);
+    return TRUE;
+}
+
+
+void MainLoop() {
+    int waitForRetraceTimeout = 0;
+
+    static constexpr auto HalfFrametime = 8;
+    static constexpr auto WaitRetraceMax = 3;
+    while(true) {
+
+        // Wait a few MS (maybe half the target frame time)
+        SDL_Delay(HalfFrametime);
+
+
+        // Wait for at least one thread to call VI_WaitForRetrace, there is also a timeout in case no threads call it.
+        waitForRetraceTimeout = 0;
+        while(!SIM::VI::GetWaitForRetraceCount() && waitForRetraceTimeout < WaitRetraceMax) {
+            SDL_Delay(1);
+            waitForRetraceTimeout++;
+        }
+
+
+        // Ensure GX is Done
+        while(!SIM::GX::IsThreadDone()) {
+            SDL_Delay(1);
+        }
+
+
+        //Call Pre Vblank Callback
+        SIM::VI::HandlePreRetrace();
+
+        // Read PAD
+
+        // Steal GL context from GX thread
+        SIM::GX::TakeRenderContext();
+        AcquireRenderContext();
+        //Render & Vblank
+        SIM_Render();
+
+        ReleaseRenderContext();
+        // Tell GX thread it can have its context back
+        SIM::GX::GiveRenderContext();
+
+
+        //Call Post Vblank callback
+        SIM::VI::HandlePostRetrace();
+    }
+}
+}
+
 int main(int argc, char** argv) {
+#ifdef LIBPORPOISE_BUILD_WIN
+    //Set Unicode Codepage
+    SetConsoleCP(65001);
+    SetConsoleOutputCP(65001);
+#endif
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_JOYSTICK) != 0) {
         fprintf(stderr, "SDL initialization failed: %s\n", SDL_GetError());
         return 1;
@@ -129,6 +274,9 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+
+    SIM::s_renderContextMutex = SDL_CreateMutex();
 
     int windowWidth = 640;
     int windowHeight = 480;
@@ -170,11 +318,14 @@ int main(int argc, char** argv) {
     CompileFragmentShader(gxFragmentShader, SIM_GXFragmentShader);
     LinkShader(gxShaderProgramId, gxVertexShader, gxFragmentShader);
     glUseProgram(gxShaderProgramId);
-    
-    SIM::GX::InitGlobalState();
-    SIM_GX_CommandProcessor_Init();
 
-    DolphinMain();
+    SIM::GX::Init();
+
+    SIM::VI::Init();
+
+    // Spawn a new thread for DolphinMain
+    s_dolphinMainThread = SDL_CreateThread(RunDolphinMainThread, "DolphinMain", NULL);
+    SIM::MainLoop();
 }
 
 void SIM_VIInit() {
@@ -188,16 +339,26 @@ void SIM_Render() {
 
     while( SDL_PollEvent(&Event))
     {
-        if (Event.type == SDL_QUIT) {
-            SDL_GL_DeleteContext(context);
-            SDL_DestroyWindow(window);
-            SDL_Quit();
-            exit(0);
-        }
-
-        if (Event.type == SDL_WINDOWEVENT &&
-            Event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-            glViewport(0, 0, Event.window.data1, Event.window.data2);
+        switch(Event.type) {
+            case SDL_KEYDOWN:
+                SIM::PAD::HandleKey(Event.key.keysym.sym, true);
+                break;
+            case SDL_KEYUP:
+                SIM::PAD::HandleKey(Event.key.keysym.sym, false);
+                break;
+            case SDL_WINDOWEVENT:
+                if(Event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                    glViewport(0, 0, Event.window.data1, Event.window.data2);
+                }
+                break;
+            case SDL_QUIT:
+                SDL_GL_DeleteContext(context);
+                SDL_DestroyWindow(window);
+                SDL_Quit();
+                exit(0);
+                break;
+            default:
+                break;
         }
     }
 
@@ -219,7 +380,7 @@ void SIM_Render() {
 void SIM_DebugBreak() {
 #ifdef LIBPORPOISE_BUILD_LINUX
     raise(SIGTRAP);
-#elif LIBPORPOISE_BUILD_WIN64
+#elif LIBPORPOISE_BUILD_WIN
     __debugbreak();
 #else
     OSReport("Warning: SIM_DebugBreak called but it is not supported on this platform!\n");

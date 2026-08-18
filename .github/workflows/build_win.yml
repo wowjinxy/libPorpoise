@@ -14,7 +14,22 @@ env:
   GITHUB_ACTIONS: "true"
 
 jobs:
-  build_win:
+  build_win32:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - name: Install MSys2
+        run: .\Install_MSys2.ps1
+        shell: powershell
+
+      - name: Build (win32)
+        run: .\Launch_Msys2_mingw32.ps1 "./standalone/scripts/ci_build_win32.sh"
+        shell: powershell
+  build_win64:
     permissions:
       contents: write
     runs-on: windows-latest
@@ -27,5 +42,5 @@ jobs:
         shell: powershell
 
       - name: Build (win64)
-        run: .\Launch_Msys2.ps1 "./standalone/scripts/ci_build_win.sh"
+        run: .\Launch_Msys2_ucrt64.ps1 "./standalone/scripts/ci_build_win64.sh"
         shell: powershell

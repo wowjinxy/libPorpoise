@@ -7,7 +7,7 @@
 #include <dolphin/gx/GXTypes.h>
 
 #ifdef LIBPORPOISE_PORT
-#include <simulator/sim_gx_CommandProcessor.h>
+#include <simulator/sim_gx_Thread.h>
 #endif
 
 BEGIN_SCOPE_EXTERN_C
@@ -71,11 +71,11 @@ extern volatile PPCWGPipe GXWGFifo AT_ADDRESS(GXFIFO_ADDR);
 
 //////////// FIFO MACROS/INLINES ///////////
 #ifdef LIBPORPOISE_PORT
-#define GX_WRITE_U8(val) SIM_GX_CommandProcessor_SendU8(val)
-#define GX_WRITE_U16(val) SIM_GX_CommandProcessor_SendU16(val)
-#define GX_WRITE_U32(val) SIM_GX_CommandProcessor_SendU32(val)
-#define GX_WRITE_S16(val) SIM_GX_CommandProcessor_SendS16(val)
-#define GX_WRITE_F32(val) SIM_GX_CommandProcessor_SendF32(val)
+#define GX_WRITE_U8(val) SIM_GX_Fifo_SendU8(val)
+#define GX_WRITE_U16(val) SIM_GX_Fifo_SendU16(val)
+#define GX_WRITE_U32(val) SIM_GX_Fifo_SendU32(val)
+#define GX_WRITE_S16(val) SIM_GX_Fifo_SendS16(val)
+#define GX_WRITE_F32(val) SIM_GX_Fifo_SendF32(val)
 #else
 #define GX_WRITE_U8(val)  (GXWGFifo.u8 = val)
 #define GX_WRITE_U16(val) (GXWGFifo.u16 = val)
@@ -126,6 +126,7 @@ static inline void GXNormal3f32(const f32 x, const f32 y, const f32 z)
 
 static inline void GXColor1x8(const u8 x)
 {
+	
 	GX_WRITE_U8(x);
 }
 
@@ -140,6 +141,11 @@ static inline void GXColor4u8(const u8 r, const u8 g, const u8 b, const u8 a)
 	GX_WRITE_U8(g);
 	GX_WRITE_U8(b);
 	GX_WRITE_U8(a);
+}
+
+static inline void GXTexCoord1x8(const s8 x)
+{
+	GX_WRITE_U8((u8)x);
 }
 
 static inline void GXTexCoord2s8(const s8 u, const s8 v)

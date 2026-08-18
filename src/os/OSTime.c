@@ -3,7 +3,7 @@
 #include <dolphin/os.h>
 
 #ifdef LIBPORPOISE_PORT
-#include <time.h>
+#include <sys/time.h>
 #include <SDL2/SDL.h>
 #endif
 
@@ -18,7 +18,7 @@ static s32 YearDays[OS_TIME_MONTH_MAX] = { 0, 31, 59, 90, 120, 151, 181, 212, 24
 static s32 LeapYearDays[OS_TIME_MONTH_MAX] = { 0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335 };
 
 /**
- * @TODO: Documentation
+ * Returns the number of ticks since 00:00, 1 Jan 2000
  */
 ASM OSTime OSGetTime(void) {
 #ifdef __MWERKS__ // clang-format off
@@ -35,8 +35,13 @@ ASM OSTime OSGetTime(void) {
 	blr
 #endif // clang-format on
 #ifdef LIBPORPOISE_PORT
-	OSTime result = (OSTime)time(NULL);
-	return result;
+	u64 gamecubeEpochStartTicks = OSSecondsToTicks(946684800); /* 1 Jan, 2000 00:00:00*/
+	
+	struct timeval nowTv;
+    gettimeofday(&nowTv, NULL);
+    
+    u64 nowTicks = OSMicrosecondsToTicks((u64)nowTv.tv_sec * 1000000 + (u64)nowTv.tv_usec);
+	return (OSTime)(nowTicks - gamecubeEpochStartTicks);
 #endif
 }
 
@@ -206,5 +211,33 @@ void OSTicksToCalendarTime(OSTime ticks, OSCalendarTime* cal)
  */
 OSTime OSCalendarTimeToTicks(OSCalendarTime*)
 {
-	TRAP_UNIMPLEMENTED;
+	/*
+    OSTime secs;
+    int ov_mon;
+    int mon;
+    int year;
+
+    ov_mon = td->mon / MONTH_MAX;
+    mon = td->mon - (ov_mon * MONTH_MAX);
+
+    if (mon < 0) {
+        mon += MONTH_MAX;
+        ov_mon--;
+    }
+
+    ASSERTLINE(412, (ov_mon <= 0 && 0 <= td->year + ov_mon) || (0 < ov_mon && td->year <= INT_MAX - ov_mon));
+    
+    year = td->year + ov_mon;
+
+    secs = (OSTime)SECS_IN_YEAR * year +
+           (OSTime)SECS_IN_DAY * (GetLeapDays(year) + GetYearDays(year, mon) + td->mday - 1) +
+           (OSTime)SECS_IN_HOUR * td->hour +
+           (OSTime)SECS_IN_MIN * td->min +
+           td->sec -
+           (OSTime)0xEB1E1BF80ULL;
+
+    return OSSecondsToTicks(secs) + OSMillisecondsToTicks((OSTime)td->msec) +
+           OSMicrosecondsToTicks((OSTime)td->usec);
+	*/
+	return 0;
 }

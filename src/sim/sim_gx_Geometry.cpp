@@ -32,25 +32,31 @@ static inline size_t ComponentSize(GXCompType type) {
     }
 }
 
-float DecodePositionComponent(const u8* source, GXCompType type, u8 fraction) {
+void DecodePositionComponent(const u8* source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output) {
     switch (type) {
         case GX_U8:
-            return std::ldexp(static_cast<float>(ReadUnaligned<u8>(source)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<u8>(source)), -fraction);
+            break;
         case GX_S8:
-            return std::ldexp(static_cast<float>(ReadUnaligned<s8>(source)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<s8>(source)), -fraction);
+            break;
         case GX_U16:
-            return std::ldexp(static_cast<float>(ReadUnaligned<u16>(source)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<u16>(source)), -fraction);
+            break;
         case GX_S16:
-            return std::ldexp(static_cast<float>(ReadUnaligned<s16>(source)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<s16>(source)), -fraction);
+            break;
         case GX_F32:
-            return ReadUnaligned<f32>(source);
+            *output =  ReadUnaligned<f32>(source);
+            break;
         default:
-            return 0.0f;
+            *output = 0.0f;
+            break;
     }
 }
 
-static inline void DecodeColor(const u8* source, GXCompCnt componentCount, GXCompType type,
-                 float (&output)[4]) {
+static inline void DecodeColor(const u8* source, GXCompCnt componentCount, GXCompType type, u8 dummyFrac,
+                 float *output ) {
     u8 rgba[4] = {255, 255, 255, 255};
 
     switch (type) {
@@ -153,106 +159,82 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
     }
 
     // These cannot change during the loop
+    struct {
+        GXAttrType mDescriptor;
+        size_t mComponentCount;
+        size_t mComponentSize;
+        VertexArray mVertexArray;
+    } vtxInfo[GX_VA_MAX_ATTR] = {};
 
-    // Position
-    const auto& positionFormat = format.mAttributes[GX_VA_POS];
-    const size_t componentCount = gxState.GetNumPositionComponents(positionFormat.mComponents);
-    const size_t componentSize = ComponentSize(positionFormat.mDataType);
-    const GXAttrType positionDescriptor = gxState.GetVertexDescriptor(GX_VA_POS);
-    const auto& positionArray = gxState.GetVertexArray(GX_VA_POS);
-    if (positionArray.mArrayPtr == nullptr || positionArray.mStride < 0) {
-        OSReport("SIM::GX: position array is not configured\n");
-        return;
+
+    auto ProcessAttribute = [&gxState, &vtxInfo, &format](GXAttr attr, size_t (*numComponentsFunc)(GXCompCnt)) mutable -> void {
+        auto& curFormat = format.mAttributes[attr];
+        vtxInfo[attr].mDescriptor = gxState.GetVertexDescriptor(attr);
+        vtxInfo[attr].mComponentCount = numComponentsFunc(curFormat.mComponents);
+        if(attr == GX_VA_CLR0 || attr == GX_VA_CLR1) {
+             vtxInfo[attr].mComponentSize = gxState.GetDescriptorSize(GX_DIRECT, curFormat.mDataType, true);
+        } else {
+            vtxInfo[attr].mComponentSize = ComponentSize(curFormat.mDataType);
+        }
+        vtxInfo[attr].mVertexArray = gxState.GetVertexArray(attr);
+    };
+
+    ProcessAttribute(GX_VA_POS, gxState.GetNumPositionComponents);
+    ProcessAttribute(GX_VA_NRM, gxState.GetNumNormalComponents);
+
+    ProcessAttribute(GX_VA_CLR0, gxState.GetNumColorComponents);
+    ProcessAttribute(GX_VA_CLR1, gxState.GetNumColorComponents);   
+    for(int attribNum = GX_VA_TEX0; attribNum <= GX_VA_TEX7; attribNum++) {
+        ProcessAttribute(static_cast<GXAttr>(attribNum), gxState.GetNumTexCoordComponents); 
     }
 
-    // Color
-    const GXAttrType colorDescriptor = gxState.GetVertexDescriptor(GX_VA_CLR0);
-    const auto& colorFormat = format.mAttributes[GX_VA_CLR0];
-    const size_t colorSize =
-        gxState.GetDescriptorSize(GX_DIRECT, colorFormat.mDataType, true);
-    const auto& colorArray = gxState.GetVertexArray(GX_VA_CLR0);
-    if (colorArray.mArrayPtr == nullptr || colorArray.mStride < 0) {
-        OSReport("SIM::GX: color array is not configured\n");
-        return;
-    }
+    auto BuildRenderVertexAttr = [&cursor, &end, &vtxInfo, &format](GXAttr attr, float * outputArray, void (*decodeComponentFunc)(const u8*, GXCompCnt, GXCompType, u8, float *)) mutable -> void {
+        const auto& info = vtxInfo[attr];
+        if(info.mDescriptor == GX_NONE) {
+            return;
+        }
 
+        const u8* dataSource = nullptr;
+        if (info.mDescriptor == GX_DIRECT) {
+            const size_t directSize = info.mComponentCount * info.mComponentSize;
+            if (cursor + directSize > end) {
+                return;
+            }
+            dataSource = cursor;
+            cursor += directSize;
+        } else {
+            size_t arrayIndex;
+            if (!ReadArrayIndex(cursor, end, info.mDescriptor, arrayIndex)) {
+                return;
+            }
+            
+            dataSource = static_cast<const u8*>(info.mVertexArray.mArrayPtr) +
+                             arrayIndex * static_cast<size_t>(info.mVertexArray.mStride);
+        }
 
-    if (colorSize == 0) {
-        OSReport("SIM::GX: unsupported color format\n");
-        return;
-    }
-
-    if (componentSize == 0) {
-        OSReport("SIM::GX: unsupported position component type\n");
-        return;
-    }
-
-
+        for (size_t component = 0; component < info.mComponentCount; ++component) {
+                decodeComponentFunc(
+                dataSource + component * info.mComponentSize,
+                format.mAttributes[attr].mComponents,
+                format.mAttributes[attr].mDataType,
+                format.mAttributes[attr].mFraction,
+                &outputArray[component]);
+        }
+    };
 
     for (size_t vertexIndex = 0; vertexIndex < numVertices; ++vertexIndex) {
         RenderVertex& output = mRenderVerts[vertexIndex];
-        //output.color0.r = 1.0f;
-        //output.color0.g = 1.0f;
-        //output.color0.b = 1.0f;
-        //output.color0.a = 1.0f;
 
-        if (positionDescriptor != GX_NONE) {
-            const u8* positionSource = nullptr;
-            if (positionDescriptor == GX_DIRECT) {
-                const size_t directSize = componentCount * componentSize;
-                if (cursor + directSize > end) {
-                    return;
-                }
-                positionSource = cursor;
-                cursor += directSize;
-            } else {
-                size_t arrayIndex;
-                if (!ReadArrayIndex(cursor, end, positionDescriptor, arrayIndex)) {
-                    return;
-                }
-                
-                positionSource = static_cast<const u8*>(positionArray.mArrayPtr) +
-                                 arrayIndex * static_cast<size_t>(positionArray.mStride);
-            }
+        BuildRenderVertexAttr(GX_VA_POS, output.position.coords, DecodePositionComponent);
+        BuildRenderVertexAttr(GX_VA_NRM, output.normal.coords, DecodePositionComponent);
 
-            for (size_t component = 0; component < componentCount; ++component) {
-                output.position.coords[component] = DecodePositionComponent(
-                    positionSource + component * componentSize,
-                    positionFormat.mDataType,
-                    positionFormat.mFraction);
-            }
+        BuildRenderVertexAttr(GX_VA_CLR0, output.color0.values, DecodeColor);
+        //BuildRenderVertexAttr(GX_VA_CLR1, output.color1.values, DecodeColor);
+
+        for(int attribNum = GX_VA_TEX0; attribNum <= GX_VA_TEX7; attribNum++) {
+            BuildRenderVertexAttr(static_cast<GXAttr>(attribNum), output.texCoords[attribNum - GX_VA_TEX0].coords, DecodePositionComponent);
         }
 
-        //const GXAttrTypr normalDescriptor = gxState.GetVertexDescriptor(GX_VA_NRM);
-        //if(normalDescriptor != GX_NONE) {
-        //    const auto& normalFormat = format.mAttributes[GX_VA_NRM];
-        //    OSReport("GX: Normals are not currently implemented.\n");
-        //}
-
-        
-        if (colorDescriptor != GX_NONE) {
-            const u8* colorSource = nullptr;
-            if (colorDescriptor == GX_DIRECT) {
-                if (cursor + colorSize > end) {
-                    return;
-                }
-                colorSource = cursor;
-                cursor += colorSize;
-            } else {
-                size_t arrayIndex;
-                if (!ReadArrayIndex(cursor, end, colorDescriptor, arrayIndex)) {
-                    return;
-                }
-                colorSource = static_cast<const u8*>(colorArray.mArrayPtr) +
-                              arrayIndex * static_cast<size_t>(colorArray.mStride);
-            }
-
-            DecodeColor(
-                colorSource,
-                colorFormat.mComponents,
-                colorFormat.mDataType,
-                output.color0.values);
-        }
     }
 
     GetGlRenderer().Draw(mRenderVerts, numVertices, gxState.GetCurrentPrimitive());

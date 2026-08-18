@@ -8,8 +8,10 @@
 #include <vector>
 
 #include <dolphin/gx/GXAttr.h>
+#include <SDL2/SDL.h>
 
 #include "simulator/sim_gx_Geometry.hpp"
+#include "simulator/sim_MessageQueue.hpp"
 
 namespace SIM::GX {
 
@@ -59,6 +61,7 @@ class CommandProcessor {
   int GetOpcodeArgSize(Opcode code);
   void HandleBeginPrimitive(GXPrimitive primitive, size_t numVerts);
   void ProcessOpcode();
+  void ProcessBpReg(u8 regAddr, u32 value);
   void ProcessCpReg(u8 regAddr, u32 value);
   static inline u32 GetRegValue(u32 reg, u32 size, u32 shift) {
     return (reg >> shift) & ((1u << size) - 1u);
