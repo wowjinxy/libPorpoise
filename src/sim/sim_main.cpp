@@ -87,22 +87,6 @@ void LinkShader(GLuint id,GLuint vertex,GLuint fragment) {
     glValidateProgram(id);
     glUseProgram(id);
 
-    GLint numUniforms = 0;
-    glGetProgramiv(static_cast<GLuint>(id), GL_ACTIVE_UNIFORMS, &numUniforms);
-    printf("numUniforms = %d\n", numUniforms);
-
-
-    for (GLint i = 0; i < numUniforms; ++i) {
-        char name[256];
-        GLsizei length = 0;
-        GLint size = 0;
-        GLenum type = 0;
-        glGetActiveUniform(static_cast<GLuint>(id), static_cast<GLuint>(i), sizeof(name), &length, &size, &type, name);
-        printf("Uniform %d: name='%s' size=%d type=0x%x location=%d\n",
-               i, name, size, type,
-               glGetUniformLocation(static_cast<GLuint>(id), name));
-    }
-
     glGenVertexArrays(1, &gxVertexArray);
     glBindVertexArray(gxVertexArray);
     glGenBuffers(1, &gxVertexBuffer);
