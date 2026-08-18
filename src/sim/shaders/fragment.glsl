@@ -26,6 +26,9 @@ layout (std140) uniform tevConfigBlock {
   uniform TevStageConfig tevStageConfigs[16 /* GX_MAXTEVSTAGES */];
 };
 
+uniform vec4 initialTevColors[4];
+
+
 vec4 tevRegs[4];
 vec4 tevResult = vec4(0.0, 0.0, 0.0, 1.0);
 
@@ -152,95 +155,105 @@ vec4 TexMapStage(uint stage, vec2 stageTexCoords) {
 
 
 
-void LoadTevColorArg(uint stageNum, uint argNum) {
+vec3 GetTevColorArg(uint stageNum, uint argNum) {
   uint argType = tevStageConfigs[stageNum].mColorArgs[argNum];
+  vec3 result = vec3(0.0);
 
   switch(argType) {
     case 0u: /* GX_CC_CPREV */
-      tevRegs[argNum] = tevResult;
+      result = tevResult.rgb;
       break;
     case 1u: /* GX_CC_APREV */
+      result = vec3(tevResult.a);
       break;
     case 2u: /* GX_CC_C0 */
+      result = tevRegs[1].rgb;
       break;
     case 3u: /* GX_CC_C1 */
+      result = tevRegs[2].rgb;
       break;
     case 4u: /* GX_CC_C2 */
+      result = tevRegs[3].rgb;
       break;
     case 5u: /* GX_CC_A0 */
+      result = vec3(tevRegs[1].a);
       break;
     case 6u: /* GX_CC_A1 */
+      result = vec3(tevRegs[2].a);
       break;
     case 7u: /* GX_CC_A2 */
+      result = vec3(tevRegs[3].a);
       break;
     case 8u: /* GX_CC_TEXC */
-      tevRegs[argNum].rgb = TexMapStage(stageNum, gxTexCoords[tevStageConfigs[stageNum].mTexCoordId]).rgb;
+      result = TexMapStage(stageNum, gxTexCoords[tevStageConfigs[stageNum].mTexCoordId]).rgb;
       break;
     case 9u: /* GX_CC_TEXA */
-      tevRegs[argNum].rgb = TexMapStage(stageNum, gxTexCoords[tevStageConfigs[stageNum].mTexCoordId]).rgb;
+      result = vec3(TexMapStage(stageNum, gxTexCoords[tevStageConfigs[stageNum].mTexCoordId]).a);
       break;
     case 10u: /* GX_CC_RASC */
-      // TODO: this isnt always color0
-      tevRegs[argNum].rgb = color0.rgb;
+      result = color0.rgb;
       break;
     case 11u: /* GX_CC_RASA */
-      // TODO: this isnt always color0
-      tevRegs[argNum].rgb = color0.rgb;
+      result = vec3(color0.a);
       break;
     case 12u: /* GX_CC_ONE */
-      tevRegs[argNum].rgb = vec3(1.0);
+      result = vec3(1.0);
       break;
     case 13u: /* GX_CC_HALF */
-      tevRegs[argNum].rgb = vec3(0.5);
+      result = vec3(0.5);
       break;
     case 14u: /* GX_CC_KONST */
       break;
     case 15u: /* GX_CC_ZERO */
-      tevRegs[argNum].rgb = vec3(0.0);
+      result = vec3(0.0);
       break;
 
     default:
       // Unsupported
-      tevRegs[argNum].rgb = vec3(1.0, 0.0, 1.0);
+      result = vec3(1.0, 0.0, 1.0);
       break;
   }
+
+  return result;
 }
 
-void LoadTevAlphaArg(uint stageNum, uint argNum) {
-  uint argType = tevStageConfigs[stageNum].mColorArgs[argNum];
-
-  //TODO: remove
-  tevRegs[argNum].a = 1.0;
+float GetTevAlphaArg(uint stageNum, uint argNum) {
+  uint argType = tevStageConfigs[stageNum].mAlphaArgs[argNum];
+  float result = 1.0;
 
   switch(argType) {
     case 0u: /* GX_CA_APREV */
-      tevRegs[argNum].a = tevResult.a;
+      result = tevResult.a;
       break;
     case 1u: /* GX_CA_A0 */
+      result = tevRegs[1].a;
       break;
     case 2u: /* GX_CA_A1 */
+      result = tevRegs[2].a;
       break;
     case 3u: /* GX_CA_A2 */
+      result = tevRegs[3].a;
       break;
     case 4u: /* GX_CC_TEXA */
-      tevRegs[argNum].a = TexMapStage(stageNum, gxTexCoords[tevStageConfigs[stageNum].mTexCoordId]).a;
+      result = TexMapStage(stageNum, gxTexCoords[tevStageConfigs[stageNum].mTexCoordId]).a;
       break;
     case 5u: /* GX_CA_RASA */
-      // TODO: this isnt always color0
-      tevRegs[argNum].a = color0.a;
+      result = color0.a;
       break;
     case 6u: /* GX_CA_KONST */
-      tevRegs[argNum].a = 1.0; /* TODO: Not always 1.0 */
+      result = 1.0; /* TODO: Not always 1.0 */
       break;
     case 7u: /* GX_CA_ZERO */
-      tevRegs[argNum].a = 0.0;
+      result = 0.0;
       break;
 
     default:
       // Unsupported
-      tevRegs[argNum].a = 1.0;
+      result = 1.0;
       break;
   }
+
+  return result;
 }
 
 vec3 RunTevColorOperation(uint op) {
@@ -321,16 +334,21 @@ float RunTevAlphaOperation(uint op) {
 
 void main()
 {
+  tevRegs = initialTevColors;
   for(uint i=0u; i < numTevStages; i++) {
+    vec4 tevArgs[4];
+
     // Load the values into tev regs
-    LoadTevColorArg(i, 0u);
-    LoadTevAlphaArg(i, 0u);
-    LoadTevColorArg(i, 1u);
-    LoadTevAlphaArg(i, 1u);
-    LoadTevColorArg(i, 2u);
-    LoadTevAlphaArg(i, 2u);
-    LoadTevColorArg(i, 3u);
-    LoadTevAlphaArg(i, 3u);
+    tevArgs[0].rgb = GetTevColorArg(i, 0u);
+    tevArgs[0].a = GetTevAlphaArg(i, 0u);
+    tevArgs[1].rgb = GetTevColorArg(i, 1u);
+    tevArgs[1].a = GetTevAlphaArg(i, 1u);
+    tevArgs[2].rgb = GetTevColorArg(i, 2u);
+    tevArgs[2].a = GetTevAlphaArg(i, 2u);
+    tevArgs[3].rgb = GetTevColorArg(i, 3u);
+    tevArgs[3].a = GetTevAlphaArg(i, 3u);
+
+    tevRegs = tevArgs;
 
     // Run the tev operation
     tevResult.rgb = RunTevColorOperation(tevStageConfigs[i].mColorOperation);
@@ -338,5 +356,8 @@ void main()
   }
 
   color = tevResult;
+  if(color.a < 0.01) {
+    discard;
+  }
 }
 )""

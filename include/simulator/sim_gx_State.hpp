@@ -104,6 +104,8 @@ class GlobalState {
   inline TevStageConfig * GetTevStageConfigArray() { return mTevStages.data(); };
   inline GXTexMapID* GetTevTexMapArray() {return mTevTexMaps.data(); };
   inline TexGenConfig* GetTexGenArray() {return mTexGenConfigs.data(); };
+  inline float* GetInitialTevColorsArray() {return mInitialTevColors[0].data(); };
+  inline std::array<float, 4> GetTevColor(u8 reg) const {return mInitialTevColors[reg];};
 
   void Reset();
   inline void SetBpRegCache(u8 regId, u32 value) {
@@ -134,6 +136,7 @@ class GlobalState {
   inline void SetNumTevStages(u8 numTevStages) { mNumTevStages = numTevStages; };
   inline void SetCullMode(GXCullMode cullMode) { mCullMode = cullMode; };
   inline void SetTevTexMap(u8 tevStage, GXTexMapID texMap) { mTevTexMaps[tevStage] = texMap; };
+  void SetTevColor(u8 reg, std::array<float, 4>& color);
 
  private:
   static std::array<float, 16> IdentityMatrix();
@@ -153,6 +156,7 @@ class GlobalState {
   std::array<bool, 10> mPositionMatrixValid = {};
   std::array<bool, 10> mTextureMatrixValid = {};
   std::array<float, 16> mProjectionMatrix = {};
+  std::array<std::array<float, 4>, 4> mInitialTevColors = {};
   bool mProjectionMatrixValid = false;
   std::array<u32, 0x100> mBpRegCache = {};
   u8 mNumTexGens = 0;

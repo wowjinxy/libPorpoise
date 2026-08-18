@@ -251,6 +251,12 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
 
 }
 
+void GlobalState::SetTevColor(u8 reg, std::array<float, 4>& color) {
+    mInitialTevColors[reg] = color;
+}
+
+
+
 void GlobalState::RefreshPositionMatrices(u32 firstAddress, u32 endAddress) {
     constexpr u32 wordsPerMatrix = 12;
     for (size_t slot = 0; slot < mPositionMatrices.size(); ++slot) {

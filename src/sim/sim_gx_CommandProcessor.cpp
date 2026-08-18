@@ -422,6 +422,45 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
                   //s.alphaOp.scale = static_cast<GXTevScale>(GetRegValue(value, 2, 20));
                 }
             } break;
+        // Tev Regs (0xE0-0xE7)
+        case 0xE0:
+        case 0xE1:
+        case 0xE2:
+        case 0xE3:
+        case 0xE4:
+        case 0xE5:
+        case 0xE6:
+        case 0xE7:
+            {
+                u32 idx = (regAddr - 0xE0) / 2;
+                bool isRA = (regAddr & 1) == 0;
+                if (GetRegValue(value, 1, 23) != 0) {
+                  // K color register (8-bit components)
+                  if (idx < GX_MAX_KCOLOR) {
+                    //auto& kc = g_gxState.kcolors[idx];
+                    //if (isRA) {
+                    //  kc[0] = static_cast<float>(reg_get(value, 8, 0)) / 255.f;  // R
+                    //  kc[3] = static_cast<float>(reg_get(value, 8, 12)) / 255.f; // A
+                    //} else {
+                    //  kc[2] = static_cast<float>(reg_get(value, 8, 0)) / 255.f;  // B
+                    //  kc[1] = static_cast<float>(reg_get(value, 8, 12)) / 255.f; // G
+                    //}
+                  }
+                } else {
+                  // TEV color register (11-bit signed components)
+                  if (idx < 4) {
+                    auto color = gxState.GetTevColor(idx);
+                    if (isRA) {
+                      color[0] = static_cast<float>((GetRegValue(value, 11, 0))) / 255.f;
+                      color[3] = static_cast<float>((GetRegValue(value, 11, 12))) / 255.f;
+                    } else {
+                      color[2] = static_cast<float>((GetRegValue(value, 11, 0))) / 255.f;
+                      color[1] = static_cast<float>((GetRegValue(value, 11, 12))) / 255.f;
+                    }
+                    gxState.SetTevColor(idx, color);
+                  }
+                }
+            } break;
         default:
             break;
     }
