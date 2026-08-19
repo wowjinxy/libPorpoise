@@ -282,6 +282,27 @@ vec3 RunTevColorOperation(uint op) {
         result = tevRegs[3].rgb;
       }
       break;
+    
+    case 15u: /* GX_TEV_COMP_RGB8_EQ */
+      if(tevRegs[0].r == tevRegs[1].r) {
+        result.r = tevRegs[3].r + tevRegs[2].r;
+      } else {
+        result.r = tevRegs[3].r;
+      }
+
+      if(tevRegs[0].g == tevRegs[1].g) {
+        result.g = tevRegs[3].g + tevRegs[2].g;
+      } else {
+        result.g = tevRegs[3].g;
+      }
+
+      if(tevRegs[0].b == tevRegs[1].b) {
+        result.b = tevRegs[3].b + tevRegs[2].b;
+      } else {
+        result.b = tevRegs[3].b;
+      }
+      break;
+      
 
     default: /* unsupported operation */
       result = vec3(1.0, 0.0, 1.0);
