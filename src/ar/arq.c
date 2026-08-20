@@ -1,6 +1,9 @@
 #include <dolphin/ar.h>
 #include <dolphin/os.h>
 #include <stddef.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_aram.h>
+#endif
 
 static ARQRequest* __ARQRequestQueueHi;
 static ARQRequest* __ARQRequestTailHi;
@@ -151,7 +154,11 @@ void ARQReset(void)
 /**
  * @TODO: Documentation
  */
+#ifdef LIBPORPOISE_32BIT
 void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u32 source, u32 dest, u32 length, ARQCallback callback)
+#else
+void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u64 source, u64 dest, u32 length, ARQCallback callback)
+#endif
 {
 	BOOL enabled;
 
@@ -167,6 +174,21 @@ void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u32 sou
 	} else {
 		task->callback = (ARQCallback)&__ARQCallbackHack;
 	}
+
+	#ifdef LIBPORPOISE_PORT
+	uintptr_t mainRamPtr;
+	u32 aramPtr;
+	if(type == ARAM_DIR_MRAM_TO_ARAM) {
+		mainRamPtr = source;
+		aramPtr = dest;
+	} else {
+		mainRamPtr = dest;
+		aramPtr = source;
+	}
+
+	SIM_ARAMStartDMA(type, mainRamPtr, aramPtr, length, NULL, callback, (uintptr_t)task);
+	return;
+	#endif
 
 	enabled = OSDisableInterrupts();
 

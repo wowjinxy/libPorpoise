@@ -22,7 +22,7 @@ namespace SIM::GX {
 void Init() {
     InitGlobalState();
 
-    sGxMainThread = SDL_CreateThread(MainThread, "GXMainThread", nullptr);
+    sGxMainThread = SDL_CreateThread(MainThread, "SIM::GX", nullptr);
 }
 
 int MainThread(void * arg) {

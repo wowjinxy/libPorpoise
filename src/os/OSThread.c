@@ -779,6 +779,9 @@ static BOOL IsMember(OSThreadQueue* queue, OSThread* thread)
  */
 s32 OSCheckActiveThreads(void)
 {
+	#ifdef LIBPORPOISE_PORT
+	return 0;
+	#endif
 	OSThread* thread;
 	s32 prio;
 	s32 cThread;

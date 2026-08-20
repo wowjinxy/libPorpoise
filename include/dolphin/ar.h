@@ -19,8 +19,13 @@ struct ARQRequest {
 	u32 owner;            // _04
 	u32 type;             // _08
 	u32 priority;         // _0C
+#ifdef LIBPORPOISE_32BIT
 	u32 source;           // _10
 	u32 dest;             // _14
+#else
+	u64 source;
+	u64 dest;
+#endif
 	u32 length;           // _18
 	ARQCallback callback; // _1C
 };
@@ -37,7 +42,11 @@ void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u32 sou
 
 // AR functions.
 ARCallback ARRegisterDMACallback(ARCallback callback);
+#ifdef LIBPORPOISE_32BIT
 void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length);
+#else
+void ARStartDMA(u32 type, u64 mainmem_addr, u32 aram_addr, u32 length);
+#endif
 u32 ARInit(u32* stack_index_addr, u32 num_entries);
 u32 ARGetBaseAddress();
 

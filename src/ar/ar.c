@@ -3,6 +3,9 @@
 #include <dolphin/os.h>
 #include <stddef.h>
 #include <string.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_aram.h>
+#endif
 
 static ARCallback __AR_Callback;
 static u32 __AR_Size;
@@ -45,8 +48,15 @@ void ARGetDMAStatus(void)
 /**
  * @TODO: Documentation
  */
+#ifdef LIBPORPOISE_32BIT
 void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length)
+#else
+void ARStartDMA(u32 type, u64 mainmem_addr, u32 aram_addr, u32 length)
+#endif
 {
+	#ifdef LIBPORPOISE_PORT
+	SIM_ARAMStartDMA(type, mainmem_addr, aram_addr, length, __AR_Callback, NULL, 0);
+	#else
 	BOOL enabled;
 
 	enabled = OSDisableInterrupts();
@@ -65,6 +75,7 @@ void ARStartDMA(u32 type, u32 mainmem_addr, u32 aram_addr, u32 length)
 	__DSPRegs[DSP_ARAM_DMA_SIZE_LO] = (u16)(__DSPRegs[DSP_ARAM_DMA_SIZE_LO] & ~0xffe0) | (u16)(length & 0xffff);
 
 	OSRestoreInterrupts(enabled);
+	#endif
 }
 
 /**
