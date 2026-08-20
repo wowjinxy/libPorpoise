@@ -38,7 +38,11 @@ void __ARQServiceQueueLo();
 void __ARQCallbackHack();
 void __ARQInterruptServiceRoutine();
 void ARQInit();
+#ifdef LIBPORPOISE_32BIT
 void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u32 source, u32 dest, u32 length, ARQCallback callback);
+#else
+void ARQPostRequest(ARQRequest* task, u32 owner, u32 type, u32 priority, u64 source, u64 dest, u32 length, ARQCallback callback);
+#endif
 
 // AR functions.
 ARCallback ARRegisterDMACallback(ARCallback callback);
