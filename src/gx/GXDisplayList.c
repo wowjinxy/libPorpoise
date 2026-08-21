@@ -92,8 +92,13 @@ void GXCallDisplayList(void* list, u32 nbytes)
 		__GXSendFlushPrim();
 	}
 	GX_WRITE_U8(0x40);
+	#ifdef LIBPORPOISE_32BIT
+	GX_WRITE_U32((u32)list);
+	#else
 	// TODO: make a special one to pass the pointer to the display list
 	// And hopefully, its not possible to call display lists from another display list or that will cause trouble...
+	OSReport("ERROR: GXCallDisplayList is not currently supported on 64-bit!\n")
+	#endif
 	//GX_WRITE_U32(list);
 	GX_WRITE_U32(nbytes);
 }

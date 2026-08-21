@@ -101,6 +101,8 @@ void CommandProcessor::AddFifoData(DataType data) {
 
 int CommandProcessor::GetOpcodeArgSize(Opcode code) {
     switch(code) {
+        case Opcode::CallDisplayList:
+            return 8;
         case Opcode::LoadXfReg:
             return 4;
         case Opcode::LoadCpReg:
@@ -243,6 +245,17 @@ void CommandProcessor::ProcessOpcode() {
             break;
         case Opcode::InvalidateVertexCache:
             mCurrentState = State::ReadOpcode;
+            break;
+        case Opcode::CallDisplayList:
+            {
+                //TODO: Make sure valid pointers are sent here
+                //u32 * displayListArgs = (u32*)mArgsVec.data();
+                //u8 * displayListPtr = (u8*)(displayListArgs[0]);
+                //u32 displayListSize = displayListArgs[1];
+
+                //ProcessFifoData(displayListPtr, displayListSize);
+                mCurrentState = State::ReadOpcode;
+            }
             break;
         default:
             OSReport("Unknown opcode 0x%x\n", mLastOpcode);
