@@ -1,5 +1,8 @@
 #include <dolphin/gx.h>
 #include <string.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_gx_Thread.h>
+#endif
 
 static struct __GXFifoObj DisplayListFifo;
 static volatile struct __GXFifoObj* OldCPUFifo;
@@ -32,6 +35,10 @@ void GXBeginDisplayList(void* list, u32 size)
 	GXSaveCPUFifo((GXFifoObj*)CPUFifo);
 	OldCPUFifo = CPUFifo;
 	GXSetCPUFifo((GXFifoObj*)&DisplayListFifo);
+
+	#ifdef LIBPORPOISE_PORT
+	SIM_GX_BeginDisplayList(list, size);
+	#endif
 }
 
 /**
@@ -65,6 +72,9 @@ u32 GXEndDisplayList(void)
 		OSRestoreInterrupts(enabled);
 	}
 	gx->inDispList = 0;
+	#ifdef LIBPORPOISE_PORT
+	return SIM_GX_EndDisplayList();
+	#endif
 	if (!ov) {
 		return DisplayListFifo.count;
 	}
@@ -97,7 +107,7 @@ void GXCallDisplayList(void* list, u32 nbytes)
 	#else
 	// TODO: make a special one to pass the pointer to the display list
 	// And hopefully, its not possible to call display lists from another display list or that will cause trouble...
-	OSReport("ERROR: GXCallDisplayList is not currently supported on 64-bit!\n")
+	OSReport("ERROR: GXCallDisplayList is not currently supported on 64-bit!\n");
 	#endif
 	//GX_WRITE_U32(list);
 	GX_WRITE_U32(nbytes);

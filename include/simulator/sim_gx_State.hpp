@@ -58,6 +58,9 @@ class GlobalState {
 
   size_t GetDescriptorSize(GXAttrType descriptorType, GXCompType dataType, bool isColorType = false);
   size_t GetNumBytesPerVertex();
+  static inline size_t GetNumMtxIdxComponents(GXCompCnt compType) {
+    return 1;
+  };
   static inline size_t GetNumPositionComponents(GXCompCnt compType) {
     switch(compType) {
         case GX_POS_XY:
@@ -85,6 +88,12 @@ class GlobalState {
         case GX_TEX_ST:
             return 2;
     }
+  };
+
+  static inline size_t GetNumNBTComponents(GXCompCnt compType) {
+    //NBT always has 3 components
+    //TODO: verify this
+    return 3;
   };
 
   inline u32 GetBpRegCache(u8 regId) const { return mBpRegCache[regId]; };

@@ -115,6 +115,10 @@ size_t GlobalState::GetNumBytesPerVertex() {
             return components * GetDescriptorSize(descriptor, format.mAttributes[attr].mDataType, colorType);
     };
 
+    totalBytes += HandleAttribute(GX_VA_PNMTXIDX, false, GetNumMtxIdxComponents);
+    for(int i=GX_VA_TEX0MTXIDX; i <= GX_VA_TEX0MTXIDX; i++) {
+        totalBytes += HandleAttribute(static_cast<GXAttr>(i), false, GetNumMtxIdxComponents);
+    }
     totalBytes += HandleAttribute(GX_VA_POS, false, GetNumPositionComponents);
     totalBytes += HandleAttribute(GX_VA_NRM, false, GetNumNormalComponents);
     totalBytes += HandleAttribute(GX_VA_CLR0, true, GetNumColorComponents);
@@ -123,6 +127,8 @@ size_t GlobalState::GetNumBytesPerVertex() {
     for(int attrib = GX_VA_TEX0; attrib <= GX_VA_TEX7; attrib++) {
         totalBytes += HandleAttribute(static_cast<GXAttr>(attrib), false, GetNumTexCoordComponents);
     }
+
+    totalBytes += HandleAttribute(GX_VA_NBT, false, GetNumNBTComponents);
 
     return totalBytes;
 }

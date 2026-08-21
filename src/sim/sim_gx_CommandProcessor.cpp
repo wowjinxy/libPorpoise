@@ -249,12 +249,14 @@ void CommandProcessor::ProcessOpcode() {
         case Opcode::CallDisplayList:
             {
                 //TODO: Make sure valid pointers are sent here
-                //u32 * displayListArgs = (u32*)mArgsVec.data();
-                //u8 * displayListPtr = (u8*)(displayListArgs[0]);
-                //u32 displayListSize = displayListArgs[1];
+                u32 * displayListArgs = (u32*)mArgsVec.data();
+                u8 * displayListPtr = (u8*)(displayListArgs[0]);
+                u32 displayListSize = displayListArgs[1];
 
-                //ProcessFifoData(displayListPtr, displayListSize);
                 mCurrentState = State::ReadOpcode;
+                mArgsVec.clear();
+                ProcessFifoData(displayListPtr, displayListSize);
+                return;
             }
             break;
         default:

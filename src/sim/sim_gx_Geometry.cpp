@@ -5,6 +5,7 @@
 
 #include <dolphin.h>
 
+#include "dolphin/gx/GXEnum.h"
 #include "simulator/sim_gx_GlRenderer.hpp"
 #include "simulator/sim_gx_State.hpp"
 
@@ -30,6 +31,10 @@ static inline size_t ComponentSize(GXCompType type) {
         default:
             return 0;
     }
+}
+
+void NoOpComponent(const u8 * source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output) {
+
 }
 
 void DecodePositionComponent(const u8* source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output) {
@@ -179,6 +184,11 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
         vtxInfo[attr].mVertexArray = gxState.GetVertexArray(attr);
     };
 
+    ProcessAttribute(GX_VA_PNMTXIDX, gxState.GetNumMtxIdxComponents);
+    for(int i=GX_VA_TEX0MTXIDX; i<=GX_VA_TEX7MTXIDX; i++) {
+        ProcessAttribute(static_cast<GXAttr>(i), gxState.GetNumMtxIdxComponents);
+    }
+
     ProcessAttribute(GX_VA_POS, gxState.GetNumPositionComponents);
     ProcessAttribute(GX_VA_NRM, gxState.GetNumNormalComponents);
 
@@ -187,6 +197,8 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
     for(int attribNum = GX_VA_TEX0; attribNum <= GX_VA_TEX7; attribNum++) {
         ProcessAttribute(static_cast<GXAttr>(attribNum), gxState.GetNumTexCoordComponents); 
     }
+
+    ProcessAttribute(GX_VA_NBT, gxState.GetNumNBTComponents);
 
     auto BuildRenderVertexAttr = [&cursor, &end, &vtxInfo, &format](GXAttr attr, float * outputArray, void (*decodeComponentFunc)(const u8*, GXCompCnt, GXCompType, u8, float *)) mutable -> void {
         const auto& info = vtxInfo[attr];
@@ -225,15 +237,22 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
     for (size_t vertexIndex = 0; vertexIndex < numVertices; ++vertexIndex) {
         RenderVertex& output = mRenderVerts[vertexIndex];
 
+        BuildRenderVertexAttr(GX_VA_PNMTXIDX, nullptr, NoOpComponent);
+        for(int i=GX_VA_TEX0MTXIDX; i <=GX_VA_TEX7MTXIDX; i++) {
+            BuildRenderVertexAttr(static_cast<GXAttr>(i), nullptr, NoOpComponent);
+        }
+
         BuildRenderVertexAttr(GX_VA_POS, output.position.coords, DecodePositionComponent);
         BuildRenderVertexAttr(GX_VA_NRM, output.normal.coords, DecodePositionComponent);
 
         BuildRenderVertexAttr(GX_VA_CLR0, output.color0.values, DecodeColor);
-        //BuildRenderVertexAttr(GX_VA_CLR1, output.color1.values, DecodeColor);
+        BuildRenderVertexAttr(GX_VA_CLR1, nullptr, NoOpComponent);
 
         for(int attribNum = GX_VA_TEX0; attribNum <= GX_VA_TEX7; attribNum++) {
             BuildRenderVertexAttr(static_cast<GXAttr>(attribNum), output.texCoords[attribNum - GX_VA_TEX0].coords, DecodePositionComponent);
         }
+
+        BuildRenderVertexAttr(GX_VA_NBT, nullptr, NoOpComponent);
 
     }
 

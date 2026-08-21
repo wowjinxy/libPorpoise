@@ -17,6 +17,11 @@ static SIM::MessageQueue sMessageQueue = SIM::MessageQueue<SIM::GX::ThreadMessag
 static SDL_Thread * sGxMainThread;
 static SDL_sem* sGxRenderContextSemaphore;
 
+static bool sInDisplayList = false;
+static u32 sDisplayListBytes = 0;
+static u32 sDisplayListBytesWritten;
+static u8 * sDisplayListPtr = nullptr;
+
 
 namespace SIM::GX {
 void Init() {
@@ -95,6 +100,21 @@ void SendFifoMessage(T data) {
     ThreadMessage msg;
     msg.mType = ThreadMessageType::Fifo;
     size_t dataLen = sizeof(T);
+
+    if(sInDisplayList) {
+        size_t displayListBytes = std::min<size_t>(sDisplayListBytes, dataLen);
+        std::memcpy(sDisplayListPtr, &data, displayListBytes);
+        sDisplayListPtr += displayListBytes;
+        sDisplayListBytes -= displayListBytes;
+        sDisplayListBytesWritten+=displayListBytes;
+
+        if(sDisplayListBytes <= 0) {
+            sInDisplayList = false;
+        }
+
+        return;
+    }
+
     if(dataLen > 8) {
         //Message too big! (todo maybe increase it)
         return;
@@ -162,6 +182,18 @@ void SIM_GX_Fifo_SendF32(f32 data) {
 
 void SIM_GX_Fifo_SendU64(u64 data) {
     SIM::GX::SendFifoMessage<u64>(data);
+}
+
+void SIM_GX_BeginDisplayList(u8 * ptr, u32 size) {
+    sDisplayListPtr = ptr;
+    sDisplayListBytes = size;
+    sInDisplayList = true;
+    sDisplayListBytesWritten = 0;
+}
+
+u32 SIM_GX_EndDisplayList() {
+    sInDisplayList = false;
+    return sDisplayListBytesWritten;
 }
 
 void SIM_GX_CommandProcessor_SetVertexArray(GXAttr attr, void * ptr, int stride) {
