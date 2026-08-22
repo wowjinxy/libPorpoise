@@ -15,6 +15,11 @@ CommandProcessor::CommandProcessor() : mGeometryProcessor(GeometryProcessor()),
 }
 
 void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
+    //OSReport("GXFifo [%d]: 0x", mCurrentState);
+    //for(int i=0; i < len; i++) {
+    //    OSReport("%02x", data[i]);
+    //}
+    //OSReport("\n");
     while(len > 0) {
 
         switch(mCurrentState) {
@@ -131,6 +136,8 @@ void CommandProcessor::HandleBeginPrimitive(GXPrimitive primitive, size_t numVer
     auto& gxState = GetGlobalState();
     gxState.SetCurrentPrimitive(primitive);
     gxState.SetCurrentVertexFormat(mLastVertexFormatIdx);
+
+    OSReport("GXBegin %d, %d verts\n", primitive, numVerts);
 
     const size_t bytesPerVertex = gxState.GetNumBytesPerVertex();
     mRemainingGeometryBytes = static_cast<int>(numVerts * bytesPerVertex);
@@ -533,6 +540,9 @@ void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
                     gxState.SetVertexFormatFraction(formatIndex, GX_VA_POS, static_cast<u8>(GetRegValue(value, 5, 4)));
                     
                     //Normal
+                    const auto nrm_cnt = GetRegValue(value, 1, 9);
+                    const auto nrm_nbt3 = GetRegValue(value, 1, 31);
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_NRM, nrm_nbt3 ? GX_NRM_NBT3 : nrm_cnt ? GX_NRM_NBT : GX_NRM_XYZ);
                     gxState.SetVertexFormatDataType(formatIndex, GX_VA_NRM, static_cast<GXCompType>(GetRegValue(value, 3, 10)));
                     
 
@@ -540,14 +550,73 @@ void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
                     gxState.SetVertexFormatComponents(formatIndex, GX_VA_CLR0, static_cast<GXCompCnt>(GetRegValue(value, 1, 13)));
                     gxState.SetVertexFormatDataType(formatIndex, GX_VA_CLR0, static_cast<GXCompType>(GetRegValue(value, 3, 14)));
 
+                    //Color1
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_CLR1, static_cast<GXCompCnt>(GetRegValue(value, 1, 17)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_CLR1, static_cast<GXCompType>(GetRegValue(value, 3, 18)));
+
                     //texCoord0
                     gxState.SetVertexFormatComponents(formatIndex, GX_VA_TEX0, static_cast<GXCompCnt>(GetRegValue(value, 1, 21)));
                     gxState.SetVertexFormatDataType(formatIndex, GX_VA_TEX0, static_cast<GXCompType>(GetRegValue(value, 3, 22)));
                     gxState.SetVertexFormatFraction(formatIndex, GX_VA_TEX0, static_cast<u8>(GetRegValue(value, 5, 25)));
                 } else if(regAddr >= 0x80 && regAddr <= 0x87) {
+                    GXVtxFmt formatIndex = (GXVtxFmt)(regAddr - 0x80);
+                    auto& gxState = GetGlobalState();
+                    //texCoord1
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_TEX1, static_cast<GXCompCnt>(GetRegValue(value, 1, 0)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_TEX1, static_cast<GXCompType>(GetRegValue(value, 3, 1)));
+                    gxState.SetVertexFormatFraction(formatIndex, GX_VA_TEX1, static_cast<u8>(GetRegValue(value, 5, 4)));
 
+                    //texCoord2
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_TEX2, static_cast<GXCompCnt>(GetRegValue(value, 1, 9)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_TEX2, static_cast<GXCompType>(GetRegValue(value, 3, 10)));
+                    gxState.SetVertexFormatFraction(formatIndex, GX_VA_TEX2, static_cast<u8>(GetRegValue(value, 5, 13)));
+
+                    //texCoord3
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_TEX3, static_cast<GXCompCnt>(GetRegValue(value, 1, 18)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_TEX3, static_cast<GXCompType>(GetRegValue(value, 3, 19)));
+                    gxState.SetVertexFormatFraction(formatIndex, GX_VA_TEX3, static_cast<u8>(GetRegValue(value, 5, 22)));
+
+                    //texCoord4
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_TEX4, static_cast<GXCompCnt>(GetRegValue(value, 1, 27)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_TEX4, static_cast<GXCompType>(GetRegValue(value, 3, 28)));
                 } else if(regAddr >= 0x90 && regAddr <= 0x97) {
+                    GXVtxFmt formatIndex = (GXVtxFmt)(regAddr - 0x90);
+                    auto& gxState = GetGlobalState();
 
+                    //texCoord4
+                    gxState.SetVertexFormatFraction(formatIndex, GX_VA_TEX4, static_cast<u8>(GetRegValue(value, 5, 0)));
+
+                    //texCoord5
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_TEX5, static_cast<GXCompCnt>(GetRegValue(value, 1, 5)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_TEX5, static_cast<GXCompType>(GetRegValue(value, 3, 6)));
+                    gxState.SetVertexFormatFraction(formatIndex, GX_VA_TEX5, static_cast<u8>(GetRegValue(value, 5, 9)));
+
+                    //texCoord6
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_TEX6, static_cast<GXCompCnt>(GetRegValue(value, 1, 14)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_TEX6, static_cast<GXCompType>(GetRegValue(value, 3, 15)));
+                    gxState.SetVertexFormatFraction(formatIndex, GX_VA_TEX6, static_cast<u8>(GetRegValue(value, 5, 18)));
+
+                    //texCoord7
+                    gxState.SetVertexFormatComponents(formatIndex, GX_VA_TEX7, static_cast<GXCompCnt>(GetRegValue(value, 1, 23)));
+                    gxState.SetVertexFormatDataType(formatIndex, GX_VA_TEX7, static_cast<GXCompType>(GetRegValue(value, 3, 24)));
+                    gxState.SetVertexFormatFraction(formatIndex, GX_VA_TEX7, static_cast<u8>(GetRegValue(value, 5, 27)));
+                } else if(regAddr >= 0xA0 && regAddr <= 0xAF) {
+                    // Array base 
+                    #ifndef LIBPORPOISE_32BIT
+                    OSReport("GX: Warning: ArrayBase CommandProcessor reg is not currently supported on 64-bit!\n");
+                    #endif
+                    auto& gxState = GetGlobalState();
+                    u8 attr = regAddr - 0xA0;
+                    auto array = gxState.GetVertexArray(static_cast<GXAttr>(attr));
+                    array.mArrayPtr = (u8*)value;
+                    gxState.SetVertexArray(static_cast<GXAttr>(attr), array);
+                } else if(regAddr >= 0xB0 && regAddr <= 0xBF) {
+                    // Array stride
+                    auto& gxState = GetGlobalState();
+                    u8 attr = regAddr - 0xB0;
+                    auto array = gxState.GetVertexArray(static_cast<GXAttr>(attr));
+                    array.mStride = value;
+                    gxState.SetVertexArray(static_cast<GXAttr>(attr), array);
                 }
             }
             break;
