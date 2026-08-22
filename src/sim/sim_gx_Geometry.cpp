@@ -62,26 +62,27 @@ static inline size_t ComponentSize(GXCompType type) {
     }
 }
 
-void NoOpComponent(const u8 * source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output, std::endian endian) {
+void NoOpComponent(const u8 * source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output) {
 
 }
 
-void DecodePositionComponent(const u8* source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output, std::endian endian) {
+void DecodePositionComponent(const u8* source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output) {
+    // Actual verts *should* always be in native endian
     switch (type) {
         case GX_U8:
-            *output = std::ldexp(static_cast<float>(ReadUnaligned<u8>(source, endian)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<u8>(source, std::endian::native)), -fraction);
             break;
         case GX_S8:
-            *output = std::ldexp(static_cast<float>(ReadUnaligned<s8>(source, endian)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<s8>(source, std::endian::native)), -fraction);
             break;
         case GX_U16:
-            *output = std::ldexp(static_cast<float>(ReadUnaligned<u16>(source, endian)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<u16>(source, std::endian::native)), -fraction);
             break;
         case GX_S16:
-            *output = std::ldexp(static_cast<float>(ReadUnaligned<s16>(source, endian)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<s16>(source, std::endian::native)), -fraction);
             break;
         case GX_F32:
-            *output =  ReadUnaligned<f32>(source, endian);
+            *output =  ReadUnaligned<f32>(source, std::endian::native);
             break;
         default:
             *output = 0.0f;
@@ -90,12 +91,12 @@ void DecodePositionComponent(const u8* source, GXCompCnt dummy, GXCompType type,
 }
 
 static inline void DecodeColor(const u8* source, GXCompCnt componentCount, GXCompType type, u8 dummyFrac,
-                 float *output, std::endian endian ) {
+                 float *output ) {
     u8 rgba[4] = {255, 255, 255, 255};
 
     switch (type) {
         case GX_RGB565: {
-            const u16 packed = ReadUnaligned<u16>(source, endian);
+            const u16 packed = ReadUnaligned<u16>(source, std::endian::native);
             rgba[0] = static_cast<u8>(((packed >> 11) & 0x1f) * 255 / 31);
             rgba[1] = static_cast<u8>(((packed >> 5) & 0x3f) * 255 / 63);
             rgba[2] = static_cast<u8>((packed & 0x1f) * 255 / 31);
@@ -108,7 +109,7 @@ static inline void DecodeColor(const u8* source, GXCompCnt componentCount, GXCom
             rgba[2] = source[2];
             break;
         case GX_RGBA4: {
-            const u16 packed = ReadUnaligned<u16>(source, endian);
+            const u16 packed = ReadUnaligned<u16>(source, std::endian::native);
             rgba[0] = static_cast<u8>(((packed >> 12) & 0x0f) * 17);
             rgba[1] = static_cast<u8>(((packed >> 8) & 0x0f) * 17);
             rgba[2] = static_cast<u8>(((packed >> 4) & 0x0f) * 17);
@@ -229,7 +230,7 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream, std::endi
 
     ProcessAttribute(GX_VA_NBT, gxState.GetNumNBTComponents);
 
-    auto BuildRenderVertexAttr = [&cursor, &end, &vtxInfo, &format, endian](GXAttr attr, float * outputArray, void (*decodeComponentFunc)(const u8*, GXCompCnt, GXCompType, u8, float *, std::endian)) mutable -> void {
+    auto BuildRenderVertexAttr = [&cursor, &end, &vtxInfo, &format, endian](GXAttr attr, float * outputArray, void (*decodeComponentFunc)(const u8*, GXCompCnt, GXCompType, u8, float *)) mutable -> void {
         const auto& info = vtxInfo[attr];
         if(info.mDescriptor == GX_NONE) {
             return;
@@ -259,8 +260,7 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream, std::endi
                 format.mAttributes[attr].mComponents,
                 format.mAttributes[attr].mDataType,
                 format.mAttributes[attr].mFraction,
-                &outputArray[component],
-                endian);
+                &outputArray[component]);
         }
     };
 

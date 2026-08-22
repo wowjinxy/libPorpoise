@@ -636,14 +636,14 @@ void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
                     OSReport("GX: Warning: ArrayBase CommandProcessor reg is not currently supported on 64-bit!\n");
                     #endif
                     auto& gxState = GetGlobalState();
-                    u8 attr = regAddr - 0xA0;
+                    u8 attr = regAddr - 0xA0 + GX_VA_POS;
                     auto array = gxState.GetVertexArray(static_cast<GXAttr>(attr));
                     array.mArrayPtr = (u8*)value;
                     gxState.SetVertexArray(static_cast<GXAttr>(attr), array);
                 } else if(regAddr >= 0xB0 && regAddr <= 0xBF) {
                     // Array stride
                     auto& gxState = GetGlobalState();
-                    u8 attr = regAddr - 0xB0;
+                    u8 attr = regAddr - 0xB0 + GX_VA_POS;
                     auto array = gxState.GetVertexArray(static_cast<GXAttr>(attr));
                     array.mStride = value;
                     gxState.SetVertexArray(static_cast<GXAttr>(attr), array);
