@@ -20,11 +20,6 @@ CommandProcessor::CommandProcessor() : mGeometryProcessor(GeometryProcessor()),
 }
 
 void CommandProcessor::ProcessFifoData(u8 * data, size_t len, std::endian endian) {
-    //OSReport("GXFifo [%d]: 0x", mCurrentState);
-    //for(int i=0; i < len; i++) {
-    //    OSReport("%02x", data[i]);
-    //}
-    //OSReport("\n");
     while(len > 0) {
 
         switch(mCurrentState) {
@@ -141,9 +136,6 @@ void CommandProcessor::HandleBeginPrimitive(GXPrimitive primitive, size_t numVer
     auto& gxState = GetGlobalState();
     gxState.SetCurrentPrimitive(primitive);
     gxState.SetCurrentVertexFormat(mLastVertexFormatIdx);
-
-    OSReport("GXBegin %d, %d verts\n", primitive, numVerts);
-
     const size_t bytesPerVertex = gxState.GetNumBytesPerVertex();
     mRemainingGeometryBytes = static_cast<int>(numVerts * bytesPerVertex);
     mTotalGeometryBytes = mRemainingGeometryBytes;
