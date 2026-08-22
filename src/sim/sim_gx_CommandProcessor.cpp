@@ -278,8 +278,15 @@ void CommandProcessor::ProcessOpcode(std::endian endian) {
             {
                 //TODO: Make sure valid pointers are sent here
                 u32 * displayListArgs = (u32*)mArgsVec.data();
-                u8 * displayListPtr = (u8*)(displayListArgs[0]);
-                u32 displayListSize = displayListArgs[1];
+                u8 * displayListPtr;
+                u32 displayListSize;
+                if(IsByteswapRequired(endian)) {
+                    displayListPtr = (u8*)(bswap_32(displayListArgs[0]));
+                    displayListSize = bswap_32(displayListArgs[1]);
+                } else {
+                    displayListPtr = (u8*)(displayListArgs[0]);
+                    displayListSize = displayListArgs[1];
+                }
 
                 mCurrentState = State::ReadOpcode;
                 mArgsVec.clear();
