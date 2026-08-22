@@ -6,6 +6,11 @@
 #include <simulator/sim_gx_CommandProcessor.hpp>
 #include <simulator/sim_gx_State.hpp>
 #include <simulator/sim.h>
+#include <simulator/byteswap.h>
+
+static bool IsByteswapRequired(std::endian endian) {
+    return (std::endian::native != endian);
+}
 
 namespace SIM::GX {
 CommandProcessor::CommandProcessor() : mGeometryProcessor(GeometryProcessor()),
@@ -14,7 +19,7 @@ CommandProcessor::CommandProcessor() : mGeometryProcessor(GeometryProcessor()),
              mRemainingArgBytes(0){
 }
 
-void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
+void CommandProcessor::ProcessFifoData(u8 * data, size_t len, std::endian endian) {
     //OSReport("GXFifo [%d]: 0x", mCurrentState);
     //for(int i=0; i < len; i++) {
     //    OSReport("%02x", data[i]);
@@ -37,7 +42,7 @@ void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
                 int numArgs = GetOpcodeArgSize(code);
                 mLastOpcode = code;
                 if(numArgs <= 0) {
-                    ProcessOpcode();
+                    ProcessOpcode(endian);
                 } else {
                     mCurrentState = CommandProcessor::State::ReadArguments;
                     mRemainingArgBytes = numArgs;
@@ -53,7 +58,7 @@ void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
                     mRemainingArgBytes--;
                 }
                 if(mRemainingArgBytes <= 0) {
-                    ProcessOpcode();
+                    ProcessOpcode(endian);
                 }
             } break;
             case CommandProcessor::State::ReadGeometry:
@@ -100,7 +105,7 @@ void CommandProcessor::ProcessFifoData(u8 * data, size_t len) {
 template <typename DataType>
 void CommandProcessor::AddFifoData(DataType data) {
     u8 * dataPtr = (u8*)&data;
-    ProcessFifoData(dataPtr, sizeof(DataType));
+    ProcessFifoData(dataPtr, sizeof(DataType), std::endian::native);
 }
 
 
@@ -150,7 +155,7 @@ void CommandProcessor::HandleBeginPrimitive(GXPrimitive primitive, size_t numVer
     }
 }
 
-void CommandProcessor::ProcessOpcode() {
+void CommandProcessor::ProcessOpcode(std::endian endian) {
     switch(mLastOpcode) {
         case Opcode::NoOp:
             mCurrentState = State::ReadOpcode;
@@ -198,6 +203,9 @@ void CommandProcessor::ProcessOpcode() {
             {
               u16 numVerts;
               std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
+              if(endian == std::endian::big) {
+                numVerts = bswap_16(numVerts);
+              }
               HandleBeginPrimitive(GX_TRIANGLES, numVerts);
             }
             break;
@@ -205,6 +213,9 @@ void CommandProcessor::ProcessOpcode() {
             {
               u16 numVerts;
               std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
+              if(IsByteswapRequired(endian)) {
+                numVerts = bswap_16(numVerts);
+              }
               HandleBeginPrimitive(GX_TRIANGLESTRIP, numVerts);
             }
             break;
@@ -212,6 +223,9 @@ void CommandProcessor::ProcessOpcode() {
             {
               u16 numVerts;
               std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
+              if(IsByteswapRequired(endian)) {
+                numVerts = bswap_16(numVerts);
+              }
               HandleBeginPrimitive(GX_QUADSTRIP, numVerts);
             }
             break;
@@ -219,6 +233,9 @@ void CommandProcessor::ProcessOpcode() {
             {
               u16 numVerts;
               std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
+              if(IsByteswapRequired(endian)) {
+                numVerts = bswap_16(numVerts);
+              }
               HandleBeginPrimitive(GX_TRIANGLEFAN, numVerts);
             }
             break;
@@ -226,6 +243,9 @@ void CommandProcessor::ProcessOpcode() {
             {
               u16 numVerts;
               std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
+              if(IsByteswapRequired(endian)) {
+                numVerts = bswap_16(numVerts);
+              }
               HandleBeginPrimitive(GX_LINES, numVerts);
             }
             break;
@@ -233,6 +253,9 @@ void CommandProcessor::ProcessOpcode() {
             {
               u16 numVerts;
               std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
+              if(IsByteswapRequired(endian)) {
+                numVerts = bswap_16(numVerts);
+              }
               HandleBeginPrimitive(GX_LINESTRIP, numVerts);
             }
             break;
@@ -240,6 +263,9 @@ void CommandProcessor::ProcessOpcode() {
             {
               u16 numVerts;
               std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
+              if(IsByteswapRequired(endian)) {
+                numVerts = bswap_16(numVerts);
+              }
               HandleBeginPrimitive(GX_POINTS, numVerts);
             }
             break;
@@ -247,6 +273,9 @@ void CommandProcessor::ProcessOpcode() {
             {
               u16 numVerts;
               std::memcpy(&numVerts, mArgsVec.data(), sizeof(numVerts));
+              if(IsByteswapRequired(endian)) {
+                numVerts = bswap_16(numVerts);
+              }
               HandleBeginPrimitive(GX_QUADS, numVerts);
             }
             break;
@@ -262,7 +291,10 @@ void CommandProcessor::ProcessOpcode() {
 
                 mCurrentState = State::ReadOpcode;
                 mArgsVec.clear();
-                ProcessFifoData(displayListPtr, displayListSize);
+
+                //Endian TODO
+                //We need to determine if this is a native or big endian display list
+                ProcessFifoData(displayListPtr, displayListSize, std::endian::little);
                 return;
             }
             break;

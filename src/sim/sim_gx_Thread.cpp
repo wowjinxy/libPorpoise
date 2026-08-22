@@ -40,7 +40,7 @@ int MainThread(void * arg) {
 
         switch(msg.mType) {
             case ThreadMessageType::Fifo:
-                sCommandProcessor.ProcessFifoData(msg.mData, msg.mDataLen);
+                sCommandProcessor.ProcessFifoData(msg.mData, msg.mDataLen, std::endian::native);
                 break;
             case ThreadMessageType::SetVertexArray:
                 {
@@ -123,7 +123,7 @@ void SendFifoMessage(T data) {
     std::memcpy(msg.mData, &data, dataLen);
     msg.mDataLen = dataLen;
     #if COMMAND_PROCESSOR_DEBUG
-    sCommandProcessor.ProcessFifoData(msg.mData, msg.mDataLen);
+    sCommandProcessor.ProcessFifoData(msg.mData, msg.mDataLen, std::endian::native);
     #else
     sMessageQueue.SendMessage(msg);
     #endif

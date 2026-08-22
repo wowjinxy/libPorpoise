@@ -5,6 +5,7 @@
 #include <dolphin/types.h>
 
 #include <array>
+#include <bit>
 #include <vector>
 
 #include <dolphin/gx/GXAttr.h>
@@ -53,14 +54,14 @@ class CommandProcessor {
  public:
   CommandProcessor();
   ~CommandProcessor() = default;
-  void ProcessFifoData(u8 * data, size_t len);
+  void ProcessFifoData(u8 * data, size_t len, std::endian endian);
   template <typename DataType>
   void AddFifoData(DataType data);
 
  private:
   int GetOpcodeArgSize(Opcode code);
   void HandleBeginPrimitive(GXPrimitive primitive, size_t numVerts);
-  void ProcessOpcode();
+  void ProcessOpcode(std::endian endian);
   void ProcessBpReg(u8 regAddr, u32 value);
   void ProcessCpReg(u8 regAddr, u32 value);
   static inline u32 GetRegValue(u32 reg, u32 size, u32 shift) {
