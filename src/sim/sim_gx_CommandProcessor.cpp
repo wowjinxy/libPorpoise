@@ -292,9 +292,13 @@ void CommandProcessor::ProcessOpcode(std::endian endian) {
                 mCurrentState = State::ReadOpcode;
                 mArgsVec.clear();
 
-                //Endian TODO
-                //We need to determine if this is a native or big endian display list
-                ProcessFifoData(displayListPtr, displayListSize, std::endian::little);
+                // Is the display list a known native-endian display list? (was it created at runtime by GXBeginDisplayList/EndDisplayList?)
+                std::endian displayListEndian = std::endian::big;
+                if(GetGlobalState().IsDisplayListNativeEndian(displayListPtr)) {
+                    displayListEndian = std::endian::native;
+                }
+
+                ProcessFifoData(displayListPtr, displayListSize, displayListEndian);
                 return;
             }
             break;

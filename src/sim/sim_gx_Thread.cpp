@@ -156,6 +156,9 @@ bool IsThreadDone() {
     return sMessageQueue.empty();
 }
 
+
+
+
 }
 
 // C APIs for GX Thread/Fifo
@@ -189,6 +192,9 @@ void SIM_GX_BeginDisplayList(u8 * ptr, u32 size) {
     sDisplayListBytes = size;
     sInDisplayList = true;
     sDisplayListBytesWritten = 0;
+    
+    // Display lists created at runtime in this way should always be in native endian
+    SIM::GX::GetGlobalState().AddNativeEndianDisplayList(ptr);
 }
 
 u32 SIM_GX_EndDisplayList() {

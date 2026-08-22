@@ -4,6 +4,7 @@
 #include "dolphin/gx/GXEnum.h"
 #include <array>
 #include <cstddef>
+#include <unordered_set>
 #include <vector>
 
 #include <dolphin/types.h>
@@ -146,6 +147,8 @@ class GlobalState {
   inline void SetCullMode(GXCullMode cullMode) { mCullMode = cullMode; };
   inline void SetTevTexMap(u8 tevStage, GXTexMapID texMap) { mTevTexMaps[tevStage] = texMap; };
   void SetTevColor(u8 reg, std::array<float, 4>& color);
+  void AddNativeEndianDisplayList(void * displayListPtr);
+  bool IsDisplayListNativeEndian(void * displayListPtr);
 
  private:
   static std::array<float, 16> IdentityMatrix();
@@ -175,6 +178,7 @@ class GlobalState {
   std::array<TevStageConfig, GX_MAX_TEVSTAGE> mTevStages = {};
   std::array<GXTexMapID, GX_MAX_TEVSTAGE> mTevTexMaps;
   std::array<TexGenConfig, GX_MAX_TEXCOORD> mTexGenConfigs = {};
+  std::unordered_set<void*> mNativeEndianDisplayLists;
 };
 
 void InitGlobalState();

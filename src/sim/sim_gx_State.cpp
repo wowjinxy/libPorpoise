@@ -305,6 +305,14 @@ void GlobalState::RefreshTextureMatrices(u32 firstAddress, u32 endAddress) {
     }
 }
 
+void GlobalState::AddNativeEndianDisplayList(void * displayListPtr) {
+    mNativeEndianDisplayLists.emplace(displayListPtr);
+}
+
+bool GlobalState::IsDisplayListNativeEndian(void * displayListPtr) {
+    return mNativeEndianDisplayLists.contains(displayListPtr);
+}
+
 void InitGlobalState() {
     sGXGlobalState.Reset();
 }
