@@ -16,6 +16,15 @@ static void SetButtonBit(u16& button, u16 bit, bool isDown) {
     }
 }
 
+// Sets a joystick value from a key
+static void SetStick(s8& stick, s8 value, bool isDown) {
+    if(isDown) {
+        stick = value;
+    } else {
+        stick = 0;
+    }
+}
+
 void Read(PADStatus * status) {
     memcpy(status, sStatus, sizeof(PADStatus) * PAD_MAX_CONTROLLERS);
 }
@@ -50,6 +59,18 @@ void HandleKey(SDL_Keycode key, bool isDown) {
         case SDLK_RIGHT:
             SetButtonBit(button, PAD_BUTTON_UP, isDown);
             break;
+
+        case SDLK_w:
+            SetStick(sStatus[0].stickY, 127, isDown);
+
+        case SDLK_s:
+            SetStick(sStatus[0].stickY, -127, isDown);
+
+        case SDLK_a:
+            SetStick(sStatus[0].stickX, -127, isDown);
+
+        case SDLK_d:
+            SetStick(sStatus[0].stickX, 127, isDown);
 
         default:
             break;
