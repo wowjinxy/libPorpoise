@@ -8,13 +8,42 @@
 #include "dolphin/gx/GXEnum.h"
 #include "simulator/sim_gx_GlRenderer.hpp"
 #include "simulator/sim_gx_State.hpp"
+#include "simulator/byteswap.h"
 
 namespace {
 
+static bool IsByteswapRequired(std::endian endian) {
+    return (std::endian::native != endian);
+}
+
 template <typename T>
-static inline T ReadUnaligned(const u8* source) {
+static inline T ReadUnaligned(const u8* source, std::endian endian) {
     T value;
     std::memcpy(&value, source, sizeof(value));
+    if(IsByteswapRequired(endian)) {
+        switch(sizeof(T)) {
+            case 1:
+                break;
+            case 2:
+                value = bswap_16(value);
+                break;
+            case 4:
+                {
+                    u32 * valuePtr = (u32*)&value;
+                    u32 value32 = bswap_32(*valuePtr);
+                    T * targetValuePtr = (T*)&value32;
+
+                    value = *targetValuePtr;
+                } break;
+            case 8:
+                value = bswap_64(value);
+                break;
+            default:
+                OSReport("GXGeometry: Warning: tried to byteswap on an unsupported size");
+                break;
+        }
+    }
+
     return value;
 }
 
@@ -33,26 +62,26 @@ static inline size_t ComponentSize(GXCompType type) {
     }
 }
 
-void NoOpComponent(const u8 * source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output) {
+void NoOpComponent(const u8 * source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output, std::endian endian) {
 
 }
 
-void DecodePositionComponent(const u8* source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output) {
+void DecodePositionComponent(const u8* source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output, std::endian endian) {
     switch (type) {
         case GX_U8:
-            *output = std::ldexp(static_cast<float>(ReadUnaligned<u8>(source)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<u8>(source, endian)), -fraction);
             break;
         case GX_S8:
-            *output = std::ldexp(static_cast<float>(ReadUnaligned<s8>(source)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<s8>(source, endian)), -fraction);
             break;
         case GX_U16:
-            *output = std::ldexp(static_cast<float>(ReadUnaligned<u16>(source)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<u16>(source, endian)), -fraction);
             break;
         case GX_S16:
-            *output = std::ldexp(static_cast<float>(ReadUnaligned<s16>(source)), -fraction);
+            *output = std::ldexp(static_cast<float>(ReadUnaligned<s16>(source, endian)), -fraction);
             break;
         case GX_F32:
-            *output =  ReadUnaligned<f32>(source);
+            *output =  ReadUnaligned<f32>(source, endian);
             break;
         default:
             *output = 0.0f;
@@ -61,12 +90,12 @@ void DecodePositionComponent(const u8* source, GXCompCnt dummy, GXCompType type,
 }
 
 static inline void DecodeColor(const u8* source, GXCompCnt componentCount, GXCompType type, u8 dummyFrac,
-                 float *output ) {
+                 float *output, std::endian endian ) {
     u8 rgba[4] = {255, 255, 255, 255};
 
     switch (type) {
         case GX_RGB565: {
-            const u16 packed = ReadUnaligned<u16>(source);
+            const u16 packed = ReadUnaligned<u16>(source, endian);
             rgba[0] = static_cast<u8>(((packed >> 11) & 0x1f) * 255 / 31);
             rgba[1] = static_cast<u8>(((packed >> 5) & 0x3f) * 255 / 63);
             rgba[2] = static_cast<u8>((packed & 0x1f) * 255 / 31);
@@ -79,7 +108,7 @@ static inline void DecodeColor(const u8* source, GXCompCnt componentCount, GXCom
             rgba[2] = source[2];
             break;
         case GX_RGBA4: {
-            const u16 packed = ReadUnaligned<u16>(source);
+            const u16 packed = ReadUnaligned<u16>(source, endian);
             rgba[0] = static_cast<u8>(((packed >> 12) & 0x0f) * 17);
             rgba[1] = static_cast<u8>(((packed >> 8) & 0x0f) * 17);
             rgba[2] = static_cast<u8>(((packed >> 4) & 0x0f) * 17);
@@ -113,7 +142,7 @@ static inline void DecodeColor(const u8* source, GXCompCnt componentCount, GXCom
 }
 
 static inline bool ReadArrayIndex(const u8*& cursor, const u8* end, GXAttrType descriptor,
-                    size_t& index) {
+                    size_t& index, std::endian endian) {
 
     switch(descriptor) {
         case GX_INDEX8:
@@ -126,7 +155,7 @@ static inline bool ReadArrayIndex(const u8*& cursor, const u8* end, GXAttrType d
             if (cursor + sizeof(u16) > end) {
                 return false;
             }
-            index = ReadUnaligned<u16>(cursor);
+            index = ReadUnaligned<u16>(cursor, endian);
             cursor += sizeof(u16);
             return true;
         default:
@@ -140,7 +169,7 @@ namespace SIM::GX {
 
 GeometryProcessor::GeometryProcessor() {}
 
-void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
+void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream, std::endian endian) {
     auto& gxState = GetGlobalState();
     //mRenderVerts.clear();
 
@@ -200,7 +229,7 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
 
     ProcessAttribute(GX_VA_NBT, gxState.GetNumNBTComponents);
 
-    auto BuildRenderVertexAttr = [&cursor, &end, &vtxInfo, &format](GXAttr attr, float * outputArray, void (*decodeComponentFunc)(const u8*, GXCompCnt, GXCompType, u8, float *)) mutable -> void {
+    auto BuildRenderVertexAttr = [&cursor, &end, &vtxInfo, &format, endian](GXAttr attr, float * outputArray, void (*decodeComponentFunc)(const u8*, GXCompCnt, GXCompType, u8, float *, std::endian)) mutable -> void {
         const auto& info = vtxInfo[attr];
         if(info.mDescriptor == GX_NONE) {
             return;
@@ -216,7 +245,7 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
             cursor += directSize;
         } else {
             size_t arrayIndex;
-            if (!ReadArrayIndex(cursor, end, info.mDescriptor, arrayIndex)) {
+            if (!ReadArrayIndex(cursor, end, info.mDescriptor, arrayIndex, endian)) {
                 return;
             }
             
@@ -230,7 +259,8 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream) {
                 format.mAttributes[attr].mComponents,
                 format.mAttributes[attr].mDataType,
                 format.mAttributes[attr].mFraction,
-                &outputArray[component]);
+                &outputArray[component],
+                endian);
         }
     };
 

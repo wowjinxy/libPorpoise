@@ -67,7 +67,7 @@ void CommandProcessor::ProcessFifoData(u8 * data, size_t len, std::endian endian
                 }
 
                 if(mRemainingGeometryBytes <= 0) {
-                    mGeometryProcessor.ProcessByteStream(mGeometryVec);
+                    mGeometryProcessor.ProcessByteStream(mGeometryVec, endian);
                     mGeometryVec.clear();
                     mCurrentState = CommandProcessor::State::ReadOpcode;
                 }
@@ -288,6 +288,8 @@ void CommandProcessor::ProcessOpcode(std::endian endian) {
                 std::endian displayListEndian = std::endian::big;
                 if(GetGlobalState().IsDisplayListNativeEndian(displayListPtr)) {
                     displayListEndian = std::endian::native;
+                } else {
+                    displayListEndian = std::endian::big;
                 }
 
                 ProcessFifoData(displayListPtr, displayListSize, displayListEndian);

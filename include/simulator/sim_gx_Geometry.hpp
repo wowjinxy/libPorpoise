@@ -1,6 +1,7 @@
 #ifndef LIBPORPOISE_SIM_GX_GEOMETRY_HPP
 #define LIBPORPOISE_SIM_GX_GEOMETRY_HPP
 
+#include <bit>
 #include <vector>
 
 #include <dolphin/types.h>
@@ -53,7 +54,7 @@ class GeometryProcessor {
   GeometryProcessor();
   ~GeometryProcessor() = default;
 
-  void ProcessByteStream(std::vector<u8>& byteStream);
+  void ProcessByteStream(std::vector<u8>& byteStream, std::endian endian);
  private:
   //std::vector<RenderVertex> mRenderVerts;
   RenderVertex * mRenderVerts = nullptr;
