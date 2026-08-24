@@ -43,6 +43,9 @@ struct TevStageConfig {
   GXTevBias mBias;
   GXTevScale mScale;
   GXTexCoordID mTexCoordId;
+  u32 pad2;
+  u32 pad3;
+  u32 pad4;
 };
 
 struct TexGenConfig {

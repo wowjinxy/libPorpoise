@@ -20,6 +20,9 @@ struct TevStageConfig {
   uint mBias;
   uint mScale;
   uint mTexCoordId;
+  uint pad2;
+  uint pad3;
+  uint pad4;
 };
 
 layout (std140) uniform tevConfigBlock {
@@ -280,6 +283,26 @@ vec3 RunTevColorOperation(uint op) {
         result = tevRegs[2].rgb;
       } else {
         result = tevRegs[3].rgb;
+      }
+      break;
+
+    case 14u: /* GX_TEV_COMP_RGB8_GT */
+      if(tevRegs[0].r > tevRegs[1].r) {
+        result.r = tevRegs[3].r + tevRegs[2].r;
+      } else {
+        result.r = tevRegs[3].r;
+      }
+
+      if(tevRegs[0].g > tevRegs[1].g) {
+        result.g = tevRegs[3].g + tevRegs[2].g;
+      } else {
+        result.g = tevRegs[3].g;
+      }
+
+      if(tevRegs[0].b > tevRegs[1].b) {
+        result.b = tevRegs[3].b + tevRegs[2].b;
+      } else {
+        result.b = tevRegs[3].b;
       }
       break;
     
