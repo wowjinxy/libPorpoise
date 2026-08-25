@@ -430,7 +430,7 @@ BOOL DVDReadAsyncPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset,
 	}
 
 	if (fileInfo->callback) {
-		(fileInfo->callback)(result, fileInfo);
+		(fileInfo->callback)(bytesRead, fileInfo);
 	}
 
 	return TRUE;

@@ -53,6 +53,7 @@ void ARStartDMA(u32 type, u64 mainmem_addr, u32 aram_addr, u32 length);
 #endif
 u32 ARInit(u32* stack_index_addr, u32 num_entries);
 u32 ARGetBaseAddress();
+u32 ARAlloc(u32 length);
 
 ////////////////////////////////////////////
 u16 __ARGetInterruptStatus();

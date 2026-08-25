@@ -82,9 +82,24 @@ void ARStartDMA(u32 type, u64 mainmem_addr, u32 aram_addr, u32 length)
  * @TODO: Documentation
  * @note UNUSED Size: 000068
  */
-void ARAlloc(void)
+u32 ARAlloc(u32 length)
 {
-	TRAP_UNIMPLEMENTED;
+	u32 tmp;
+	int old;
+
+	old = OSDisableInterrupts();
+	ASSERTMSG(!(length & 0x1F),
+	              "ARAlloc(): length is not multiple of 32bytes!");
+	ASSERTMSG(length <= (__AR_Size - __AR_StackPointer),
+	              "ARAlloc(): Out of ARAM!");
+	ASSERTMSG(__AR_FreeBlocks, "ARAlloc(): No more free blocks!");
+	tmp = __AR_StackPointer;
+	__AR_StackPointer += length;
+	*__AR_BlockLength = length;
+	__AR_BlockLength += 1;
+	__AR_FreeBlocks -= 1;
+	OSRestoreInterrupts(old);
+	return tmp;
 }
 
 /**
