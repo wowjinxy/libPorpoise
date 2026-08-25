@@ -116,7 +116,7 @@ size_t GlobalState::GetNumBytesPerVertex() {
     };
 
     totalBytes += HandleAttribute(GX_VA_PNMTXIDX, false, GetNumMtxIdxComponents);
-    for(int i=GX_VA_TEX0MTXIDX; i <= GX_VA_TEX0MTXIDX; i++) {
+    for(int i=GX_VA_TEX0MTXIDX; i <= GX_VA_TEX7MTXIDX; i++) {
         totalBytes += HandleAttribute(static_cast<GXAttr>(i), false, GetNumMtxIdxComponents);
     }
     totalBytes += HandleAttribute(GX_VA_POS, false, GetNumPositionComponents);
