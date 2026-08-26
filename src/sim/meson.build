@@ -3,6 +3,7 @@ libsim_srcs = files(
 	'sim_aram.cpp',
     'sim_dvd.cpp',
     'sim_main.cpp',
+    'sim_memory.cpp',
     'sim_globals.c',
     'sim_gx_CommandProcessor.cpp',
     'sim_gx_GlRenderer.cpp',

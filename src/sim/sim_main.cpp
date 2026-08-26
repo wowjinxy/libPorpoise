@@ -6,6 +6,7 @@
 #include <simulator/sim.h>
 #include <simulator/sim_aram.hpp>
 #include <simulator/sim_gx_State.hpp>
+#include <simulator/sim_memory.hpp>
 #include <simulator/sim_pad.hpp>
 #include <simulator/sim_gx_Thread.hpp>
 #include <simulator/sim_vi.h>
@@ -320,6 +321,7 @@ int main(int argc, char** argv) {
     LinkShader(gxShaderProgramId, gxVertexShader, gxFragmentShader);
     glUseProgram(gxShaderProgramId);
 
+    SIM::Memory::Init();
     SIM::ARAM::Init();
     SIM::GX::Init();
 
