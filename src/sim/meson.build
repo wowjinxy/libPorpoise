@@ -1,6 +1,7 @@
 libsim_srcs = files(
     'glad.c',
 	'sim_aram.cpp',
+    'sim_crc32.c',
     'sim_dvd.cpp',
     'sim_main.cpp',
     'sim_memory.cpp',

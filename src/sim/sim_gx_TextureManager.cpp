@@ -3,7 +3,9 @@
 
 #include <dolphin.h>
 
+#include <simulator/sim_crc32.h>
 #include <simulator/sim_gx_Thread.hpp>
+#include <simulator/sim_memory.hpp>
 #include <simulator/glad/glad.h>
 
 static SIM::GX::TextureManager sGXTextureManager = {};
@@ -409,17 +411,35 @@ static void ConvertCMPR(u8* in, u8* out, u16 width, u16 height)
 namespace SIM::GX {
 
 // Texture
-Texture::Texture() : Texture({}) {};
-
-Texture::Texture(GXTexObjPriv& obj) {
-    mGxTexObj = obj;
-    mTextureBuf = nullptr;
-}
+Texture::Texture() {};
 
 Texture::~Texture() {
-    if(mTextureBuf != nullptr) {
-        delete mTextureBuf;
+}
+
+size_t Texture::GetSourceBufSize() {
+    if(mSourceFormat == GX_TF_I4) {
+        return (mWidth * mHeight) >> 1;
     }
+
+    int ratio = 1;
+    switch (mSourceFormat) {
+        case GX_TF_IA8:
+        case GX_TF_RGB565:
+        case GX_TF_Z16:
+            ratio = 2;
+            break;
+        case GX_TF_RGBA8:
+        case GX_TF_Z24X8:
+            ratio = 4;
+            break;
+        case GX_TF_CMPR:
+            //TODO: not sure how to calc size for this one
+            break;
+        default:
+            break;
+    }
+
+    return mWidth * mHeight * ratio;
 }
 
 void Texture::GenGlTexture() {
@@ -445,12 +465,14 @@ void Texture::ConvertToGl() {
 
     void (*conversionFunc)(u8*, u8*, u16, u16) = nullptr;
 
-    switch(mGxTexObj.format) {
+    switch(mSourceFormat) {
         case GX_TF_I4:
+        case GX_TF_C4:
             // This is a special case since there are two pixels per byte
             conversionFunc = ConvertI4;
             break;
         case GX_TF_I8:
+        case GX_TF_C8:
             conversionFunc = ConvertI8;
             break;
         case GX_TF_IA4:
@@ -507,16 +529,14 @@ void Texture::ConvertToGl() {
 
     mTextureBuf = new u8[textureSize];
 
-    u8 * texSourceAddr = (u8*)mGxTexObj.fullAddress;
-
 
     // Perform texture conversion
     if(conversionFunc) {
-        conversionFunc(texSourceAddr, mTextureBuf, mWidth, mHeight);
+        conversionFunc(mSourceData, mTextureBuf, mWidth, mHeight);
     } else {
         // No conversion function defined, just perform a copy
         // Note that this will likely result in an incorrect texture
-        memcpy(mTextureBuf, texSourceAddr, textureSize);
+        memcpy(mTextureBuf, mSourceData, textureSize);
     }
 
     glBindTexture(GL_TEXTURE_2D, mGlTextureId);
@@ -550,79 +570,45 @@ TextureManager& TextureManager::GetInstance() {
     return sGXTextureManager;
 }
 
-void TextureManager::InitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFmt format, GXTexWrapMode wrap_s, GXTexWrapMode wrap_t, u8 mipmap) {
-    // This needs to happen on the GX thread
-    GXTexObjPriv* privObj = (GXTexObjPriv*)obj;
+void TextureManager::ProcessTextures() {
+    auto& gxState = GetGlobalState();
+    for(int texMap = 0; texMap < GX_MAX_TEXMAP; texMap++) {
+        auto& texObj = gxState.GetLoadedTexObj(texMap);
+        auto& texRegion = gxState.GetLoadedTexRegion(texMap);
 
-    privObj->fullAddress = image_ptr;
+        Texture tempTexture;
 
-    Texture tex = Texture(*privObj);
-    tex.SetWidth(width);
-    tex.SetHeight(height);
-    tex.SetMipmap(mipmap);
-    tex.SetWrapS(wrap_s);
-    tex.SetWrapT(wrap_t);
+        tempTexture.mSourceData = nullptr;
+        tempTexture.mTextureBuf = nullptr;
 
-    void * addr = privObj->fullAddress;
+        // Get the source texture address and sizes
+        u32 sourceMemoryHandle = (GET_REG_FIELD(texObj.image3, 21, 0));
+        tempTexture.mSourceData = (u8*)SIM::Memory::MemoryHandleToAddress(sourceMemoryHandle);
+        if(tempTexture.mSourceData == nullptr) {
+            continue; /* TODO: maybe unbind in gl? */
+        }
+        tempTexture.mWidth = GET_REG_FIELD(texObj.image0, 10, 0) + 1;
+        tempTexture.mHeight = GET_REG_FIELD(texObj.image0, 10, 10) + 1;
+        tempTexture.mSourceFormat = static_cast<GXTexFmt>(GET_REG_FIELD(texObj.image0, 4, 20));
 
-    // Remove the existing texture
-    if(mTextureCache.count(addr) > 0) {
-        mTextureCache[addr].DeleteGlTexture();
-        mTextureCache.erase(addr);
+        auto sourceBufSize = tempTexture.GetSourceBufSize();
+        u32 textureCRC = SIM_crc32buf(tempTexture.mSourceData, sourceBufSize);
+
+        // Check if the converted texture data is in the cache
+        if(mTextureCache.count(textureCRC) > 0) {
+            // Just bind the texture
+            auto& texture = mTextureCache[textureCRC];
+
+            texture.Activate(static_cast<GXTexMapID>(texMap));
+        } else {
+            // Convert the texture and then bind
+            tempTexture.GenGlTexture();
+            tempTexture.ConvertToGl();
+            mTextureCache[textureCRC] = tempTexture;
+            tempTexture.Activate(static_cast<GXTexMapID>(texMap));
+        }
     }
-
-    mTextureCache.emplace(addr, std::move(tex));
-}
-
-void TextureManager::LoadTexObj(GXTexObj* obj, GXTexMapID map) {
-    GXTexObjPriv* privObj = (GXTexObjPriv*)obj;
-    void * addr = privObj->fullAddress;
-    
-    if(mTextureCache.count(addr) == 0) {
-        // TexObj is not in our cache, it was not initialized
-        OSReport("TextureManager: Tried to load a TexObj that is not in the cache\n");
-        return;
-    }
-
-    auto& texture = mTextureCache[addr];
-
-    if(!texture.GetIsConvertedToGl()) {
-        texture.GenGlTexture();
-        texture.ConvertToGl();
-    }
-
-    texture.Activate(map);
 }
 
 
-}
-
-// C APIs
-void SIM_GX_TextureManager_InitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFmt format, GXTexWrapMode wrap_s, GXTexWrapMode wrap_t, u8 mipmap) {
-    // Send a message to the GX thread
-    SIM::GX::ThreadMessage msg;
-    msg.mType = SIM::GX::ThreadMessageType::InitTexObj;
-
-    msg.mInitTexObj.obj = obj;
-    msg.mInitTexObj.imagePtr = image_ptr;
-    msg.mInitTexObj.width = width;
-    msg.mInitTexObj.height = height;
-    msg.mInitTexObj.format = format;
-    msg.mInitTexObj.wrapS = wrap_s;
-    msg.mInitTexObj.wrapT = wrap_t;
-    msg.mInitTexObj.mipmap = mipmap;
-    SIM::GX::SendThreadMessage(msg);
-}
-
-void SIM_GX_TextureManager_LoadTexObj(GXTexObj* obj, GXTexMapID map) {
-    //auto& manager = SIM::GX::TextureManager::GetInstance();
-//
-    //manager.LoadTexObj(obj, map);
-
-    SIM::GX::ThreadMessage msg;
-    msg.mType = SIM::GX::ThreadMessageType::LoadTexObj;
-
-    msg.mLoadTexObj.obj = obj;
-    msg.mLoadTexObj.map = map;
-    SIM::GX::SendThreadMessage(msg);
 }

@@ -399,6 +399,84 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
                   //s.channelId = (chanHw < 8) ? r2c[chanHw] : GX_COLOR_NULL;
                 }
             } break;
+        // Texture Regs
+        // Mode0
+        case 0x80:
+        case 0x81:
+        case 0x82:
+        case 0x83:
+        case 0xA0:
+        case 0xA1:
+        case 0xA2:
+        case 0xA3:
+            ProcessBpTextureReg(regAddr, value);
+            break;
+        // Mode1
+        case 0x84:
+        case 0x85:
+        case 0x86:
+        case 0x87:
+        case 0xA4:
+        case 0xA5:
+        case 0xA6:
+        case 0xA7:
+            ProcessBpTextureReg(regAddr, value);
+            break;
+        // Image0
+        case 0x88:
+        case 0x89:
+        case 0x8A:
+        case 0x8B:
+        case 0xA8:
+        case 0xA9:
+        case 0xAA:
+        case 0xAB:
+            ProcessBpTextureReg(regAddr, value);
+            break;
+        // Image1
+        case 0x8C:
+        case 0x8D:
+        case 0x8E:
+        case 0x8F:
+        case 0xAC:
+        case 0xAD:
+        case 0xAE:
+        case 0xAF:
+            ProcessBpTextureReg(regAddr, value);
+            break;
+        // Image2
+        case 0x90:
+        case 0x91:
+        case 0x92:
+        case 0x93:
+        case 0xB0:
+        case 0xB1:
+        case 0xB2:
+        case 0xB3:
+            ProcessBpTextureReg(regAddr, value);
+            break;
+        // Image3
+        case 0x94:
+        case 0x95:
+        case 0x96:
+        case 0x97:
+        case 0xB4:
+        case 0xB5:
+        case 0xB6:
+        case 0xB7:
+            ProcessBpTextureReg(regAddr, value);
+            break;
+        // TLUT region TMEM offset
+        case 0x98:
+        case 0x99:
+        case 0x9A:
+        case 0x9B:
+        case 0xB8:
+        case 0xB9:
+        case 0xBA:
+        case 0xBB:
+            break;
+
         // TEV color combiner stages (0xC0, 0xC2, ... 0xDE)
         case 0xC0:
         case 0xC2:
@@ -523,6 +601,37 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
         default:
             break;
     }
+}
+
+void CommandProcessor::ProcessBpTextureReg(u8 reg, u32 value) {
+  const u32 idx = reg - 0x80;
+  const u32 kind = (idx & 0x1F) / 4;
+  const u32 texMapId = (idx & 3) + (idx >= 0x20 ? 4 : 0);
+  auto& gxState = GetGlobalState();
+  auto& texObj= gxState.GetLoadedTexObj(texMapId);
+  auto& texRegion = gxState.GetLoadedTexRegion(texMapId);
+  switch (kind) {
+  case 0: // Mode0
+    texObj.mode0 = value;
+    break;
+  case 1: // Mode1
+    texObj.mode1 = value;
+    break;
+  case 2: // Image0
+    texObj.image0 = value;
+    break;
+  case 3: // Image1
+    texRegion.image1 = value;
+    break;
+  case 4: // Image2
+    texRegion.image2 = value;
+    break;
+  case 5: // Image3
+    texObj.image3 = value;
+    break;
+  default:
+    break;
+  }
 }
 
 void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {

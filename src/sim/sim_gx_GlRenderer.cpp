@@ -7,6 +7,7 @@
 #include <simulator/glad/glad.h>
 #include <simulator/sim_gx_Geometry.hpp>
 #include <simulator/sim_gx_State.hpp>
+#include <simulator/sim_gx_TextureManager.hpp>
 #ifdef TRACY_ENABLE
 #include <tracy/Tracy.hpp>
 #endif
@@ -126,6 +127,7 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
     }
 
     Initialize();
+    TextureManager::GetInstance().ProcessTextures();
 
     const RenderVertex * expandedVertices;
     const RenderVertex* drawVertices = vertices;

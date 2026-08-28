@@ -12,6 +12,9 @@ void Init();
 void * GetExeStart();
 void * GetExeEnd();
 
+u32 CreateMemoryHandle(void * address);
+void * MemoryHandleToAddress(u32 handle);
+
 }
 
 #endif

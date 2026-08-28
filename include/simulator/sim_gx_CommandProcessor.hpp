@@ -63,6 +63,7 @@ class CommandProcessor {
   void HandleBeginPrimitive(GXPrimitive primitive, size_t numVerts);
   void ProcessOpcode(std::endian endian);
   void ProcessBpReg(u8 regAddr, u32 value);
+  void ProcessBpTextureReg(u8 reg, u32 value);
   void ProcessCpReg(u8 regAddr, u32 value);
   static inline u32 GetRegValue(u32 reg, u32 size, u32 shift) {
     return (reg >> shift) & ((1u << size) - 1u);

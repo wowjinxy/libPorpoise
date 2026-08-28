@@ -50,22 +50,24 @@ int MainThread(void * arg) {
                 } break;
             case ThreadMessageType::InitTexObj:
                 {
-                    auto& manager = SIM::GX::TextureManager::GetInstance();
-
-                    manager.InitTexObj(msg.mInitTexObj.obj, 
-                                       msg.mInitTexObj.imagePtr, 
-                                       msg.mInitTexObj.width, 
-                                       msg.mInitTexObj.height, 
-                                       msg.mInitTexObj.format, 
-                                       msg.mInitTexObj.wrapS, 
-                                       msg.mInitTexObj.wrapT, 
-                                       msg.mInitTexObj.mipmap);
+                    // Deprecated
+                    //auto& manager = SIM::GX::TextureManager::GetInstance();
+//
+                    //manager.InitTexObj(msg.mInitTexObj.obj, 
+                    //                   msg.mInitTexObj.imagePtr, 
+                    //                   msg.mInitTexObj.width, 
+                    //                   msg.mInitTexObj.height, 
+                    //                   msg.mInitTexObj.format, 
+                    //                   msg.mInitTexObj.wrapS, 
+                    //                   msg.mInitTexObj.wrapT, 
+                    //                   msg.mInitTexObj.mipmap);
                 } break;
             case ThreadMessageType::LoadTexObj:
                 {
-                    auto& manager = SIM::GX::TextureManager::GetInstance();
+                    // deprecated
+                    //auto& manager = SIM::GX::TextureManager::GetInstance();
 
-                    manager.LoadTexObj(msg.mLoadTexObj.obj, msg.mLoadTexObj.map);
+                    //manager.LoadTexObj(msg.mLoadTexObj.obj, msg.mLoadTexObj.map);
                 } break;
             case ThreadMessageType::TakeRenderContext:
                 {

@@ -1,6 +1,7 @@
 #ifndef LIBPORPOISE_SIM_GX_TEXTURE_MANAGER_HPP
 #define LIBPORPOISE_SIM_GX_TEXTURE_MANAGER_HPP
 
+#include <array>
 #include <unordered_map>
 
 #include <dolphin/types.h>
@@ -12,12 +13,11 @@ namespace SIM::GX {
 class Texture {
  public:
   Texture();
-  Texture(GXTexObjPriv& obj);
   ~Texture();
 
-  const GXTexObjPriv& GetGxTexObj();
   inline u32 GetGlTextureId() {return mGlTextureId;}
   inline bool GetIsConvertedToGl() {return mTextureBuf != nullptr;}
+  size_t GetSourceBufSize();
 
   inline void SetMipmap(u8 mipmap) {mMipmap = mipmap;}
   inline void SetWidth(u16 width) {mWidth = width;}
@@ -31,14 +31,15 @@ class Texture {
   void Activate(GXTexMapID mapId);
   void ConvertToGl();
  
- private:
-  GXTexObjPriv mGxTexObj;
+
   u8 mMipmap;
   u16 mWidth;
   u16 mHeight;
   GXTexWrapMode mWrapS;
   GXTexWrapMode mWrapT;
   u32 mGlTextureId; 
+  GXTexFmt mSourceFormat;
+  u8 * mSourceData;
   u8 * mTextureBuf; /* Buffer to store the converted texture.*/
 };
 
@@ -47,11 +48,14 @@ class TextureManager {
   TextureManager();
   static TextureManager& GetInstance();
 
-  void InitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFmt format, GXTexWrapMode wrap_s, GXTexWrapMode wrap_t, u8 mipmap);
-  void LoadTexObj(GXTexObj* obj, GXTexMapID map);
+  void ProcessTextures();
 
  private:
-  std::unordered_map<void *, Texture> mTextureCache;
+  std::array<Texture, GX_MAX_TEXMAP> mLoadedTextures = {};
+  
+  // Converted texture data is hashed by the CRC of the
+  // source texture data
+  std::unordered_map<u32, Texture> mTextureCache;
   
 };
 

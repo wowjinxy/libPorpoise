@@ -119,6 +119,8 @@ class GlobalState {
   inline TexGenConfig* GetTexGenArray() {return mTexGenConfigs.data(); };
   inline float* GetInitialTevColorsArray() {return mInitialTevColors[0].data(); };
   inline std::array<float, 4> GetTevColor(u8 reg) const {return mInitialTevColors[reg];};
+  inline GXTexObjPriv& GetLoadedTexObj(u8 texMap) { return mLoadedTexObjs[texMap]; };
+  inline GXTexRegionPriv& GetLoadedTexRegion(u8 texMap) { return mLoadedTexRegions[texMap]; };
 
   void Reset();
   inline void SetBpRegCache(u8 regId, u32 value) {
@@ -182,6 +184,8 @@ class GlobalState {
   std::array<GXTexMapID, GX_MAX_TEVSTAGE> mTevTexMaps;
   std::array<TexGenConfig, GX_MAX_TEXCOORD> mTexGenConfigs = {};
   std::unordered_set<void*> mNativeEndianDisplayLists;
+  std::array<GXTexObjPriv, GX_MAX_TEXMAP> mLoadedTexObjs = {};
+  std::array<GXTexRegionPriv, GX_MAX_TEXMAP> mLoadedTexRegions = {};
 };
 
 void InitGlobalState();

@@ -3,6 +3,7 @@
 
 #ifdef LIBPORPOISE_PORT
 #include <simulator/sim_gx_TextureManager.h>
+#include <simulator/sim_memory.h>
 #endif
 
 u8 GXTexMode0Ids[8]  = { 0x80, 0x81, 0x82, 0x83, 0xA0, 0xA1, 0xA2, 0xA3 };
@@ -215,7 +216,11 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFm
 	SET_REG_FIELD(0x241, t->image0, 10, 10, height - 1);
 	SET_REG_FIELD(0x242, t->image0, 4, 20, format & 0xF);
 	OSAssertMsgLine(0x248, ((u32)image_ptr & 0x1F) == 0, "%s: %s pointer not aligned to 32B", "GXInitTexObj", "image");
+	#ifdef LIBPORPOISE_PORT
+	imageBase = SIM_Memory_CreateMemoryHandle(image_ptr);
+	#else
 	imageBase = (u32)((u32)image_ptr >> 5) & 0x01FFFFFF;
+	#endif
 	SET_REG_FIELD(0x24A, t->image3, 21, 0, imageBase);
 	switch (format & 0xF) {
 	case 0:
@@ -272,10 +277,6 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height, GXTexFm
 	colC         = (height + (1 << colT) - 1) >> colT;
 	t->loadCount = (rowC * colC) & 0x7FFF;
 	t->flags |= 2;
-
-	#ifdef LIBPORPOISE_PORT
-	SIM_GX_TextureManager_InitTexObj(obj, image_ptr, width, height, format, wrap_s, wrap_t, mipmap);
-	#endif
 }
 
 /**
@@ -351,7 +352,11 @@ void GXInitTexObjData(GXTexObj* obj, void* image_ptr)
 	OSAssertMsgLine(0x2F9, obj, "Texture Object Pointer is null");
 	CHECK_GXBEGIN(0x2FB, "GXInitTexObjData");
 	OSAssertMsgLine(0x2FE, ((u32)image_ptr & 0x1F) == 0, "%s: %s pointer not aligned to 32B", "GXInitTexObjData", "image");
+	#ifdef LIBPORPOISE_PORT
+	imageBase = SIM_Memory_CreateMemoryHandle(image_ptr);
+	#else
 	imageBase = ((u32)image_ptr >> 5) & 0x01FFFFFF;
+	#endif
 	SET_REG_FIELD(0x301, t->image3, 21, 0, imageBase);
 }
 
@@ -668,10 +673,6 @@ void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion* region, GXTexMapID id)
 	SET_REG_FIELD(0x407, r->image2, 8, 24, GXTexImage2Ids[id]);
 	SET_REG_FIELD(0x408, t->image3, 8, 24, GXTexImage3Ids[id]);
 
-#ifdef LIBPORPOISE_PORT
-	// TODO: ensure display lists will be supported by this intercepted API!
-	SIM_GX_TextureManager_LoadTexObj(obj, id);
-#else
 	GX_WRITE_RAS_REG(t->mode0);
 	GX_WRITE_RAS_REG(t->mode1);
 	GX_WRITE_RAS_REG(t->image0);
@@ -694,7 +695,6 @@ void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion* region, GXTexMapID id)
 	gx->bpSent = GX_FALSE;
 #else
 	gx->bpSent = GX_TRUE;
-#endif
 #endif
 }
 
