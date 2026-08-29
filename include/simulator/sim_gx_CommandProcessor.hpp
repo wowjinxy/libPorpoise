@@ -85,6 +85,7 @@ class CommandProcessor {
   GXCompCnt mColorComponent = GX_COMPCNT_NULL;
   GXCompCnt mTexCoordComponent = GX_COMPCNT_NULL;
   GXVtxFmt mLastVertexFormatIdx = GX_VTXFMT0;
+  void * mTlutLoadAddr = nullptr;
 };
 
 

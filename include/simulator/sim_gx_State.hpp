@@ -28,6 +28,12 @@ struct VertexArray {
     int mStride = 0;
 };
 
+struct Tlut {
+  u16 mNumEntries;
+  GXTlutFmt mFormat;
+  void * mSourceAddress;
+};
+
 // NOTE: this must match exactly with the struct in fragment.glsl
 // otherwise the shader will not work!
 // Make sure to update the values in the shader if you change them here!
@@ -121,6 +127,8 @@ class GlobalState {
   inline std::array<float, 4> GetTevColor(u8 reg) const {return mInitialTevColors[reg];};
   inline GXTexObjPriv& GetLoadedTexObj(u8 texMap) { return mLoadedTexObjs[texMap]; };
   inline GXTexRegionPriv& GetLoadedTexRegion(u8 texMap) { return mLoadedTexRegions[texMap]; };
+  inline Tlut& GetLoadedTlut(u8 tlutName) { return mLoadedTluts[tlutName]; };
+  inline u8 GetTlutAssignment(GXTexMapID texMap) { return mTlutAssignments[texMap]; };
 
   void Reset();
   inline void SetBpRegCache(u8 regId, u32 value) {
@@ -151,6 +159,7 @@ class GlobalState {
   inline void SetNumTevStages(u8 numTevStages) { mNumTevStages = numTevStages; };
   inline void SetCullMode(GXCullMode cullMode) { mCullMode = cullMode; };
   inline void SetTevTexMap(u8 tevStage, GXTexMapID texMap) { mTevTexMaps[tevStage] = texMap; };
+  inline void SetTlutAssignment(GXTexMapID texMap, u8 tlutName) { mTlutAssignments[texMap] = tlutName; };
   void SetTevColor(u8 reg, std::array<float, 4>& color);
   void AddNativeEndianDisplayList(void * displayListPtr);
   bool IsDisplayListNativeEndian(void * displayListPtr);
@@ -186,6 +195,8 @@ class GlobalState {
   std::unordered_set<void*> mNativeEndianDisplayLists;
   std::array<GXTexObjPriv, GX_MAX_TEXMAP> mLoadedTexObjs = {};
   std::array<GXTexRegionPriv, GX_MAX_TEXMAP> mLoadedTexRegions = {};
+  std::array<Tlut, GX_MAX_TLUT> mLoadedTluts = {};
+  std::array<u8, GX_MAX_TEXMAP> mTlutAssignments = {};
 };
 
 void InitGlobalState();

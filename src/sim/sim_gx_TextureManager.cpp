@@ -10,8 +10,67 @@
 
 static SIM::GX::TextureManager sGXTextureManager = {};
 
+static inline u32 DecodeRGB5A3(u16 v)
+{
+    if (v & 0x8000)
+    {
+        // RGB555
+        u8 r = ((v >> 10) & 0x1F) * 255 / 31;
+        u8 g = ((v >> 5) & 0x1F) * 255 / 31;
+        u8 b = (v & 0x1F) * 255 / 31;
+
+        return r | (g << 8) | (b << 16) | 0xFF000000;
+    }
+
+    u8 a = ((v >> 12) & 0x7) * 255 / 7;
+    u8 r = ((v >> 8) & 0xF) * 255 / 15;
+    u8 g = ((v >> 4) & 0xF) * 255 / 15;
+    u8 b = (v & 0xF) * 255 / 15;
+
+    return r | (g << 8) | (b << 16) | (a << 24);
+}
+
+// TLUT Indexing
+static u32 GetTlutColor(u16 indexIn, GXTexMapID texMap) {
+    auto& gxState = SIM::GX::GetGlobalState();
+
+    u32 tlutName = gxState.GetTlutAssignment(texMap);
+
+    u32 colorOut = 0;
+
+    if(tlutName < GX_MAX_TLUT_ALL) {
+        auto& tlut = gxState.GetLoadedTlut(tlutName);
+        u16 * tlutPtr = (u16*)tlut.mSourceAddress;
+        u16 colorIn = tlutPtr[indexIn];
+        switch(tlut.mFormat) {
+            case GX_TL_IA8:
+                {
+                    colorOut = (colorIn & 0xFF) | ((colorIn & 0xFF) << 8) | ((colorIn & 0xFF) << 16);
+                    u32 alpha = ((colorIn & 0xFF00) >> 8);
+                    colorOut |= (alpha << 24);
+                }
+                break;
+            case GX_TL_RGB565:
+                {
+                    u8 r = (colorIn & 0xF8) >> 11;
+                    u8 g = (colorIn & 0x07E0) >> 5;
+                    u8 b = (colorIn & 0x1F);
+
+                    colorOut = r | (g << 8) | (b << 16) | (0xFF < 24);
+                }
+                break;
+            default:
+            case GX_TL_RGB5A3:
+                colorOut = DecodeRGB5A3(colorIn);
+                break;
+        }
+    }
+
+    return colorOut;
+}
+
 // Texture conversion functions
-static void ByteSwapRGB565(u8 * in, u8* out, u16 width, u16 height) {
+static void ByteSwapRGB565(u8 * in, u8* out, u16 width, u16 height, GXTexMapID texMap) {
     // 4x4 tiled blocks, 16bpp
     const int blockW = 4, blockH = 4;
     int bw = (width + blockW - 1) / blockW;
@@ -43,7 +102,7 @@ static void ByteSwapRGB565(u8 * in, u8* out, u16 width, u16 height) {
     }
 }
 
-static void ByteSwapRGBA(u8 * in, u8 * out, u16 width, u16 height) {
+static void ByteSwapRGBA(u8 * in, u8 * out, u16 width, u16 height, GXTexMapID texMap) {
     // 4x4 tiled blocks, 32bpp (two passes per block: AR then GB)
     const int blockW = 4, blockH = 4;
     int bw = (width + blockW - 1) / blockW;
@@ -74,7 +133,7 @@ static void ByteSwapRGBA(u8 * in, u8 * out, u16 width, u16 height) {
     }
 }
 
-static void ConvertI4(u8* in, u8 * out, u16 width, u16 height) {
+static void ConvertI4Generic(u8* in, u8 * out, u16 width, u16 height, GXTexMapID texMap, bool isIndexed) {
     // 8x8 tiled blocks, 4bpp (2 pixels per byte)
     const int blockW = 8, blockH = 8;
     int bw = (width + blockW - 1) / blockW;
@@ -97,11 +156,19 @@ static void ConvertI4(u8* in, u8 * out, u16 width, u16 height) {
 
                     if (px0 < width && py < height) {
                         u8 alpha = (upper > 0) ? 0xFF : 0;
-                        outPtr[py * width + px0] = (upper) | (upper << 8) | (upper << 16) | (alpha << 24);
+                        if(isIndexed) {
+                            outPtr[py * width + px0] = GetTlutColor(upper, texMap);
+                        } else {
+                            outPtr[py * width + px0] = (upper) | (upper << 8) | (upper << 16) | (alpha << 24);
+                        }
                     }
                     if (px1 < width && py < height) {
                         u8 alpha = (lower > 0) ? 0xFF : 0;
-                        outPtr[py * width + px1] = (lower) | (lower << 8) | (lower << 16) | (alpha << 24);
+                        if(isIndexed) {
+                            outPtr[py * width + px1] = GetTlutColor(lower, texMap);
+                        } else {
+                            outPtr[py * width + px1] = (lower) | (lower << 8) | (lower << 16) | (alpha << 24);
+                        }
                     }
                 }
             }
@@ -109,7 +176,17 @@ static void ConvertI4(u8* in, u8 * out, u16 width, u16 height) {
     }
 }
 
-static void ConvertI8(u8* in, u8 * out, u16 width, u16 height) {
+// Non-color-indexed version
+static void ConvertI4(u8* in, u8 * out, u16 width, u16 height, GXTexMapID texMap) {
+    ConvertI4Generic(in, out, width, height, texMap, false);
+}
+
+// Color-indexed version
+static void ConvertC4(u8* in, u8 * out, u16 width, u16 height, GXTexMapID texMap) {
+    ConvertI4Generic(in, out, width, height, texMap, true);
+}
+
+static void ConvertI8Generic(u8* in, u8 * out, u16 width, u16 height, GXTexMapID texMap, bool isIndexed) {
     // 8x4 tiled blocks, 8bpp
     const int blockW = 8, blockH = 4;
     int bw = (width + blockW - 1) / blockW;
@@ -127,7 +204,11 @@ static void ConvertI8(u8* in, u8 * out, u16 width, u16 height) {
                     int py = by * blockH + y;
                     if (px < width && py < height) {
                         u8 alpha = (inputVal > 0) ? 0xFF : 0;
-                        outPtr[py * width + px] = (inputVal) | (inputVal << 8) | (inputVal << 16) | (alpha << 24);
+                        if(isIndexed) {
+                            outPtr[py * width * px] = GetTlutColor(inputVal, texMap);
+                        } else {
+                            outPtr[py * width + px] = (inputVal) | (inputVal << 8) | (inputVal << 16) | (alpha << 24);
+                        }
                     }
                 }
             }
@@ -135,7 +216,17 @@ static void ConvertI8(u8* in, u8 * out, u16 width, u16 height) {
     }
 }
 
-static void ConvertIA4(u8* in, u8* out, u16 width, u16 height)
+// Non-color-indexed version
+static void ConvertI8(u8* in, u8 * out, u16 width, u16 height, GXTexMapID texMap) {
+    ConvertI8Generic(in, out, width, height, texMap, false);
+}
+
+// Color-indexed version
+static void ConvertC8(u8* in, u8 * out, u16 width, u16 height, GXTexMapID texMap) {
+    ConvertI8Generic(in, out, width, height, texMap, true);
+}
+
+static void ConvertIA4(u8* in, u8* out, u16 width, u16 height, GXTexMapID texMap)
 {
     const int blockW = 8, blockH = 4;
 
@@ -178,7 +269,7 @@ static void ConvertIA4(u8* in, u8* out, u16 width, u16 height)
     }
 }
 
-static void ConvertIA8(u8* in, u8* out, u16 width, u16 height)
+static void ConvertIA8(u8* in, u8* out, u16 width, u16 height, GXTexMapID texMap)
 {
     const int blockW = 4;
     const int blockH = 4;
@@ -217,27 +308,7 @@ static void ConvertIA8(u8* in, u8* out, u16 width, u16 height)
     }
 }
 
-static inline u32 DecodeRGB5A3(u16 v)
-{
-    if (v & 0x8000)
-    {
-        // RGB555
-        u8 r = ((v >> 10) & 0x1F) * 255 / 31;
-        u8 g = ((v >> 5) & 0x1F) * 255 / 31;
-        u8 b = (v & 0x1F) * 255 / 31;
-
-        return r | (g << 8) | (b << 16) | 0xFF000000;
-    }
-
-    u8 a = ((v >> 12) & 0x7) * 255 / 7;
-    u8 r = ((v >> 8) & 0xF) * 255 / 15;
-    u8 g = ((v >> 4) & 0xF) * 255 / 15;
-    u8 b = (v & 0xF) * 255 / 15;
-
-    return r | (g << 8) | (b << 16) | (a << 24);
-}
-
-static void ConvertRGB5A3(u8* in, u8* out, u16 width, u16 height)
+static void ConvertRGB5A3(u8* in, u8* out, u16 width, u16 height, GXTexMapID texMap)
 {
     const int blockW = 4;
     const int blockH = 4;
@@ -357,7 +428,7 @@ static void DecodeDXT1Block(
     }
 }
 
-static void ConvertCMPR(u8* in, u8* out, u16 width, u16 height)
+static void ConvertCMPR(u8* in, u8* out, u16 width, u16 height, GXTexMapID texMap)
 {
     const int tileW = 8;
     const int tileH = 8;
@@ -459,24 +530,29 @@ void Texture::Activate(GXTexMapID mapId) {
     glBindTexture(GL_TEXTURE_2D, mGlTextureId);
 }
 
-void Texture::ConvertToGl() {
+void Texture::ConvertToGl(GXTexMapID mapId) {
     // Determine output format
     size_t outputBytesPerPixel = 4;
     GLenum outputGlInternalFormat = GL_RGBA8;
     GLenum outputFormat = GL_RGBA;
     GLenum outputType = GL_UNSIGNED_BYTE;
 
-    void (*conversionFunc)(u8*, u8*, u16, u16) = nullptr;
+    void (*conversionFunc)(u8*, u8*, u16, u16, GXTexMapID) = nullptr;
 
     switch(mSourceFormat) {
         case GX_TF_I4:
-        case GX_TF_C4:
             // This is a special case since there are two pixels per byte
             conversionFunc = ConvertI4;
             break;
+        case GX_TF_C4:
+            // This is a special case since there are two pixels per byte
+            conversionFunc = ConvertC4;
+            break;
         case GX_TF_I8:
-        case GX_TF_C8:
             conversionFunc = ConvertI8;
+            break;
+        case GX_TF_C8:
+            conversionFunc = ConvertC8;
             break;
         case GX_TF_IA4:
             // Intensity + alpha 8 bits(4+4).
@@ -535,7 +611,7 @@ void Texture::ConvertToGl() {
 
     // Perform texture conversion
     if(conversionFunc) {
-        conversionFunc(mSourceData, mTextureBuf, mWidth, mHeight);
+        conversionFunc(mSourceData, mTextureBuf, mWidth, mHeight, mapId);
     } else {
         // No conversion function defined, just perform a copy
         // Note that this will likely result in an incorrect texture
@@ -619,7 +695,7 @@ void TextureManager::ProcessTextures() {
         } else {
             // Convert the texture and then bind
             tempTexture.GenGlTexture();
-            tempTexture.ConvertToGl();
+            tempTexture.ConvertToGl(static_cast<GXTexMapID>(texMap));
             mTextureCache[textureCRC] = tempTexture;
             tempTexture.Activate(static_cast<GXTexMapID>(texMap));
         }

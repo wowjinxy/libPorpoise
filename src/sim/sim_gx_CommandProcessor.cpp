@@ -7,6 +7,7 @@
 #include <simulator/sim_gx_State.hpp>
 #include <simulator/sim.h>
 #include <simulator/byteswap.h>
+#include <simulator/sim_memory.hpp>
 
 static bool IsByteswapRequired(std::endian endian) {
     return (std::endian::native != endian);
@@ -399,6 +400,22 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
                   //s.channelId = (chanHw < 8) ? r2c[chanHw] : GX_COLOR_NULL;
                 }
             } break;
+        // TLUT Load
+        case 0x64:
+            {
+                u32 memHndl = GetRegValue(value, 21, 0);
+                mTlutLoadAddr = SIM::Memory::MemoryHandleToAddress(memHndl);
+            } break;
+        // TLUT load part 2
+        case 0x65:
+            {
+                const auto tlutName = GetRegValue(value, 10, 0);
+                if (tlutName < GX_MAX_TLUT_ALL) {
+                    auto& tlut = gxState.GetLoadedTlut(tlutName);
+                    tlut.mSourceAddress = mTlutLoadAddr;
+                    tlut.mNumEntries = static_cast<u16>(GetRegValue(value, 10, 10) + 1);
+                }
+            } break;
         // Texture Regs
         // Mode0
         case 0x80:
@@ -475,6 +492,16 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
         case 0xB9:
         case 0xBA:
         case 0xBB:
+            {
+                const u32 idx = regAddr - 0x80;
+                const u32 texMapId = (idx & 3) + (idx >= 0x20 ? 4 : 0);
+
+                u32 tlutName = GetRegValue(value, 5, 0);
+                gxState.SetTlutAssignment(static_cast<GXTexMapID>(texMapId), tlutName);
+
+                auto& tlut = gxState.GetLoadedTlut(tlutName);
+                tlut.mFormat = static_cast<GXTlutFmt>(GetRegValue(value, 2, 10));
+            }
             break;
 
         // TEV color combiner stages (0xC0, 0xC2, ... 0xDE)

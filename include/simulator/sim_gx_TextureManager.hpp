@@ -29,7 +29,7 @@ class Texture {
   void DeleteGlTexture();
   
   void Activate(GXTexMapID mapId);
-  void ConvertToGl();
+  void ConvertToGl(GXTexMapID mapId);
  
 
   u8 mMipmap;

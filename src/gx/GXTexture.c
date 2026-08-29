@@ -727,7 +727,12 @@ void GXInitTlutObj(GXTlutObj* tlut_obj, void* lut, GXTlutFmt fmt, u16 n_entries)
 	OSAssertMsgLine(0x458, ((u32)lut & 0x1F) == 0, "%s: %s pointer not aligned to 32B", "GXInitTlutObj", "Tlut");
 	t->tlut = 0;
 	SET_REG_FIELD(0x45B, t->tlut, 2, 10, fmt);
+	#ifdef LIBPORPOISE_PORT
+	u32 memHndl = SIM_Memory_CreateMemoryHandle(lut);
+	SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, memHndl);
+	#else
 	SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, ((u32)lut & 0x3FFFFFFF) >> 5);
+	#endif
 	SET_REG_FIELD(0x45D, t->loadTlut0, 8, 24, 0x64);
 	t->numEntries = n_entries;
 }
@@ -796,6 +801,11 @@ void GXLoadTlut(GXTlutObj* tlut_obj, u32 tlut_name)
 	CHECK_GXBEGIN(0x4A6, "GXLoadTlut");
 	OSAssertMsgLine(0x4A7, gx->tlutRegionCallback, "%s: Tex/Tlut Region Callback not set", "GXLoadTlut");
 	r = (GXTlutRegionPriv*)gx->tlutRegionCallback(tlut_name);
+	#ifdef LIBPORPOISE_PORT
+  	SET_REG_FIELD(0, r->loadTlut1, 10, 0, tlut_name);
+  	SET_REG_FIELD(0, r->loadTlut1, 10, 10, t->numEntries - 1);
+  	SET_REG_FIELD(0, r->loadTlut1, 8, 24, 0x65);
+	#endif
 	OSAssertMsgLine(0x4A9, r, "%s: Tex/Tlut Region Callback returns NULL", "GXLoadTlut");
 	__GXFlushTextureState();
 	GX_WRITE_RAS_REG(t->loadTlut0);
