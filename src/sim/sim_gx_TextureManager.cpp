@@ -96,10 +96,12 @@ static void ConvertI4(u8* in, u8 * out, u16 width, u16 height) {
                     int py = by * blockH + y;
 
                     if (px0 < width && py < height) {
-                        outPtr[py * width + px0] = (upper) | (upper << 8) | (upper << 16) | (upper << 24);
+                        u8 alpha = (upper > 0) ? 0xFF : 0;
+                        outPtr[py * width + px0] = (upper) | (upper << 8) | (upper << 16) | (alpha << 24);
                     }
                     if (px1 < width && py < height) {
-                        outPtr[py * width + px1] = (lower) | (lower << 8) | (lower << 16) | (lower << 24);
+                        u8 alpha = (lower > 0) ? 0xFF : 0;
+                        outPtr[py * width + px1] = (lower) | (lower << 8) | (lower << 16) | (alpha << 24);
                     }
                 }
             }
@@ -124,7 +126,8 @@ static void ConvertI8(u8* in, u8 * out, u16 width, u16 height) {
                     int px = bx * blockW + x;
                     int py = by * blockH + y;
                     if (px < width && py < height) {
-                        outPtr[py * width + px] = (inputVal) | (inputVal << 8) | (inputVal << 16) | (inputVal << 24);
+                        u8 alpha = (inputVal > 0) ? 0xFF : 0;
+                        outPtr[py * width + px] = (inputVal) | (inputVal << 8) | (inputVal << 16) | (alpha << 24);
                     }
                 }
             }
