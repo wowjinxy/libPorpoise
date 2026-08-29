@@ -548,8 +548,18 @@ void Texture::ConvertToGl() {
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    if(mWrapS == GX_MIRROR) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
+    } else {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    }
+
+    if(mWrapT == GX_MIRROR) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
+    } else {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    }
 
     glTexImage2D(GL_TEXTURE_2D, 0, outputGlInternalFormat, mWidth, mHeight, 0, outputFormat, outputType, mTextureBuf);
     
@@ -587,6 +597,9 @@ void TextureManager::ProcessTextures() {
         if(tempTexture.mSourceData == nullptr) {
             continue; /* TODO: maybe unbind in gl? */
         }
+
+        tempTexture.mWrapS = static_cast<GXTexWrapMode>(GET_REG_FIELD(texObj.mode0, 2, 0));
+        tempTexture.mWrapT = static_cast<GXTexWrapMode>(GET_REG_FIELD(texObj.mode0, 2, 0));
         tempTexture.mWidth = GET_REG_FIELD(texObj.image0, 10, 0) + 1;
         tempTexture.mHeight = GET_REG_FIELD(texObj.image0, 10, 10) + 1;
         tempTexture.mSourceFormat = static_cast<GXTexFmt>(GET_REG_FIELD(texObj.image0, 4, 20));
