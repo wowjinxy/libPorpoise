@@ -129,7 +129,12 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
     }
 
     Initialize();
-    TextureManager::GetInstance().ProcessTextures();
+    auto& gxState = GetGlobalState();
+
+    if(gxState.GetIsTextureDirty()) {
+        TextureManager::GetInstance().ProcessTextures();
+        gxState.SetTextureDirty(false);
+    }
 
     const RenderVertex * expandedVertices;
     const RenderVertex* drawVertices = vertices;
@@ -154,7 +159,6 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
         return;
     }
 
-    auto& gxState = GetGlobalState();
     glUseProgram(shaderProgram);
     const GLint projectionLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_projection");

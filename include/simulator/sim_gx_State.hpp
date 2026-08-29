@@ -129,6 +129,8 @@ class GlobalState {
   inline GXTexRegionPriv& GetLoadedTexRegion(u8 texMap) { return mLoadedTexRegions[texMap]; };
   inline Tlut& GetLoadedTlut(u8 tlutName) { return mLoadedTluts[tlutName]; };
   inline u8 GetTlutAssignment(GXTexMapID texMap) { return mTlutAssignments[texMap]; };
+  inline bool GetIsTextureDirty() { return mTextureDirty;};
+  inline void SetTextureDirty(bool dirty) { mTextureDirty = dirty; };
 
   void Reset();
   inline void SetBpRegCache(u8 regId, u32 value) {
@@ -197,6 +199,7 @@ class GlobalState {
   std::array<GXTexRegionPriv, GX_MAX_TEXMAP> mLoadedTexRegions = {};
   std::array<Tlut, GX_MAX_TLUT> mLoadedTluts = {};
   std::array<u8, GX_MAX_TEXMAP> mTlutAssignments = {};
+  bool mTextureDirty;
 };
 
 void InitGlobalState();

@@ -501,6 +501,7 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
 
                 auto& tlut = gxState.GetLoadedTlut(tlutName);
                 tlut.mFormat = static_cast<GXTlutFmt>(GetRegValue(value, 2, 10));
+                gxState.SetTextureDirty(true);
             }
             break;
 
@@ -659,6 +660,7 @@ void CommandProcessor::ProcessBpTextureReg(u8 reg, u32 value) {
   default:
     break;
   }
+  gxState.SetTextureDirty(true);
 }
 
 void CommandProcessor::ProcessCpReg(u8 regAddr, u32 value) {
