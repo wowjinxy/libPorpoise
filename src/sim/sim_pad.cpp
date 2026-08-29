@@ -60,17 +60,25 @@ void HandleKey(SDL_Keycode key, bool isDown) {
             SetButtonBit(button, PAD_BUTTON_UP, isDown);
             break;
 
+        case SDLK_RETURN:
+            SetButtonBit(button, PAD_BUTTON_START, isDown);
+            break;
+
         case SDLK_w:
             SetStick(sStatus[0].stickY, 127, isDown);
+            break;
 
         case SDLK_s:
             SetStick(sStatus[0].stickY, -127, isDown);
+            break;
 
         case SDLK_a:
             SetStick(sStatus[0].stickX, -127, isDown);
+            break;
 
         case SDLK_d:
             SetStick(sStatus[0].stickX, 127, isDown);
+            break;
 
         default:
             break;
