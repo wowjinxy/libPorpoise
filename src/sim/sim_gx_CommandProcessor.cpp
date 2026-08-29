@@ -544,6 +544,7 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
                   s.mBias = static_cast<GXTevBias>(GetRegValue(value, 2, 16));
                   s.mScale = static_cast<GXTevScale>(GetRegValue(value, 2, 20));
                 }
+                gxState.SetTevDirty(true);
             } break;
         // TEV alpha combiner stages (0xC1, 0xC3, ... 0xDF)
         case 0xC1:
@@ -586,6 +587,7 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
                   //s.alphaOp.bias = static_cast<GXTevBias>(GetRegValue(value, 2, 16));
                   //s.alphaOp.scale = static_cast<GXTevScale>(GetRegValue(value, 2, 20));
                 }
+                gxState.SetTevDirty(true);
             } break;
         // Tev Regs (0xE0-0xE7)
         case 0xE0:
@@ -625,6 +627,7 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
                     gxState.SetTevColor(idx, color);
                   }
                 }
+                gxState.SetTevDirty(true);
             } break;
         default:
             break;

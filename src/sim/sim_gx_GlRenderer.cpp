@@ -185,8 +185,8 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
         1,
         GL_TRUE,
         gxState.GetPositionMatrix().data());
+    
     // TODO: support all texture matrices
-
     for(int i=0; i<1;i++) {
         glUniformMatrix4fv(
             mTextureMtxLocation,
@@ -201,10 +201,13 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
     
     glUniform1iv(mTevTexMapLocation, GX_MAX_TEVSTAGE, (const GLint*)gxState.GetTevTexMapArray());
 
-    glBindBuffer(GL_UNIFORM_BUFFER, mTevStageUniformBuffer);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(TevStageConfig) * GX_MAX_TEVSTAGE, gxState.GetTevStageConfigArray());
-    glBindBufferBase(GL_UNIFORM_BUFFER, mTevStageConfigsLocation, mTevStageUniformBuffer);
-    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    if(gxState.GetTevDirty()) {
+        glBindBuffer(GL_UNIFORM_BUFFER, mTevStageUniformBuffer);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(TevStageConfig) * GX_MAX_TEVSTAGE, gxState.GetTevStageConfigArray());
+        glBindBufferBase(GL_UNIFORM_BUFFER, mTevStageConfigsLocation, mTevStageUniformBuffer);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+        gxState.SetTevDirty(false);
+    }
 
     glUniform4fv(mInitialTevColorsLocation, 4, gxState.GetInitialTevColorsArray());
 
