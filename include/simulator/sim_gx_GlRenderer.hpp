@@ -20,6 +20,18 @@ class GlRenderer {
   unsigned int mVertexArray = 0;
   unsigned int mVertexBuffer = 0;
   unsigned int mTevStageUniformBuffer = 0;
+
+  // Shader Uniform locations
+  int mProjectionLocation;
+  int mModelViewLocation;
+  int mTextureMtxLocation;
+  int mNumTexGenLocation;
+  int mTexGenLocation;
+  int mTevTexMapLocation;
+  int mTevStageConfigsLocation;
+  int mInitialTevColorsLocation;
+  int mNumTevStagesLocation;
+
 };
 
 GlRenderer& GetGlRenderer();
