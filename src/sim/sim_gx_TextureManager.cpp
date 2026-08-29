@@ -495,6 +495,14 @@ size_t Texture::GetSourceBufSize() {
         return (mWidth * mHeight) >> 1;
     }
 
+    if(mSourceFormat == GX_TF_CMPR) {
+        const int tileW = 8;
+        const int tileH = 8;
+        int tilesX = (mWidth  + tileW - 1) / tileW;
+        int tilesY = (mHeight + tileH - 1) / tileH;
+        return tilesX * tilesY * 8;
+    }
+
     int ratio = 1;
     switch (mSourceFormat) {
         case GX_TF_IA8:
@@ -505,9 +513,6 @@ size_t Texture::GetSourceBufSize() {
         case GX_TF_RGBA8:
         case GX_TF_Z24X8:
             ratio = 4;
-            break;
-        case GX_TF_CMPR:
-            //TODO: not sure how to calc size for this one
             break;
         default:
             break;
