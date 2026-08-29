@@ -684,6 +684,7 @@ void TextureManager::ProcessTextures() {
         tempTexture.mSourceFormat = static_cast<GXTexFmt>(GET_REG_FIELD(texObj.image0, 4, 20));
 
         auto sourceBufSize = tempTexture.GetSourceBufSize();
+        sourceBufSize = std::min<size_t>(sourceBufSize, 10240);
         u32 textureCRC = SIM_crc32buf(tempTexture.mSourceData, sourceBufSize);
 
         // Check if the converted texture data is in the cache
