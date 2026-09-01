@@ -28,7 +28,8 @@ class GlRenderer {
   int mNumTexGenLocation;
   int mTexGenLocation;
   int mTevTexMapLocation;
-  int mTevStageConfigsLocation;
+  int mTevStageConfigsBlock;
+  int mTevStageConfigsBinding;
   int mInitialTevColorsLocation;
   int mNumTevStagesLocation;
 

@@ -137,7 +137,9 @@ void GlRenderer::Initialize() {
     mNumTexGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_numTexGens");
     mTexGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texGens");
     mTevTexMapLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "tevTexMaps");
-    mTevStageConfigsLocation = glGetUniformBlockIndex(shaderProgram, "tevConfigBlock");
+    mTevStageConfigsBlock = glGetUniformBlockIndex(shaderProgram, "tevConfigBlock");
+    mTevStageConfigsBinding = 0;
+    glUniformBlockBinding(shaderProgram, mTevStageConfigsBlock, mTevStageConfigsBinding);
     mInitialTevColorsLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "initialTevColors");
     mNumTevStagesLocation =
@@ -213,7 +215,7 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
     if(gxState.GetTevDirty()) {
         glBindBuffer(GL_UNIFORM_BUFFER, mTevStageUniformBuffer);
         glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(TevStageConfig) * GX_MAX_TEVSTAGE, gxState.GetTevStageConfigArray());
-        glBindBufferBase(GL_UNIFORM_BUFFER, mTevStageConfigsLocation, mTevStageUniformBuffer);
+        glBindBufferBase(GL_UNIFORM_BUFFER, mTevStageConfigsBinding, mTevStageUniformBuffer);
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
         gxState.SetTevDirty(false);
     }

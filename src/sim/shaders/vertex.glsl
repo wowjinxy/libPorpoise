@@ -13,6 +13,17 @@ struct Light {
   vec4 mDistAtt;
 };
 
+struct ColorChannel {
+  vec4 mMaterialColor;
+  vec4 mAmbientColor;
+  uint mMaterialSource;
+  uint mAmbientSource;
+  uint mDiffuseFunction;
+  uint mAttnFunction;
+  uint mLightingEnabled;
+  uint mLightMask;
+};
+
 struct TexGenConfig {
   uint mMatrixId;
   uint mType;
@@ -23,7 +34,11 @@ uniform mat4 u_modelview;
 uniform mat4 u_textureMtx[10];
 uniform uint u_numTexGens;
 uniform TexGenConfig u_texGens[8 /* GX_MAX_TEXCOORD */];
-uniform Light u_lights[8 /*GX_MAX_LIGHTID*/];
+
+layout (std140) uniform lightConfigBlock {
+  uniform Light u_lights[8 /*GX_MAX_LIGHTID*/];
+  uniform ColorChannel u_colorChannels[4];
+};
 
 smooth out vec4 color0;
 smooth out vec2 gxTexCoords[8 /* GX_MAX_TEXCOORD */];
