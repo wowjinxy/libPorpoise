@@ -191,6 +191,7 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
         const u32 endAddress = address + static_cast<u32>(writableWords);
         RefreshPositionMatrices(address, endAddress);
         RefreshTextureMatrices(address, endAddress);
+        RefreshLights(address, endAddress);
     } else {
         // XF Registers
         u32 regAddr = address - 0x1000;
@@ -200,7 +201,60 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
             const u32 reg = regAddr + i;
 
 
-            if (reg == 0x20 && wordCount - i >= 7) {
+            if(reg == 0x09) {
+                // Num Chans
+                mNumChannels = dataWords[i];
+            } else if (reg >= 0x0A && reg <= 0x0D) {
+                // Channel color
+                const u32 channelNo = (reg - 0x0A) & 1;
+
+                u8* colorPtr = (u8*)(&dataWords[i]);
+                if(reg <= 0x0B) {
+                    mColorChannels[GX_COLOR0 + channelNo].mAmbientColor[0] = (float)(colorPtr[0]) / 255.0f;
+                    mColorChannels[GX_COLOR0 + channelNo].mAmbientColor[1] = (float)(colorPtr[1]) / 255.0f;
+                    mColorChannels[GX_COLOR0 + channelNo].mAmbientColor[2] = (float)(colorPtr[2]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[3] = (float)(colorPtr[3]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[0] = (float)(colorPtr[0]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[1] = (float)(colorPtr[1]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[2] = (float)(colorPtr[2]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[3] = (float)(colorPtr[3]) / 255.0f;
+                } else {
+                    mColorChannels[GX_COLOR0 + channelNo].mMaterialColor[0] = (float)(colorPtr[0]) / 255.0f;
+                    mColorChannels[GX_COLOR0 + channelNo].mMaterialColor[1] = (float)(colorPtr[1]) / 255.0f;
+                    mColorChannels[GX_COLOR0 + channelNo].mMaterialColor[2] = (float)(colorPtr[2]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[3] = (float)(colorPtr[3]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[0] = (float)(colorPtr[0]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[1] = (float)(colorPtr[1]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[2] = (float)(colorPtr[2]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[3] = (float)(colorPtr[3]) / 255.0f;
+                }
+            } else if(reg >= 0x0E && reg <= 0x11) {
+                // Channel Control
+                u32 chanId = reg - 0x0E;
+                if (chanId >= 4) {
+                  return;
+                }
+
+                auto& channel = mColorChannels[chanId];
+                u32 lightsLo = GetRegValue(dataWords[i], 4, 2);
+                u32 lightsHi = GetRegValue(dataWords[i], 4, 11);
+                channel.mLightMask = (lightsLo | (lightsHi << 4));
+
+                channel.mMaterialSource = static_cast<GXColorSrc>(GetRegValue(dataWords[i], 1, 0));
+                channel.mLightingEnabled = GetRegValue(dataWords[i], 1, 1) != 0;
+                channel.mAmbientSource = static_cast<GXColorSrc>(GetRegValue(dataWords[i], 1, 6));
+                channel.mDiffuseFunction = static_cast<GXDiffuseFn>(GetRegValue(dataWords[i], 2, 7));
+                // bit 9 = (attnFn != GX_AF_NONE), bit 10 = (attnFn != GX_AF_SPEC)
+                bool bit9 = GetRegValue(dataWords[i], 1, 9) != 0;
+                bool bit10 = GetRegValue(dataWords[i], 1, 10) != 0;
+                if (!bit10) {
+                  channel.mAttnFunction = GX_AF_SPEC;
+                } else if (!bit9) {
+                  channel.mAttnFunction = GX_AF_NONE;
+                } else {
+                  channel.mAttnFunction = GX_AF_SPOT;
+                }
+            } else if (reg == 0x20 && wordCount - i >= 7) {
                 // Projection matrix
                 const float p0 = WordToFloat(dataWords[i]);
                 const float p1 = WordToFloat(dataWords[i+1]);
@@ -302,6 +356,44 @@ void GlobalState::RefreshTextureMatrices(u32 firstAddress, u32 endAddress) {
             }
         }
         mTextureMatrixValid[slot] = true;
+    }
+}
+
+void GlobalState::RefreshLights(u32 firstAddress, u32 endAddress) {
+    for(auto lightId = 0; lightId < GX_MAX_LIGHT; lightId++) {
+        u32 lightAddr = 0x600 + (lightId * 0x10);
+        if((firstAddress > lightAddr + 0x10) || (endAddress < lightAddr)) {
+            continue;
+        }
+        auto& light = mLights[lightId];
+        u32 * lightXfPtr = &mXfMemory[lightAddr];
+
+        // Color
+        u8 * lightColorPtr = (u8*)(lightXfPtr+3);
+        light.mColor[0] = (float)lightColorPtr[0] / 255.0f;
+        light.mColor[1] = (float)lightColorPtr[1] / 255.0f;
+        light.mColor[2] = (float)lightColorPtr[2] / 255.0f;
+        light.mColor[3] = (float)lightColorPtr[3] / 255.0f;
+
+        // CosAtt
+        light.mCosAtt[0] = *(float*)(lightXfPtr+4);
+        light.mCosAtt[1] = *(float*)(lightXfPtr+5);
+        light.mCosAtt[2] = *(float*)(lightXfPtr+6);
+
+        // DistAtt
+        light.mDistAtt[0] = *(float*)(lightXfPtr+7);
+        light.mDistAtt[1] = *(float*)(lightXfPtr+8);
+        light.mDistAtt[2] = *(float*)(lightXfPtr+9);
+
+        // Position
+        light.mPosition[0] = *(float*)(lightXfPtr+10);
+        light.mPosition[1] = *(float*)(lightXfPtr+11);
+        light.mPosition[2] = *(float*)(lightXfPtr+12);
+
+        // Direction
+        light.mDirection[0] = *(float*)(lightXfPtr+13);
+        light.mDirection[1] = *(float*)(lightXfPtr+14);
+        light.mDirection[2] = *(float*)(lightXfPtr+15);
     }
 }
 

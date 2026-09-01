@@ -93,19 +93,28 @@ void GlRenderer::Initialize() {
         GL_FALSE,
         sizeof(RenderVertex),
         reinterpret_cast<void*>(offsetof(RenderVertex, position)));
-    //location = 1 in vec4 vertex_color
+    //location = 1 in vec3 normal
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(
         1,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, normal)));
+    //location = 2 in vec4 vertex_color
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(
+        2,
         4,
         GL_FLOAT,
         GL_FALSE,
         sizeof(RenderVertex),
         reinterpret_cast<void*>(offsetof(RenderVertex, color0)));
-    //location = 2 in vec2 texCoords
-    glEnableVertexAttribArray(2);
+    //location = 3 in vec2 texCoords
+    glEnableVertexAttribArray(3);
     glVertexAttribPointer(
-        2,
+        3,
         2,
         GL_FLOAT,
         GL_FALSE,

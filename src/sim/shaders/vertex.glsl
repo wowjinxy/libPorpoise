@@ -1,8 +1,17 @@
 R""(
 #version 330 core
 layout (location = 0) in vec3 position;
-layout (location = 1) in vec4 vertex_color;
-layout (location = 2) in vec2 texCoords;
+layout (location = 1) in vec3 normal;
+layout (location = 2) in vec4 vertex_color;
+layout (location = 3) in vec2 texCoords;
+
+struct Light {
+  vec4 mPosition;
+  vec4 mDirection;
+  vec4 mColor;
+  vec4 mCosAtt;
+  vec4 mDistAtt;
+};
 
 struct TexGenConfig {
   uint mMatrixId;
@@ -14,6 +23,7 @@ uniform mat4 u_modelview;
 uniform mat4 u_textureMtx[10];
 uniform uint u_numTexGens;
 uniform TexGenConfig u_texGens[8 /* GX_MAX_TEXCOORD */];
+uniform Light u_lights[8 /*GX_MAX_LIGHTID*/];
 
 smooth out vec4 color0;
 smooth out vec2 gxTexCoords[8 /* GX_MAX_TEXCOORD */];

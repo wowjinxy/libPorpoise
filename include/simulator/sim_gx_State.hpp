@@ -59,6 +59,25 @@ struct TexGenConfig {
   GXTexGenType mType;
 };
 
+struct Light {
+  float mPosition[4];
+  float mDirection[4];
+  float mColor[4];
+  float mCosAtt[4];
+  float mDistAtt[4];
+};
+
+struct ColorChannel {
+  float mMaterialColor[4];
+  float mAmbientColor[4];
+  GXColorSrc mMaterialSource;
+  GXColorSrc mAmbientSource;
+  GXDiffuseFn mDiffuseFunction;
+  GXAttnFn mAttnFunction;
+  u32 mLightingEnabled;
+  u32 mLightMask;
+};
+
 class GlobalState {
  public:
   GlobalState();
@@ -133,6 +152,8 @@ class GlobalState {
   inline void SetTextureDirty(bool dirty) { mTextureDirty = dirty; };
   inline bool GetTevDirty() { return mTevDirty; };
   inline void SetTevDirty(bool dirty) { mTevDirty = dirty; };
+  inline const Light* GetLightsArray() { return mLights.data(); };
+  inline Light& GetLight(GXLightID lightId) { return mLights[lightId]; };
 
   void Reset();
   inline void SetBpRegCache(u8 regId, u32 value) {
@@ -173,6 +194,7 @@ class GlobalState {
   static float WordToFloat(u32 word);
   void RefreshPositionMatrices(u32 firstAddress, u32 endAddress);
   void RefreshTextureMatrices(u32 firstAddress, u32 endAddress);
+  void RefreshLights(u32 firstAddress, u32 endAddress);
 
   GXVtxFmt mCurrentVertexFormat = GX_VTXFMT0;
   GXPrimitive mCurrentPrimitive = GX_TRIANGLES;
@@ -201,6 +223,8 @@ class GlobalState {
   std::array<GXTexRegionPriv, GX_MAX_TEXMAP> mLoadedTexRegions = {};
   std::array<Tlut, GX_MAX_TLUT> mLoadedTluts = {};
   std::array<u8, GX_MAX_TEXMAP> mTlutAssignments = {};
+  std::array<Light, GX_MAX_LIGHT> mLights = {};
+  std::array<ColorChannel, 4> mColorChannels = {};
   bool mTextureDirty;
   bool mTevDirty;
 };
