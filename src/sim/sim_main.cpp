@@ -39,7 +39,7 @@ void * errorBuf;
 static GLuint gxVertexArray;
 static GLuint gxVertexBuffer;
 
-static void CompileShaderCommon(GLuint& id, const char * source) {
+static bool CompileShaderCommon(GLuint& id, const char * source) {
     glShaderSource( id, 1, &source, NULL );
     glCompileShader( id );
     glGetShaderiv(id, GL_COMPILE_STATUS, &status);
@@ -48,30 +48,27 @@ static void CompileShaderCommon(GLuint& id, const char * source) {
         glGetShaderiv(id, GL_INFO_LOG_LENGTH, &logSize);
         errorBuf = malloc( logSize * sizeof( GLchar ) );
         glGetShaderInfoLog(id, logSize, &logSize, (GLchar *)errorBuf);
-        printf( "ERROR COMPILING SHADER:\n%s\n", (GLchar *)errorBuf );
+        std::string errorMessageString = "Error compiling shader:\n" + std::string((char*)errorBuf);
+        SDL_ShowSimpleMessageBox(0, "Error compiling shader", errorMessageString.c_str(), window);
         free( errorBuf );
+        return false;
     }
+    return true;
 }
 
-static void CompileVertexShader(GLuint& id, const char * source) {
+static bool CompileVertexShader(GLuint& id, const char * source) {
     id = glCreateShader(GL_VERTEX_SHADER);
-    CompileShaderCommon(id, source);
+    return CompileShaderCommon(id, source);
 }
 
 
-static void CompileFragmentShader(GLuint& id, const char * source) {
+static bool CompileFragmentShader(GLuint& id, const char * source) {
     id = glCreateShader(GL_FRAGMENT_SHADER);
-    CompileShaderCommon(id,source);
-    GLint logLen = 0;
-    glGetShaderiv(id, GL_INFO_LOG_LENGTH, &logLen);
-    if (logLen > 1) {
-        std::vector<char> log(logLen);
-        glGetShaderInfoLog(id, logLen, nullptr, log.data());
-        printf("%s\n", log.data());
-    }
+    return CompileShaderCommon(id,source);
+
 }
 
-void LinkShader(GLuint id,GLuint vertex,GLuint fragment) {
+static bool LinkShader(GLuint id,GLuint vertex,GLuint fragment) {
     glAttachShader( id, vertex );
     glAttachShader( id, fragment );
     glLinkProgram( id );
@@ -83,8 +80,10 @@ void LinkShader(GLuint id,GLuint vertex,GLuint fragment) {
         errorBuf = malloc( logSize * sizeof( GLchar ) );
         glGetProgramInfoLog(id, logSize, &logSize, (GLchar *)errorBuf);
         glErrCode = glGetError();
-        printf( "ERROR LINKING SHADER:\n%s\n", (GLchar*)errorBuf );
+        std::string errorMessageString = "Error linking shader:\n" + std::string((char*)errorBuf);
+        SDL_ShowSimpleMessageBox(0, "Error linking shader", errorMessageString.c_str(), window);
         free( errorBuf );
+        return false;
     }
     glValidateProgram(id);
     glUseProgram(id);
@@ -92,6 +91,7 @@ void LinkShader(GLuint id,GLuint vertex,GLuint fragment) {
     glGenVertexArrays(1, &gxVertexArray);
     glBindVertexArray(gxVertexArray);
     glGenBuffers(1, &gxVertexBuffer);
+    return true;
 }
 
 static void DrawTestTriangle()
@@ -316,9 +316,15 @@ int main(int argc, char** argv) {
     glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
 
     gxShaderProgramId = glCreateProgram();
-    CompileVertexShader(gxVertexShader, SIM_GXVertexShader);
-    CompileFragmentShader(gxFragmentShader, SIM_GXFragmentShader);
-    LinkShader(gxShaderProgramId, gxVertexShader, gxFragmentShader);
+    bool vertexShaderStatus = CompileVertexShader(gxVertexShader, SIM_GXVertexShader);
+    bool fragmentShaderStatus = CompileFragmentShader(gxFragmentShader, SIM_GXFragmentShader);
+    if(!vertexShaderStatus || !fragmentShaderStatus) {
+        return -1;
+    }
+    bool linkStatus = LinkShader(gxShaderProgramId, gxVertexShader, gxFragmentShader);
+    if(!linkStatus) {
+        return -1;
+    }
     glUseProgram(gxShaderProgramId);
 
     SIM::Memory::Init();
