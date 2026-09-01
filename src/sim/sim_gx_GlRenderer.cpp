@@ -121,10 +121,18 @@ void GlRenderer::Initialize() {
         sizeof(RenderVertex),
         reinterpret_cast<void*>(offsetof(RenderVertex, texCoords)));
     
+    // Allocate tev stage uniform buffer
     glGenBuffers(1, &mTevStageUniformBuffer);
     glBindBuffer(GL_UNIFORM_BUFFER, mTevStageUniformBuffer);
     glBufferData(GL_UNIFORM_BUFFER, sizeof(TevStageConfig) * GX_MAX_TEVSTAGE, NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    
+    // Allocate lights uniform buffer
+    glGenBuffers(1, &mLightsUniformBuffer);
+    glBindBuffer(GL_UNIFORM_BUFFER, mLightsUniformBuffer);
+    glBufferData(GL_UNIFORM_BUFFER, (sizeof(Light) * 8) + (sizeof(ColorChannel) * 4), NULL, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -137,9 +145,11 @@ void GlRenderer::Initialize() {
     mNumTexGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_numTexGens");
     mTexGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texGens");
     mTevTexMapLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "tevTexMaps");
-    mTevStageConfigsBlock = glGetUniformBlockIndex(shaderProgram, "tevConfigBlock");
     mTevStageConfigsBinding = 0;
     glUniformBlockBinding(shaderProgram, mTevStageConfigsBlock, mTevStageConfigsBinding);
+    mLightConfigBlock = glGetUniformBlockIndex(shaderProgram, "lightConfigBlock");
+    mLightConfigBlockBinding = 1;
+    glUniformBlockBinding(shaderProgram, mLightConfigBlock, mLightConfigBlockBinding);
     mInitialTevColorsLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "initialTevColors");
     mNumTevStagesLocation =
@@ -219,6 +229,13 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
         gxState.SetTevDirty(false);
     }
+
+    // pass lights data. TODO: Add dirty state checker
+    glBindBuffer(GL_UNIFORM_BUFFER, mLightsUniformBuffer);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(Light) * 8, gxState.GetLightsArray());
+    glBufferSubData(GL_UNIFORM_BUFFER, sizeof(Light) * 8, sizeof(ColorChannel) * 4, gxState.GetColorChannelArray());
+    glBindBufferBase(GL_UNIFORM_BUFFER, mLightConfigBlockBinding, mLightsUniformBuffer);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
     glUniform4fv(mInitialTevColorsLocation, 4, gxState.GetInitialTevColorsArray());
 

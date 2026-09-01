@@ -22,6 +22,8 @@ struct ColorChannel {
   uint mAttnFunction;
   uint mLightingEnabled;
   uint mLightMask;
+  uint pad1;
+  uint pad2;
 };
 
 struct TexGenConfig {
@@ -74,6 +76,11 @@ void main()
 {
     gl_Position = u_projection * u_modelview * vec4(position, 1.0);
     color0 = vertex_color;
+
+    // This is just temporary to stop GL from optimizing out the lights config
+    if(u_colorChannels[0].mLightingEnabled > 0u) {
+        color0.r = u_lights[0].mColor.r;
+    }
 
     for(uint i=0u; i<u_numTexGens; i++) {
         gxTexCoords[i] = GenerateTexCoords(texCoords, u_texGens[i].mMatrixId, u_texGens[i].mType);

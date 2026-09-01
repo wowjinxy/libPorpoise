@@ -59,6 +59,7 @@ struct TexGenConfig {
   GXTexGenType mType;
 };
 
+/* MUST match the vertex shader and follow std140 layout to pack into an array */
 struct Light {
   float mPosition[4];
   float mDirection[4];
@@ -67,6 +68,7 @@ struct Light {
   float mDistAtt[4];
 };
 
+/* MUST match the vertex shader and follow std140 layout to pack into an array */
 struct ColorChannel {
   float mMaterialColor[4];
   float mAmbientColor[4];
@@ -76,6 +78,8 @@ struct ColorChannel {
   GXAttnFn mAttnFunction;
   u32 mLightingEnabled;
   u32 mLightMask;
+  u32 pad1;
+  u32 pad2;
 };
 
 class GlobalState {
@@ -153,6 +157,7 @@ class GlobalState {
   inline bool GetTevDirty() { return mTevDirty; };
   inline void SetTevDirty(bool dirty) { mTevDirty = dirty; };
   inline const Light* GetLightsArray() { return mLights.data(); };
+  inline const ColorChannel* GetColorChannelArray() { return mColorChannels.data(); };
   inline Light& GetLight(GXLightID lightId) { return mLights[lightId]; };
 
   void Reset();
@@ -223,7 +228,7 @@ class GlobalState {
   std::array<GXTexRegionPriv, GX_MAX_TEXMAP> mLoadedTexRegions = {};
   std::array<Tlut, GX_MAX_TLUT> mLoadedTluts = {};
   std::array<u8, GX_MAX_TEXMAP> mTlutAssignments = {};
-  std::array<Light, GX_MAX_LIGHT> mLights = {};
+  std::array<Light, 8> mLights = {};
   std::array<ColorChannel, 4> mColorChannels = {};
   bool mTextureDirty;
   bool mTevDirty;
