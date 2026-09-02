@@ -35,6 +35,7 @@ class GlRenderer {
   int mLightConfigBlockBinding;
   int mInitialTevColorsLocation;
   int mNumTevStagesLocation;
+  int mNumChansLocation;
 
 };
 

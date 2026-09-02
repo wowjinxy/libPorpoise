@@ -154,6 +154,7 @@ void GlRenderer::Initialize() {
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "initialTevColors");
     mNumTevStagesLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "numTevStages");
+    mNumChansLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_numChans");
 }
 
 void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimitive primitive) {
@@ -236,6 +237,8 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
     glBufferSubData(GL_UNIFORM_BUFFER, sizeof(Light) * 8, sizeof(ColorChannel) * 4, gxState.GetColorChannelArray());
     glBindBufferBase(GL_UNIFORM_BUFFER, mLightConfigBlockBinding, mLightsUniformBuffer);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+    glUniform1ui(mNumChansLocation, gxState.GetNumChannels());
 
     glUniform4fv(mInitialTevColorsLocation, 4, gxState.GetInitialTevColorsArray());
 

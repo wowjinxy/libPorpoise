@@ -3,7 +3,8 @@ R""(
 uniform uint numTevStages;
 uniform sampler2D tevTexMaps[16];
 
-smooth in vec4 color0;
+smooth in vec3 rasc;
+smooth in float rasa;
 smooth in vec2 gxTexCoords[8 /* GX_MAX_TEXCOORD */];
 out vec4 color;
 
@@ -194,10 +195,10 @@ vec3 GetTevColorArg(uint stageNum, uint argNum) {
       result = vec3(TexMapStage(stageNum, gxTexCoords[tevStageConfigs[stageNum].mTexCoordId]).a);
       break;
     case 10u: /* GX_CC_RASC */
-      result = color0.rgb;
+      result = rasc;
       break;
     case 11u: /* GX_CC_RASA */
-      result = vec3(color0.a);
+      result = vec3(rasa);
       break;
     case 12u: /* GX_CC_ONE */
       result = vec3(1.0);
@@ -241,7 +242,7 @@ float GetTevAlphaArg(uint stageNum, uint argNum) {
       result = TexMapStage(stageNum, gxTexCoords[tevStageConfigs[stageNum].mTexCoordId]).a;
       break;
     case 5u: /* GX_CA_RASA */
-      result = color0.a;
+      result = rasa;
       break;
     case 6u: /* GX_CA_KONST */
       result = 1.0; /* TODO: Not always 1.0 */
