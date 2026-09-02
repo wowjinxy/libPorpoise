@@ -161,6 +161,15 @@ const std::array<float, 16>& GlobalState::GetTextureMatrix(int id) const {
     return identity;
 }
 
+const std::array<float, 16>& GlobalState::GetNormalMatrix(int id) const {
+    if(mNormalMatrixValid[id]) {
+        return mNormalMatrices[id];
+    }
+
+    static const std::array<float, 16> identity = IdentityMatrix();
+    return identity;
+}
+
 void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
     if (data == nullptr || wordCount == 0 || address >= mXfMemory.size()) {
         return;
@@ -191,6 +200,7 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
         const u32 endAddress = address + static_cast<u32>(writableWords);
         RefreshPositionMatrices(address, endAddress);
         RefreshTextureMatrices(address, endAddress);
+        RefreshNormalMatrices(address, endAddress);
         RefreshLights(address, endAddress);
     } else {
         // XF Registers
@@ -210,23 +220,23 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
 
                 u8* colorPtr = (u8*)(&dataWords[i]);
                 if(reg <= 0x0B) {
-                    mColorChannels[GX_COLOR0 + channelNo].mAmbientColor[0] = (float)(colorPtr[0]) / 255.0f;
-                    mColorChannels[GX_COLOR0 + channelNo].mAmbientColor[1] = (float)(colorPtr[1]) / 255.0f;
-                    mColorChannels[GX_COLOR0 + channelNo].mAmbientColor[2] = (float)(colorPtr[2]) / 255.0f;
-                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[3] = (float)(colorPtr[3]) / 255.0f;
-                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[0] = (float)(colorPtr[0]) / 255.0f;
-                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[1] = (float)(colorPtr[1]) / 255.0f;
-                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[2] = (float)(colorPtr[2]) / 255.0f;
-                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[3] = (float)(colorPtr[3]) / 255.0f;
+                    mColorChannels[GX_COLOR0 + channelNo].mAmbientColor[0] = (float)(colorPtr[3]) / 255.0f;
+                    mColorChannels[GX_COLOR0 + channelNo].mAmbientColor[1] = (float)(colorPtr[2]) / 255.0f;
+                    mColorChannels[GX_COLOR0 + channelNo].mAmbientColor[2] = (float)(colorPtr[1]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[3] = (float)(colorPtr[0]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[0] = (float)(colorPtr[3]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[1] = (float)(colorPtr[2]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[2] = (float)(colorPtr[1]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mAmbientColor[3] = (float)(colorPtr[0]) / 255.0f;
                 } else {
-                    mColorChannels[GX_COLOR0 + channelNo].mMaterialColor[0] = (float)(colorPtr[0]) / 255.0f;
-                    mColorChannels[GX_COLOR0 + channelNo].mMaterialColor[1] = (float)(colorPtr[1]) / 255.0f;
-                    mColorChannels[GX_COLOR0 + channelNo].mMaterialColor[2] = (float)(colorPtr[2]) / 255.0f;
-                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[3] = (float)(colorPtr[3]) / 255.0f;
-                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[0] = (float)(colorPtr[0]) / 255.0f;
-                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[1] = (float)(colorPtr[1]) / 255.0f;
-                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[2] = (float)(colorPtr[2]) / 255.0f;
-                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[3] = (float)(colorPtr[3]) / 255.0f;
+                    mColorChannels[GX_COLOR0 + channelNo].mMaterialColor[0] = (float)(colorPtr[3]) / 255.0f;
+                    mColorChannels[GX_COLOR0 + channelNo].mMaterialColor[1] = (float)(colorPtr[2]) / 255.0f;
+                    mColorChannels[GX_COLOR0 + channelNo].mMaterialColor[2] = (float)(colorPtr[1]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[3] = (float)(colorPtr[0]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[0] = (float)(colorPtr[3]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[1] = (float)(colorPtr[2]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[2] = (float)(colorPtr[1]) / 255.0f;
+                    mColorChannels[GX_ALPHA0 + channelNo].mMaterialColor[3] = (float)(colorPtr[0]) / 255.0f;
                 }
             } else if(reg >= 0x0E && reg <= 0x11) {
                 // Channel Control
@@ -338,6 +348,27 @@ void GlobalState::RefreshPositionMatrices(u32 firstAddress, u32 endAddress) {
     }
 }
 
+void GlobalState::RefreshNormalMatrices(u32 firstAddress, u32 endAddress) {
+    constexpr u32 wordsPerMatrix = 9;
+    for (size_t slot = 0; slot < mPositionMatrices.size(); ++slot) {
+        const u32 matrixStart = static_cast<u32>(slot) * wordsPerMatrix + 0x400;
+        const u32 matrixEnd = matrixStart + wordsPerMatrix;
+        if (endAddress <= matrixStart || firstAddress >= matrixEnd) {
+            continue;
+        }
+
+        auto& matrix = mNormalMatrices[slot];
+        matrix = IdentityMatrix();
+        for (size_t row = 0; row < 3; ++row) {
+            for (size_t column = 0; column < 3; ++column) {
+                const size_t source = matrixStart + row * 3 + column;
+                matrix[row * 4 + column] = WordToFloat(mXfMemory[source]);
+            }
+        }
+        mNormalMatrixValid[slot] = true;
+    }
+}
+
 void GlobalState::RefreshTextureMatrices(u32 firstAddress, u32 endAddress) {
     constexpr u32 wordsPerMatrix = 12;
     for (size_t slot = 0; slot < mTextureMatrices.size(); ++slot) {
@@ -370,10 +401,10 @@ void GlobalState::RefreshLights(u32 firstAddress, u32 endAddress) {
 
         // Color
         u8 * lightColorPtr = (u8*)(lightXfPtr+3);
-        light.mColor[0] = (float)lightColorPtr[0] / 255.0f;
-        light.mColor[1] = (float)lightColorPtr[1] / 255.0f;
-        light.mColor[2] = (float)lightColorPtr[2] / 255.0f;
-        light.mColor[3] = (float)lightColorPtr[3] / 255.0f;
+        light.mColor[0] = (float)lightColorPtr[3] / 255.0f;
+        light.mColor[1] = (float)lightColorPtr[2] / 255.0f;
+        light.mColor[2] = (float)lightColorPtr[1] / 255.0f;
+        light.mColor[3] = (float)lightColorPtr[0] / 255.0f;
 
         // CosAtt
         light.mCosAtt[0] = *(float*)(lightXfPtr+4);

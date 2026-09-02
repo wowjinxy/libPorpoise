@@ -34,6 +34,7 @@ struct TexGenConfig {
 uniform mat4 u_projection;
 uniform mat4 u_modelview;
 uniform mat4 u_textureMtx[10];
+uniform mat4 u_normalMtx[10];
 uniform uint u_numTexGens;
 uniform uint u_numChans;
 uniform TexGenConfig u_texGens[8 /* GX_MAX_TEXCOORD */];
@@ -46,6 +47,8 @@ layout (std140) uniform lightConfigBlock {
 smooth out vec3 rasc;
 smooth out float rasa;
 smooth out vec2 gxTexCoords[8 /* GX_MAX_TEXCOORD */];
+
+vec3 calculatedNormal = vec3(0.0);
 
 vec2 GenerateTexCoords(vec2 texCoordsIn, uint matrixId, uint texGenType)
 {
@@ -72,6 +75,19 @@ vec2 GenerateTexCoords(vec2 texCoordsIn, uint matrixId, uint texGenType)
     }
 
     return result;
+}
+
+float CalcDiffuse(uint channelNum, vec3 lightDistance) {
+    float diffuseAttenuation = 1.0;
+    if(u_colorChannels[channelNum].mDiffuseFunction == 1u) {
+        /* GX_DF_SIGN */
+        diffuseAttenuation = dot(calculatedNormal, lightDistance);
+    } else if(u_colorChannels[channelNum].mDiffuseFunction == 2u) {
+        /* GX_DF_CLAMP */
+        diffuseAttenuation = max(dot(calculatedNormal, lightDistance), 0.0);
+    }
+
+    return diffuseAttenuation;
 }
 
 vec4 ProcessChannel(uint chan) {
@@ -108,15 +124,53 @@ vec4 ProcessChannel(uint chan) {
         for(uint lightNum = 0u; lightNum < 8u; lightNum++) {
             if((u_colorChannels[colorChannelNum].mLightMask & (1u << lightNum)) > 0u) {
                 // This light is enabled
+                vec3 lightDistance = u_lights[lightNum].mPosition.xyz - position;
+                float dist2 = dot(lightDistance, lightDistance);
+                float dist = sqrt(dist2);
+                lightDistance = lightDistance / dist;
 
                 //We need top calculate Attenuation, DiffuseAtten, and LightColor (given in the light struct)
+                float attenuation = 1.0;
 
-                //TODO: this is just a placeholder for now
-                lightSumColor += vec3(0.1);
+                if(u_colorChannels[colorChannelNum].mAttnFunction == 0u) {
+                    /* GX_AF_SPEC */
+                    if(dot(lightDistance, calculatedNormal) >= 0) {
+                        attenuation = max(0.0, dot(calculatedNormal, u_lights[lightNum].mDirection.xyz));
+                    } else {
+                        attenuation = 0.0;
+                    }
+                    float cos_attn = dot(u_lights[lightNum].mCosAtt.xyz, vec3(1.0, attenuation, attenuation * attenuation));
+                    float dist_attn = 1.0;
+
+                    // do the dist attenuation function
+                    if(u_colorChannels[colorChannelNum].mDiffuseFunction != 0u /* GX_DF_NONE */) {
+                        dist_attn = max(0.0, dot(normalize(u_lights[lightNum].mDistAtt.xyz), vec3(1.0, attenuation, attenuation * attenuation)));
+                    } else {
+                        dist_attn = max(0.0, dot(u_lights[lightNum].mDistAtt.xyz, vec3(1.0, attenuation, attenuation * attenuation)));
+                    }
+
+                    attenuation = max(0.0, cos_attn / dist_attn);
+                } else if(u_colorChannels[colorChannelNum].mAttnFunction == 1u) {
+                    /* GX_AF_SPOT */
+                    float cosine = max(0.0, dot(lightDistance, u_lights[lightNum].mDirection.xyz));
+                    float cos_attn = dot(u_lights[lightNum].mCosAtt.xyz, vec3(1.0, cosine, cosine * cosine));
+                    float dist_attn = dot(u_lights[lightNum].mDistAtt.xyz, vec3(1.0, dist, dist2));
+                    attenuation = max(0.0, cos_attn / dist_attn);
+                }
+
+
+
+                float diffuse = CalcDiffuse(colorChannelNum, lightDistance);
+
+
+
+                lightSumColor.r += attenuation * diffuse * u_lights[lightNum].mColor.r;
+                lightSumColor.g += attenuation * diffuse * u_lights[lightNum].mColor.g;
+                lightSumColor.b += attenuation * diffuse * u_lights[lightNum].mColor.b;
             }
         }
 
-        lightFuncColor = ambientColor + lightSumColor;
+        lightFuncColor = clamp(ambientColor + lightSumColor, vec3(0.0), vec3(1.0));
     }
 
     channelColor.rgb = materialColor * lightFuncColor;
@@ -151,15 +205,47 @@ vec4 ProcessChannel(uint chan) {
         for(uint lightNum = 0u; lightNum < 8u; lightNum++) {
             if((u_colorChannels[alphaChannelNum].mLightMask & (1u << lightNum)) > 0u) {
                 // This light is enabled
+                vec3 lightDistance = u_lights[lightNum].mPosition.xyz - position;
+                float dist2 = dot(lightDistance, lightDistance);
+                float dist = sqrt(dist2);
+                lightDistance = lightDistance / dist;
 
                 //We need top calculate Attenuation, DiffuseAtten, and LightColor (given in the light struct)
+                float attenuation = 1.0;
 
-                //TODO: this is just a placeholder for now
-                lightSumAlpha += 0.1;
+                if(u_colorChannels[alphaChannelNum].mAttnFunction == 0u) {
+                    /* GX_AF_SPEC */
+                    if(dot(lightDistance, calculatedNormal) >= 0) {
+                        attenuation = max(0.0, dot(calculatedNormal, u_lights[lightNum].mDirection.xyz));
+                    } else {
+                        attenuation = 0.0;
+                    }
+                    float cos_attn = dot(u_lights[lightNum].mCosAtt.xyz, vec3(1.0, attenuation, attenuation * attenuation));
+                    float dist_attn = 1.0;
+
+                    // do the dist attenuation function
+                    if(u_colorChannels[alphaChannelNum].mDiffuseFunction != 0u /* GX_DF_NONE */) {
+                        dist_attn = max(0.0, dot(normalize(u_lights[lightNum].mDistAtt.xyz), vec3(1.0, attenuation, attenuation * attenuation)));
+                    } else {
+                        dist_attn = max(0.0, dot(u_lights[lightNum].mDistAtt.xyz, vec3(1.0, attenuation, attenuation * attenuation)));
+                    }
+
+                    attenuation = max(0.0, cos_attn / dist_attn);
+                } else if(u_colorChannels[alphaChannelNum].mAttnFunction == 1u) {
+                    /* GX_AF_SPOT */
+                    float cosine = max(0.0, dot(lightDistance, u_lights[lightNum].mDirection.xyz));
+                    float cos_attn = dot(u_lights[lightNum].mCosAtt.xyz, vec3(1.0, cosine, cosine * cosine));
+                    float dist_attn = dot(u_lights[lightNum].mDistAtt.xyz, vec3(1.0, dist, dist2));
+                    attenuation = max(0.0, cos_attn / dist_attn);
+                }
+
+                float diffuse = CalcDiffuse(alphaChannelNum, lightDistance);
+
+                lightSumAlpha += attenuation * diffuse * u_lights[lightNum].mColor.a;
             }
         }
 
-        lightFuncAlpha = ambientAlpha + lightSumAlpha;
+        lightFuncAlpha = clamp(ambientAlpha + lightSumAlpha, 0.0, 1.0);
     }
 
     channelColor.a = materialAlpha * lightFuncAlpha;
@@ -171,6 +257,13 @@ vec4 ProcessChannel(uint chan) {
 void main()
 {
     gl_Position = u_projection * u_modelview * vec4(position, 1.0);
+
+    calculatedNormal = (vec4(normal.x, normal.y, normal.z, 0.0) * u_normalMtx[0]).xyz;
+
+    if(dot(calculatedNormal, calculatedNormal) > 1e-10) {
+        calculatedNormal = normalize(calculatedNormal);
+    }
+
     rasc = vec3(0.0);
     rasa = 0.0;
 

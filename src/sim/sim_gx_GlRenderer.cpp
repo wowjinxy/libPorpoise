@@ -142,6 +142,7 @@ void GlRenderer::Initialize() {
     mProjectionLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_projection");
     mModelViewLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_modelview");
     mTextureMtxLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_textureMtx");
+    mNormalMtxLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_normalMtx");
     mNumTexGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_numTexGens");
     mTexGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texGens");
     mTevTexMapLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "tevTexMaps");
@@ -217,6 +218,16 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
             gxState.GetTextureMatrix(i).data()
         );
     }
+
+    // TODO: support all normal matrices
+    for(int i=0; i<1;i++) {
+        glUniformMatrix4fv(
+            mNormalMtxLocation,
+            1,
+            GL_TRUE,
+            gxState.GetNormalMatrix(i).data()
+        );
+    }    
 
     glUniform1ui(mNumTexGenLocation, gxState.GetNumTexGens());
     glUniform1uiv(mTexGenLocation, sizeof(TexGenConfig) * GX_MAX_TEXCOORD, (const GLuint*)gxState.GetTexGenArray());

@@ -26,6 +26,7 @@ class GlRenderer {
   int mProjectionLocation;
   int mModelViewLocation;
   int mTextureMtxLocation;
+  int mNormalMtxLocation;
   int mNumTexGenLocation;
   int mTexGenLocation;
   int mTevTexMapLocation;
