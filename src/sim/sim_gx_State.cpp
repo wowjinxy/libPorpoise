@@ -264,6 +264,12 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
                 } else {
                   channel.mAttnFunction = GX_AF_SPOT;
                 }
+            } else if (reg == 0x18) {
+                // MTX index A
+                for (u32 j = 0; j < 4; j++) {
+                  auto texMtx = static_cast<GXTexMtx>(GetRegValue(dataWords[i], 6, 6 + j * 6));
+                  mTexGenConfigs[j].mMatrixId = texMtx;
+                }
             } else if (reg == 0x20 && wordCount - i >= 7) {
                 // Projection matrix
                 const float p0 = WordToFloat(dataWords[i]);

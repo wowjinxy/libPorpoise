@@ -21,22 +21,26 @@ class GlRenderer {
   unsigned int mVertexBuffer = 0;
   unsigned int mTevStageUniformBuffer = 0;
   unsigned int mLightsUniformBuffer = 0;
+  unsigned int mMatrixMemoryUniformBuffer = 0;
 
   // Shader Uniform locations
   int mProjectionLocation;
-  int mModelViewLocation;
-  int mTextureMtxLocation;
   int mNormalMtxLocation;
   int mNumTexGenLocation;
-  int mTexGenLocation;
+  int mTexGenMatrixLocation[GX_MAX_TEXCOORD];
+  int mTexGenTypeLocation[GX_MAX_TEXCOORD];
   int mTevTexMapLocation;
   int mTevStageConfigsBlock;
   int mTevStageConfigsBinding;
   int mLightConfigBlock;
   int mLightConfigBlockBinding;
+  int mMatrixMemoryBlock;
+  int mMatrixMemoryBlockBinding;
   int mInitialTevColorsLocation;
   int mNumTevStagesLocation;
   int mNumChansLocation;
+  int mMtxIdxALocation;
+  int mPnMtxIdxEnabledLocation;
 
 };
 

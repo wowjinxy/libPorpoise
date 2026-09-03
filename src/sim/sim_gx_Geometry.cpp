@@ -66,6 +66,27 @@ void NoOpComponent(const u8 * source, GXCompCnt dummy, GXCompType type, u8 fract
 
 }
 
+void MatrixIdxComponent(const u8 * source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output) {
+    u32 * outputInt = (u32*)output;
+    switch (type) {
+        case GX_U8:
+            *outputInt = ReadUnaligned<u8>(source, std::endian::native);
+            break;
+        case GX_S8:
+            *outputInt = ReadUnaligned<s8>(source, std::endian::native);
+            break;
+        case GX_U16:
+            *outputInt = ReadUnaligned<u16>(source, std::endian::native);
+            break;
+        case GX_S16:
+            *outputInt = ReadUnaligned<s16>(source, std::endian::native);
+            break;
+        default:
+            *outputInt = 0;
+            break;
+    }
+}
+
 void DecodePositionComponent(const u8* source, GXCompCnt dummy, GXCompType type, u8 fraction, float * output) {
     // Actual verts *should* always be in native endian
     switch (type) {
@@ -267,9 +288,11 @@ void GeometryProcessor::ProcessByteStream(std::vector<u8>& byteStream, std::endi
     for (size_t vertexIndex = 0; vertexIndex < numVertices; ++vertexIndex) {
         RenderVertex& output = mRenderVerts[vertexIndex];
 
-        BuildRenderVertexAttr(GX_VA_PNMTXIDX, nullptr, NoOpComponent);
+        output = {0};
+
+        BuildRenderVertexAttr(GX_VA_PNMTXIDX, (float*)&output.posNormalMtxIdx, MatrixIdxComponent);
         for(int i=GX_VA_TEX0MTXIDX; i <=GX_VA_TEX7MTXIDX; i++) {
-            BuildRenderVertexAttr(static_cast<GXAttr>(i), nullptr, NoOpComponent);
+            BuildRenderVertexAttr(static_cast<GXAttr>(i), (float*)&output.texMtxIdx[i], MatrixIdxComponent);
         }
 
         BuildRenderVertexAttr(GX_VA_POS, output.position.coords, DecodePositionComponent);

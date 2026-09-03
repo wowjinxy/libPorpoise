@@ -4,6 +4,9 @@ layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 normal;
 layout (location = 2) in vec4 vertex_color;
 layout (location = 3) in vec2 texCoords;
+layout (location = 4) in uint posNormalMtxIdx;
+layout (location = 5) in uvec4 texMtxIdx0;
+layout (location = 6) in uvec4 texMtxIdx1;
 
 struct Light {
   vec4 mPosition;
@@ -32,8 +35,6 @@ struct TexGenConfig {
 };
 
 uniform mat4 u_projection;
-uniform mat4 u_modelview;
-uniform mat4 u_textureMtx[10];
 uniform mat4 u_normalMtx[10];
 uniform uint u_numTexGens;
 uniform uint u_numChans;
@@ -44,11 +45,87 @@ layout (std140) uniform lightConfigBlock {
   uniform ColorChannel u_colorChannels[4];
 };
 
+uniform uint mtxIdxA;
+uniform uint pnMtxIdxEnabled;
+
+layout (std140) uniform matrixMemoryBlock {
+    /* matrix xf memory:
+    0x0: start of position matrices,
+    0x78: start of texture matrices (4x3)
+    0x400: start of normal matrices (3x3)
+    */
+    uniform vec4 u_posTextureMatrixMemory[60];
+    uniform vec3 u_normalMatrixMemory[30];
+};
+
 smooth out vec3 rasc;
 smooth out float rasa;
 smooth out vec2 gxTexCoords[8 /* GX_MAX_TEXCOORD */];
 
 vec3 calculatedNormal = vec3(0.0);
+
+mat4 GetPositionMatrix(uint row) {
+    // A valid 3x4 matrix needs three available rows.
+    if (row > 27u)
+        return mat4(1.0);
+
+    vec4 r0 = u_posTextureMatrixMemory[row];
+    vec4 r1 = u_posTextureMatrixMemory[row+1u];
+    vec4 r2 = u_posTextureMatrixMemory[row+2u];
+
+    // GLSL constructor arguments are columns.
+    return mat4(
+        vec4(r0.x, r1.x, r2.x, 0.0),
+        vec4(r0.y, r1.y, r2.y, 0.0),
+        vec4(r0.z, r1.z, r2.z, 0.0),
+        vec4(r0.w, r1.w, r2.w, 1.0)
+    );
+}
+
+mat4 GetTextureMatrix(uint row) {
+    // A valid 3x4 matrix needs three available rows.
+    if (row > 57u || row == 0u)
+        return mat4(1.0);
+
+    vec4 r0 = u_posTextureMatrixMemory[row];
+    vec4 r1 = u_posTextureMatrixMemory[row+1u];
+    vec4 r2 = u_posTextureMatrixMemory[row+2u];
+
+    // GLSL constructor arguments are columns.
+    return mat4(
+        vec4(r0.x, r1.x, r2.x, 0.0),
+        vec4(r0.y, r1.y, r2.y, 0.0),
+        vec4(r0.z, r1.z, r2.z, 0.0),
+        vec4(r0.w, r1.w, r2.w, 1.0)
+    );
+}
+
+uint GetTexMtxIdx(uint texId) {
+    uint idx = 0u;
+    uvec4 texIdxs = texMtxIdx0;
+    if(texId > 3u) {
+        texIdxs = texMtxIdx1;
+        texId = texId - 3u;
+    }
+
+    switch(texId) {
+        default:
+        case 0u:
+            idx = texIdxs.x;
+            break;
+        case 1u:
+            idx = texIdxs.y;
+            break;
+        case 2u:
+            idx = texIdxs.z;
+            break;
+        case 3u:
+            idx = texIdxs.w;
+            break;
+    }
+
+    return idx;
+}
 
 vec2 GenerateTexCoords(vec2 texCoordsIn, uint matrixId, uint texGenType)
 {
@@ -56,7 +133,7 @@ vec2 GenerateTexCoords(vec2 texCoordsIn, uint matrixId, uint texGenType)
     switch(texGenType) {
         case 0u /* GX_TG_MTX2X4 */:
             {
-                mat4 mtx = u_textureMtx[matrixId];
+                mat4 mtx = GetTextureMatrix(matrixId);
                 //mtx[2] = vec4(0.0);
                 //mtx[3] = vec4(0.0);
                 result = (vec4(texCoordsIn, 0.0, 0.0) * mtx).xy;
@@ -64,7 +141,7 @@ vec2 GenerateTexCoords(vec2 texCoordsIn, uint matrixId, uint texGenType)
             break;
         case 1u /* GX_TG_MTX3X4 */:
             {
-                mat4 mtx = u_textureMtx[matrixId];
+                mat4 mtx = GetTextureMatrix(matrixId);
                 //mtx[3] = vec4(0.0);
                 result = (vec4(texCoordsIn, 0.0, 0.0) * mtx).xy;
             }
@@ -91,8 +168,8 @@ float CalcDiffuse(uint channelNum, vec3 lightDistance) {
 }
 
 vec4 ProcessChannel(uint chan) {
-    uint colorChannelNum = 2u * chan;
-    uint alphaChannelNum = 2u * chan + 1u;
+    uint colorChannelNum = chan;
+    uint alphaChannelNum = chan + 2u;
 
     vec4 channelColor = vec4(0.0);
 
@@ -256,9 +333,16 @@ vec4 ProcessChannel(uint chan) {
 
 void main()
 {
-    gl_Position = u_projection * u_modelview * vec4(position, 1.0);
+    uint modelViewRow = 0u;
+    if(pnMtxIdxEnabled > 0u) {
+        modelViewRow = posNormalMtxIdx;
+    } else {
+        modelViewRow = mtxIdxA * 3u;
+    }
+    mat4 modelView = GetPositionMatrix(modelViewRow);
+    gl_Position = u_projection * modelView * vec4(position, 1.0);
 
-    calculatedNormal = (vec4(normal.x, normal.y, normal.z, 0.0) * u_normalMtx[0]).xyz;
+    calculatedNormal = (vec4(normal.x, normal.y, normal.z, 0.0) * u_normalMtx[posNormalMtxIdx]).xyz;
 
     if(dot(calculatedNormal, calculatedNormal) > 1e-10) {
         calculatedNormal = normalize(calculatedNormal);

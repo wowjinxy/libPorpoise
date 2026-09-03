@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <format>
 #include <vector>
 
 #include <simulator/glad/glad.h>
@@ -120,6 +121,33 @@ void GlRenderer::Initialize() {
         GL_FALSE,
         sizeof(RenderVertex),
         reinterpret_cast<void*>(offsetof(RenderVertex, texCoords)));
+    //location = 4 in uint posNormalMtxIdx
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(
+        4,
+        1,
+        GL_UNSIGNED_INT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, posNormalMtxIdx)));
+    //location = 5 in uvec4 texMtxIdx0
+    glEnableVertexAttribArray(5);
+    glVertexAttribPointer(
+        5,
+        4,
+        GL_UNSIGNED_INT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, texMtxIdx)));
+    //location = 6 in uvec4 texMtxIdx1
+    glEnableVertexAttribArray(6);
+    glVertexAttribPointer(
+        6,
+        4,
+        GL_UNSIGNED_INT,
+        GL_FALSE,
+        sizeof(RenderVertex),
+        reinterpret_cast<void*>(offsetof(RenderVertex, texMtxIdx) + (4 * sizeof(u32))));
     
     // Allocate tev stage uniform buffer
     glGenBuffers(1, &mTevStageUniformBuffer);
@@ -133,6 +161,12 @@ void GlRenderer::Initialize() {
     glBufferData(GL_UNIFORM_BUFFER, (sizeof(Light) * 8) + (sizeof(ColorChannel) * 4), NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
+    // Allocate matrix memory uniform buffer
+    glGenBuffers(1, &mMatrixMemoryUniformBuffer);
+    glBindBuffer(GL_UNIFORM_BUFFER, mMatrixMemoryUniformBuffer);
+    glBufferData(GL_UNIFORM_BUFFER, (sizeof(float) * 240) + (sizeof(float) * 90), NULL, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -140,22 +174,30 @@ void GlRenderer::Initialize() {
     glGetIntegerv(GL_CURRENT_PROGRAM, &shaderProgram);
 
     mProjectionLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_projection");
-    mModelViewLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_modelview");
-    mTextureMtxLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_textureMtx");
     mNormalMtxLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_normalMtx");
     mNumTexGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_numTexGens");
-    mTexGenLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_texGens");
+    for(int i=0; i < GX_MAX_TEXCOORD; i++) {
+        mTexGenMatrixLocation[i] = glGetUniformLocation(static_cast<GLuint>(shaderProgram), std::format("u_texGens[{}].mMatrixId", i).c_str());
+        mTexGenTypeLocation[i] = glGetUniformLocation(static_cast<GLuint>(shaderProgram), std::format("u_texGens[{}].mType", i).c_str());
+    }
+
+
     mTevTexMapLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "tevTexMaps");
     mTevStageConfigsBinding = 0;
     glUniformBlockBinding(shaderProgram, mTevStageConfigsBlock, mTevStageConfigsBinding);
     mLightConfigBlock = glGetUniformBlockIndex(shaderProgram, "lightConfigBlock");
     mLightConfigBlockBinding = 1;
     glUniformBlockBinding(shaderProgram, mLightConfigBlock, mLightConfigBlockBinding);
+    mMatrixMemoryBlock = glGetUniformBlockIndex(shaderProgram, "matrixMemoryBlock");
+    mMatrixMemoryBlockBinding = 2;
+    glUniformBlockBinding(shaderProgram, mMatrixMemoryBlock, mMatrixMemoryBlockBinding);
     mInitialTevColorsLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "initialTevColors");
     mNumTevStagesLocation =
         glGetUniformLocation(static_cast<GLuint>(shaderProgram), "numTevStages");
     mNumChansLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "u_numChans");
+    mMtxIdxALocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "mtxIdxA");
+    mPnMtxIdxEnabledLocation = glGetUniformLocation(static_cast<GLuint>(shaderProgram), "pnMtxIdxEnabled");
 }
 
 void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimitive primitive) {
@@ -203,21 +245,6 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
         1,
         GL_TRUE,
         gxState.GetProjectionMatrix().data());
-    glUniformMatrix4fv(
-        mModelViewLocation,
-        1,
-        GL_TRUE,
-        gxState.GetPositionMatrix().data());
-    
-    // TODO: support all texture matrices
-    for(int i=0; i<1;i++) {
-        glUniformMatrix4fv(
-            mTextureMtxLocation,
-            1,
-            GL_TRUE,
-            gxState.GetTextureMatrix(i).data()
-        );
-    }
 
     // TODO: support all normal matrices
     for(int i=0; i<1;i++) {
@@ -230,7 +257,11 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
     }    
 
     glUniform1ui(mNumTexGenLocation, gxState.GetNumTexGens());
-    glUniform1uiv(mTexGenLocation, sizeof(TexGenConfig) * GX_MAX_TEXCOORD, (const GLuint*)gxState.GetTexGenArray());
+    for(int i=0; i < GX_MAX_TEXCOORD; i++) {
+        glUniform1ui(mTexGenMatrixLocation[i], gxState.GetTexGenArray()[i].mMatrixId);
+        glUniform1ui(mTexGenTypeLocation[i], gxState.GetTexGenArray()[i].mType);
+    }
+
     
     glUniform1iv(mTevTexMapLocation, GX_MAX_TEVSTAGE, (const GLint*)gxState.GetTevTexMapArray());
 
@@ -242,12 +273,24 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
         gxState.SetTevDirty(false);
     }
 
+    //upload matrix memory position + texture
+    glBindBuffer(GL_UNIFORM_BUFFER, mMatrixMemoryUniformBuffer);
+    const float * matrixMem = gxState.GetXfMemoryPointer();
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, 240 * sizeof(float), gxState.GetXfMemoryPointer());
+    // upload matrix memory normal mtx
+    glBufferSubData(GL_UNIFORM_BUFFER, 240 * sizeof(float), 90 * sizeof(float), gxState.GetXfMemoryPointer() + 0x400);
+    glBindBufferBase(GL_UNIFORM_BUFFER, mMatrixMemoryBlockBinding, mMatrixMemoryUniformBuffer);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
     // pass lights data. TODO: Add dirty state checker
     glBindBuffer(GL_UNIFORM_BUFFER, mLightsUniformBuffer);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(Light) * 8, gxState.GetLightsArray());
     glBufferSubData(GL_UNIFORM_BUFFER, sizeof(Light) * 8, sizeof(ColorChannel) * 4, gxState.GetColorChannelArray());
     glBindBufferBase(GL_UNIFORM_BUFFER, mLightConfigBlockBinding, mLightsUniformBuffer);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+    glUniform1ui(mMtxIdxALocation, gxState.GetCurrentPositionMtxIdx());
+    glUniform1ui(mPnMtxIdxEnabledLocation, gxState.GetVertexDescriptor(GX_VA_PNMTXIDX) != GX_NONE);
 
     glUniform1ui(mNumChansLocation, gxState.GetNumChannels());
 

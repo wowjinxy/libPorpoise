@@ -9,6 +9,8 @@
 namespace SIM::GX {
 
 struct RenderVertex {
+    uint posNormalMtxIdx;
+    uint texMtxIdx[8];
     // Position
     union{
         struct {

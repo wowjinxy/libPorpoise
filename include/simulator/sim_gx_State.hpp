@@ -160,6 +160,8 @@ class GlobalState {
   inline const Light* GetLightsArray() { return mLights.data(); };
   inline const ColorChannel* GetColorChannelArray() { return mColorChannels.data(); };
   inline Light& GetLight(GXLightID lightId) { return mLights[lightId]; };
+  inline const float * GetXfMemoryPointer() { return (const float*)mXfMemory.data(); };
+  inline size_t GetCurrentPositionMtxIdx() { return mCurrentPositionMatrix; };
 
   void Reset();
   inline void SetBpRegCache(u8 regId, u32 value) {
