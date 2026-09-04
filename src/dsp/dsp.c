@@ -5,6 +5,10 @@
 
 #include "__dsp.h"
 
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_dsp.h>
+#endif
+
 #define BUILD_DATE "Dec 17 2001"
 #define BUILD_TIME "18:25:00"
 
@@ -16,49 +20,12 @@ u32 DSPReadMailFromDSP(void) { return (__DSPRegs[2] << 16) | __DSPRegs[3]; }
 
 void DSPSendMailToDSP(u32 mail)
 {
+#ifdef LIBPORPOISE_PORT
+	SIM_DSPSendMailToDSP(mail);
+#else
 	__DSPRegs[0] = mail >> 16;
 	__DSPRegs[1] = mail & 0xFFFF;
+#endif
 }
 
-// void DSPAssertInt(void)
-// {
-// 	BOOL old;
-// 	u16 tmp;
 
-// 	old          = OSDisableInterrupts();
-// 	tmp          = __DSPRegs[5];
-// 	tmp          = (tmp & ~0xA8) | 2;
-// 	__DSPRegs[5] = tmp;
-// 	OSRestoreInterrupts(old);
-// }
-
-// static int __DSP_init_flag;
-
-// void DSPInit(void)
-// {
-// 	BOOL old;
-// 	u16 tmp;
-
-// 	__DSP_debug_printf("DSPInit(): Build Date: %s %s\n", BUILD_DATE,
-// 	                   BUILD_TIME);
-
-// 	if (__DSP_init_flag == 1)
-// 		return;
-
-// 	old = OSDisableInterrupts();
-// 	__OSSetInterruptHandler(7, __DSPHandler);
-// 	__OSUnmaskInterrupts(OS_INTERRUPTMASK_DSP_DSP);
-
-// 	tmp          = __DSPRegs[5];
-// 	tmp          = (tmp & ~0xA8) | 0x800;
-// 	__DSPRegs[5] = tmp;
-
-// 	tmp          = __DSPRegs[5];
-// 	__DSPRegs[5] = tmp = tmp & ~0xAC;
-
-// 	__DSP_first_task = __DSP_last_task = __DSP_curr_task = __DSP_tmp_task
-// 	    = NULL;
-// 	__DSP_init_flag = 1;
-
-// 	OSRestoreInterrupts(old);
-// }
