@@ -154,6 +154,7 @@ class GlobalState {
   inline Tlut& GetLoadedTlut(u8 tlutName) { return mLoadedTluts[tlutName]; };
   inline u8 GetTlutAssignment(GXTexMapID texMap) { return mTlutAssignments[texMap]; };
   inline bool GetIsTextureDirty() { return mTextureDirty;};
+  inline bool GetIsDepthDirty() { return mDepthDirty; };
   inline void SetTextureDirty(bool dirty) { mTextureDirty = dirty; };
   inline bool GetTevDirty() { return mTevDirty; };
   inline void SetTevDirty(bool dirty) { mTevDirty = dirty; };
@@ -162,6 +163,9 @@ class GlobalState {
   inline Light& GetLight(GXLightID lightId) { return mLights[lightId]; };
   inline const float * GetXfMemoryPointer() { return (const float*)mXfMemory.data(); };
   inline size_t GetCurrentPositionMtxIdx() { return mCurrentPositionMatrix; };
+  inline bool GetDepthCompareEnabled() { return mDepthCompareEnabled; };
+  inline bool GetDepthUpdateEnabled() { return mDepthUpdateEnabled; };
+  inline GXCompare GetDepthFunc() { return mDepthFunc; };
 
   void Reset();
   inline void SetBpRegCache(u8 regId, u32 value) {
@@ -194,6 +198,10 @@ class GlobalState {
   inline void SetTevTexMap(u8 tevStage, GXTexMapID texMap) { mTevTexMaps[tevStage] = texMap; };
   inline void SetTlutAssignment(GXTexMapID texMap, u8 tlutName) { mTlutAssignments[texMap] = tlutName; };
   void SetTevColor(u8 reg, std::array<float, 4>& color);
+  inline void SetDepthCompareEnabled(bool enabled) { mDepthCompareEnabled = enabled; mDepthDirty = true; };
+  inline void SetDepthUpdateEnabled(bool enabled) { mDepthUpdateEnabled = enabled; mDepthDirty = true;};
+  inline void SetDepthFunc(GXCompare func) { mDepthFunc = func; mDepthDirty = true;};
+  inline void SetDepthDirty(bool dirty) { mDepthDirty = dirty; };
   void AddNativeEndianDisplayList(void * displayListPtr);
   bool IsDisplayListNativeEndian(void * displayListPtr);
 
@@ -238,6 +246,10 @@ class GlobalState {
   std::array<ColorChannel, 4> mColorChannels = {};
   bool mTextureDirty;
   bool mTevDirty;
+  GXCompare mDepthFunc;
+  bool mDepthCompareEnabled;
+  bool mDepthUpdateEnabled;
+  bool mDepthDirty;
 };
 
 void InitGlobalState();

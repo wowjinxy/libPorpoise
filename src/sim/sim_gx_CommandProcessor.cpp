@@ -400,6 +400,12 @@ void CommandProcessor::ProcessBpReg(u8 regAddr, u32 value) {
                   //s.channelId = (chanHw < 8) ? r2c[chanHw] : GX_COLOR_NULL;
                 }
             } break;
+        // Z mode
+        case 0x40: {
+            gxState.SetDepthCompareEnabled(GetRegValue(value, 1, 0) != 0);
+            gxState.SetDepthFunc(static_cast<GXCompare>(GetRegValue(value, 3, 1)));
+            gxState.SetDepthUpdateEnabled(GetRegValue(value, 1, 4) != 0);
+        } break;
         // TLUT Load
         case 0x64:
             {

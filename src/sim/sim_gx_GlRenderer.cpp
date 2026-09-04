@@ -216,6 +216,21 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
         gxState.SetTextureDirty(false);
     }
 
+    if(gxState.GetIsDepthDirty()) {
+        if(gxState.GetDepthCompareEnabled()) {
+            glEnable(GL_DEPTH_TEST);
+        } else {
+            glDisable(GL_DEPTH_TEST);
+        }
+
+        //if(gxState.GetDepthUpdateEnabled()) {
+        //    glDepthMask(GL_TRUE);
+        //} else {
+        //    glDepthMask(GL_FALSE);
+        //}
+        gxState.SetDepthDirty(false);
+    }
+
     const RenderVertex * expandedVertices;
     const RenderVertex* drawVertices = vertices;
     size_t numDrawVertices = numVertices;
