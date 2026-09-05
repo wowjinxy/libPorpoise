@@ -3,6 +3,9 @@
 #include <dolphin/hw_regs.h>
 #include <dolphin/os.h>
 #include <macros.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_ai.h>
+#endif
 
 static AISCallback __AIS_Callback;
 static AIDCallback __AID_Callback;
@@ -67,7 +70,11 @@ u32 AIGetStreamSampleCount(void) {
 
 void AIResetStreamSampleCount(void)
 {
+	#ifdef LIBPORPOISE_PORT
+	SIM_AISetRegValue(0, (__AIRegs[0] & ~0x20) | 0x20);
+	#else
 	__AIRegs[0] = (__AIRegs[0] & ~0x20) | 0x20;
+	#endif
 }
 
 inline void AISetStreamTrigger(u32 trigger) { __AIRegs[3] = trigger; }
@@ -90,8 +97,15 @@ void AISetStreamPlayState(u32 state)
 			AISetStreamVolLeft(0);
 			old = OSDisableInterrupts();
 			__AI_SRC_INIT();
+			#ifdef LIBPORPOISE_PORT
+			u32 reg0tmp = __AIRegs[0];
+			SET_REG_FIELD(0, reg0tmp, 1, 5, 1);
+			SET_REG_FIELD(0, reg0tmp, 1, 0, AI_STREAM_START);
+			SIM_AISetRegValue(0, reg0tmp);
+			#else
 			SET_REG_FIELD(0, __AIRegs[0], 1, 5, 1);
 			SET_REG_FIELD(0, __AIRegs[0], 1, 0, AI_STREAM_START);
+			#endif
 			OSRestoreInterrupts(old);
 			AISetStreamVolLeft(vol_left);
 			AISetStreamVolRight(vol_right);
@@ -112,7 +126,11 @@ void AISetDSPSampleRate(u32 rate)
 	u8 vol_right;
 
 	if (rate != AIGetDSPSampleRate()) {
+		#ifdef LIBPORPOISE_PORT
+		SIM_AISetRegValue(0, __AIRegs[0] & 0xFFFFFFBF);
+		#else
 		__AIRegs[0] = (__AIRegs[0] & 0xFFFFFFBF);
+		#endif
 		if (rate == AI_SAMPLERATE_32KHZ) {
 			vol_left   = AIGetStreamVolLeft();
 			vol_right  = AIGetStreamVolRight();
@@ -122,10 +140,20 @@ void AISetDSPSampleRate(u32 rate)
 			AISetStreamVolRight(0U);
 			old = OSDisableInterrupts();
 			__AI_SRC_INIT();
+			#ifdef LIBPORPOISE_PORT
+			u32 reg0tmp = __AIRegs[0];
+			SET_REG_FIELD(0x2D8, reg0tmp, 1, 5, 1);
+			SET_REG_FIELD(0x2D9, reg0tmp, 1, 1, afr_state);
+			SET_REG_FIELD(0x2DA, reg0tmp, 1, 0, play_state);
+			SIM_AISetRegValue(0, reg0tmp);
+			reg0tmp = __AIRegs[0];
+			SIM_AISetRegValue(0, reg0tmp | 0x40);
+			#else
 			SET_REG_FIELD(0x2D8, __AIRegs[0], 1, 5, 1);
 			SET_REG_FIELD(0x2D9, __AIRegs[0], 1, 1, afr_state);
 			SET_REG_FIELD(0x2DA, __AIRegs[0], 1, 0, play_state);
 			__AIRegs[0] |= 0x40;
+			#endif
 			OSRestoreInterrupts(old);
 			AISetStreamVolLeft(vol_left);
 			AISetStreamVolRight(vol_right);
@@ -162,12 +190,26 @@ static void __AI_set_stream_sample_rate(u32 rate)
 		AISetStreamVolRight(0);
 		AISetStreamVolLeft(0);
 		dsp_src_state = __AIRegs[0] & 0x40;
+		#ifdef LIBPORPOISE_PORT
+		u32 reg0tmp = __AIRegs[0];
+		SET_REG_FIELD(0, reg0tmp, 1, 6, 0);
+		SIM_AISetRegValue(0, reg0tmp);
+		#else
 		SET_REG_FIELD(0, __AIRegs[0], 1, 6, 0);
+		#endif
 		old = OSDisableInterrupts();
 		__AI_SRC_INIT();
+		#ifdef LIBPORPOISE_PORT
+		SIM_AISetRegValue(0,__AIRegs[0] | dsp_src_state);
+		reg0tmp = __AIRegs[0];
+		SET_REG_FIELD(0x368, reg0tmp, 1, 5, 1);
+		SET_REG_FIELD(0x369, reg0tmp, 1, 1, rate);
+		SIM_AISetRegValue(0, reg0tmp);
+		#else
 		__AIRegs[0] |= dsp_src_state;
 		SET_REG_FIELD(0x368, __AIRegs[0], 1, 5, 1);
 		SET_REG_FIELD(0x369, __AIRegs[0], 1, 1, rate);
+		#endif
 		OSRestoreInterrupts(old);
 		AISetStreamPlayState(play_state);
 		AISetStreamVolLeft(vol_left);
@@ -179,14 +221,26 @@ u32 AIGetStreamSampleRate(void) { return GET_REG_FIELD(__AIRegs[0], 1, 1); }
 
 void AISetStreamVolLeft(u8 vol)
 {
+	#ifdef LIBPORPOISE_PORT
+	u32 reg1tmp = __AIRegs[1];
+	SET_REG_FIELD(0x3A3, reg1tmp, 8, 0, vol);
+	SIM_AISetRegValue(1, reg1tmp);
+	#else
 	SET_REG_FIELD(0x3A3, __AIRegs[1], 8, 0, vol);
+	#endif
 }
 
 u8 AIGetStreamVolLeft(void) { return GET_REG_FIELD(__AIRegs[1], 8, 0); }
 
 void AISetStreamVolRight(u8 vol)
 {
+	#ifdef LIBPORPOISE_PORT
+	u32 reg1tmp = __AIRegs[1];
+	SET_REG_FIELD(0x3CC, reg1tmp, 8, 8, vol);
+	SIM_AISetRegValue(1, reg1tmp);
+	#else
 	SET_REG_FIELD(0x3CC, __AIRegs[1], 8, 8, vol);
+	#endif
 }
 
 u8 AIGetStreamVolRight(void) { return (__AIRegs[1] & (0xFF << 8)) >> 8; }
@@ -227,7 +281,11 @@ static void __AISHandler(__OSInterrupt interrupt, OSContext* context)
 {
 	OSContext exceptionContext;
 
+	#ifdef LIBPORPOISE_PORT
+	SIM_AISetRegValue(0, __AIRegs[0] | 8);
+	#else
 	__AIRegs[0] |= 8;
+	#endif
 	OSClearContext(&exceptionContext);
 	OSSetCurrentContext(&exceptionContext);
 	if (__AIS_Callback) {
@@ -314,20 +372,42 @@ void __AI_SRC_INIT(void)
 #endif
 
 	while (!done) {
+		#ifdef LIBPORPOISE_PORT
+		u32 tmpReg0 = __AIRegs[0];
+		SET_REG_FIELD(0, tmpReg0, 1, 5, 1);
+		SET_REG_FIELD(0, tmpReg0, 1, 1, 0);
+		SET_REG_FIELD(0, tmpReg0, 1, 0, AI_STREAM_START);
+		SIM_AISetRegValue(0, tmpReg0);
+		#else
 		SET_REG_FIELD(0, __AIRegs[0], 1, 5, 1);
 		SET_REG_FIELD(0, __AIRegs[0], 1, 1, 0);
 		SET_REG_FIELD(0, __AIRegs[0], 1, 0, AI_STREAM_START);
+		#endif
 		temp0 = __AIRegs[2];
 		while (temp0 == __AIRegs[2]) { }
 		rising_32khz = OSGetTime();
+		#ifdef LIBPORPOISE_PORT
+		tmpReg0 = __AIRegs[0];
+		SET_REG_FIELD(0, tmpReg0, 1, 1, 1);
+		SET_REG_FIELD(0, tmpReg0, 1, 0, AI_STREAM_START);
+		SIM_AISetRegValue(0, tmpReg0);
+		#else
 		SET_REG_FIELD(0, __AIRegs[0], 1, 1, 1);
 		SET_REG_FIELD(0, __AIRegs[0], 1, 0, AI_STREAM_START);
+		#endif
 		temp1 = __AIRegs[2];
 		while (temp1 == __AIRegs[2]) { }
 		rising_48khz = OSGetTime();
 		diff         = rising_48khz - rising_32khz;
+		#ifdef LIBPORPOISE_PORT
+		tmpReg0 = __AIRegs[0];
+		SET_REG_FIELD(0, tmpReg0, 1, 1, 0);
+		SET_REG_FIELD(0, tmpReg0, 1, 0, AI_STREAM_STOP);
+		SIM_AISetRegValue(0, tmpReg0);
+		#else
 		SET_REG_FIELD(0, __AIRegs[0], 1, 1, 0);
 		SET_REG_FIELD(0, __AIRegs[0], 1, 0, AI_STREAM_STOP);
+		#endif
 		if (diff < bound_32KHz - buffer) {
 			temp = min_wait;
 			done = 1;

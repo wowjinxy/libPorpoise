@@ -4,6 +4,7 @@
 #include <dolphin/dvd.h>
 #include <simulator/sim.hpp>
 #include <simulator/sim.h>
+#include <simulator/sim_ai.hpp>
 #include <simulator/sim_aram.hpp>
 #include <simulator/sim_dsp.hpp>
 #include <simulator/sim_gx_State.hpp>
@@ -330,6 +331,7 @@ int main(int argc, char** argv) {
 
     SIM::Memory::Init();
     SIM::ARAM::Init();
+    SIM::AI::Init();
     SIM::DSP::Init();
     SIM::GX::Init();
 
