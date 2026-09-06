@@ -4,7 +4,12 @@
 
 namespace SIM::DSP {
 
-ZeldaMicrocode::ZeldaMicrocode() {
+ZeldaMicrocode::ZeldaMicrocode(u32 crc) {
+    switch(crc) {
+        case 0xA766829F: /* Animal Crossing */
+            mFlags = LightProtocol | GBACryptoSupport | NoCommand0D;
+            break;
+    }
     mCurrentState = State::Ready;
 }
 
@@ -18,14 +23,13 @@ void ZeldaMicrocode::ReceiveMail(u32 mail) {
 
         default:
             break;
-
     }
 }
 
 u32 ZeldaMicrocode::GetOutboundMail() {
     switch(mCurrentState) {
         case State::Ready:
-            return 0;
+            return 0x88881111;
         default:
             return 0;
     }

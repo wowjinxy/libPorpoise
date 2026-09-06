@@ -6,6 +6,7 @@
 #include "simulator/sim_dsp_ZeldaMicrocode.hpp"
 #include "simulator/sim_memory.hpp"
 #include "simulator/sim_crc32.h"
+#include "dolphin/os/OSInterrupt.h"
 
 #include <SDL2/SDL.h>
 
@@ -80,9 +81,9 @@ void UploadMicrocode(u32 iramMmemAddrHndl, u32 iramAddr, u32 iramLength, u32 ara
         u32 microcodeCRC = SIM_crc32buf(microcode, iramLength);
 
         switch(microcodeCRC) {
-            case 0xA766829F: /* Animal Crossing Zelda Microcode */
+            case 0xA766829F: /* Zelda Microcode */
                 delete sMicrocode;
-                sMicrocode = new ZeldaMicrocode();
+                sMicrocode = new ZeldaMicrocode(microcodeCRC);
                 break;
             default:
                 OSReport("DSP: Unknown microcode!\n");
@@ -92,6 +93,13 @@ void UploadMicrocode(u32 iramMmemAddrHndl, u32 iramAddr, u32 iramLength, u32 ara
         if(microcodeCRC != 0) {
             printf("Here\n");
         }
+    }
+}
+
+void CallInterrupt() {
+    __OSInterruptHandler dspHandler = __OSGetInterruptHandler(__OS_INTERRUPT_DSP_DSP);
+    if(dspHandler) {
+        dspHandler(__OS_INTERRUPT_DSP_DSP, NULL);
     }
 }
 
