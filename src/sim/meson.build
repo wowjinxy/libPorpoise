@@ -1,9 +1,12 @@
 libsim_srcs = files(
     'glad.c',
     'sim_ai.cpp',
+    'sim_audio.cpp',
     'sim_aram.cpp',
     'sim_crc32.c',
     'sim_dsp.cpp',
+    'sim_dsp_BootupMicrocode.cpp',
+    'sim_dsp_ZeldaMicrocode.cpp',
     'sim_dvd.cpp',
     'sim_main.cpp',
     'sim_memory.cpp',

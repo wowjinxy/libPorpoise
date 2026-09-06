@@ -11,27 +11,32 @@
 namespace SIM::DSP {
 
 enum class ThreadMessageType {
- DspMail,
+ SendMailToDSP,
+ ReadMailFromDSP,
+ LoadMicrocode,
  Count
+};
+
+struct ReadMailMessage {
+   SDL_sem * semaphore;
+   u32 * mailValue;
 };
 
 struct ThreadMessage {
  ThreadMessage(){};
  ThreadMessageType mType;
- u32 mMail;
-};
+ union {
+   u32 mSendMail;
+   ReadMailMessage mReadMail;
+ };
 
-class Processor {
- public:
-    Processor() {};
-
- private:
-    IMicrocode * mMicrocode;
 };
 
 void Init();
 int MainThread(void * arg);
 void SendMailToDSP(u32 mail);
+u32 ReadMailFromDSP();
+void UploadMicrocode(u32 iramMmemAddrHndl, u32 iramAddr, u32 iramLength, u32 aramMmemAddr, u32 dspInitVector);
 
 }
 

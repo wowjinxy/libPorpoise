@@ -422,6 +422,9 @@ void __AI_SRC_INIT(void)
 			walking = 1;
 			Init_Cnt++;
 		}
+		#ifdef LIBPORPOISE_PORT
+		done = 1;
+		#endif
 	}
 	while (rising_48khz + temp > OSGetTime()) { }
 #if DEBUG

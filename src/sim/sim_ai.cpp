@@ -15,29 +15,6 @@ void Init() {
     sAiThread = SDL_CreateThread(MainThread, "SIM::AI", nullptr);
 }
 
-typedef union {
-    u32 raw;
-    struct {
-        u32 playingStatus:1;
-        u32 auxFrequency:1;
-        u32 interruptMask:1;
-        u32 interruptStatus:1;
-        u32 interruptValid:1;
-        u32 sampleCounterReset:1;
-        u32 dspSampleRate:1;
-        u32 unused:25;
-    };
-} ControlRegister;
-
-typedef union {
-    u32 raw;
-    struct {
-        u8 left;
-        u8 right;
-        u16 unused; 
-    };
-} VolumeRegister;
-
 int MainThread(void * arg) {
     while(true) {
         //Wait for messages

@@ -14,9 +14,21 @@
 
 u32 DSPCheckMailToDSP(void) { return (__DSPRegs[0] & (1 << 15)) >> 15; }
 
-u32 DSPCheckMailFromDSP(void) { return (__DSPRegs[2] & (1 << 15)) >> 15; }
+u32 DSPCheckMailFromDSP(void) { 
+	#ifdef LIBPORPOISE_PORT
+	return (SIM_DSPReadMailFromDSP() != 0);
+	#else
+	return (__DSPRegs[2] & (1 << 15)) >> 15; 
+	#endif
+}
 
-u32 DSPReadMailFromDSP(void) { return (__DSPRegs[2] << 16) | __DSPRegs[3]; }
+u32 DSPReadMailFromDSP(void) { 
+	#ifdef LIBPORPOISE_PORT
+	return SIM_DSPReadMailFromDSP();
+	#else
+	return (__DSPRegs[2] << 16) | __DSPRegs[3]; 
+	#endif
+}
 
 void DSPSendMailToDSP(u32 mail)
 {

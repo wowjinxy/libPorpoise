@@ -11,7 +11,7 @@ namespace SIM::DSP {
 class IMicrocode {
     public:
         virtual void ReceiveMail(u32 mail) = 0;
-    // There will probably be more here
+        virtual u32 GetOutboundMail() = 0;
 };
 
 }

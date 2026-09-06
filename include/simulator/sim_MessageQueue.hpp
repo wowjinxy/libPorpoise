@@ -60,6 +60,19 @@ public:
         read_pos %= capacity;
         --in_use;
     }
+
+    // Try to read the first message without popping it
+    // Non blocking: if no message exists, returns false and msgOut is not written
+    bool TryReadMessage(T& msgOut) {
+        SDL_LockMutex(mutex);
+        if(write_pos == read_pos) {
+            SDL_UnlockMutex(mutex);
+            return false;
+        }
+        T ret = data[read_pos];
+        SDL_UnlockMutex(mutex);
+        return ret;
+    }
 	
 	T ReceiveMessage() {
         while(in_use == 0) {

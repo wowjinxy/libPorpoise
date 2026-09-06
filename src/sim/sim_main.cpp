@@ -6,6 +6,7 @@
 #include <simulator/sim.h>
 #include <simulator/sim_ai.hpp>
 #include <simulator/sim_aram.hpp>
+#include <simulator/sim_audio.hpp>
 #include <simulator/sim_dsp.hpp>
 #include <simulator/sim_gx_State.hpp>
 #include <simulator/sim_memory.hpp>
@@ -331,6 +332,7 @@ int main(int argc, char** argv) {
 
     SIM::Memory::Init();
     SIM::ARAM::Init();
+    SIM::Audio::Init();
     SIM::AI::Init();
     SIM::DSP::Init();
     SIM::GX::Init();
