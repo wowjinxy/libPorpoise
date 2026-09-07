@@ -16,6 +16,7 @@ void OSInitMessageQueue(OSMessageQueue* queue, OSMessage* msgArray, s32 msgCount
 	queue->usedCount  = 0;
 	#ifdef LIBPORPOISE_PORT
 	queue->sdlSemaphore = (void*)SDL_CreateSemaphore(0);
+	queue->sdlMutex = (void*)SDL_CreateMutex();
 	#endif
 }
 
@@ -28,10 +29,16 @@ BOOL OSSendMessage(OSMessageQueue* queue, OSMessage msg, s32 flags)
 	u32 interrupt;
 
 	interrupt = OSDisableInterrupts();
+	#ifdef LIBPORPOISE_PORT
+	SDL_LockMutex(queue->sdlMutex);
+	#endif
 
 	while (queue->msgCount <= queue->usedCount) {
 		if (!(flags & OS_MSG_PERSISTENT)) {
 			OSRestoreInterrupts(interrupt);
+			#ifdef LIBPORPOISE_PORT
+			SDL_UnlockMutex(queue->sdlMutex);
+			#endif
 			return FALSE;
 		}
 
@@ -49,6 +56,9 @@ BOOL OSSendMessage(OSMessageQueue* queue, OSMessage msg, s32 flags)
 
 	OSWakeupThread(&queue->queueReceive);
 	OSRestoreInterrupts(interrupt);
+	#ifdef LIBPORPOISE_PORT
+	SDL_UnlockMutex(queue->sdlMutex);
+	#endif
 	return TRUE;
 }
 
@@ -60,15 +70,22 @@ BOOL OSReceiveMessage(OSMessageQueue* queue, OSMessage* buffer, s32 flags)
 	u32 interrupt;
 
 	interrupt = OSDisableInterrupts();
+	#ifdef LIBPORPOISE_PORT
+	SDL_LockMutex(queue->sdlMutex);
+	#endif
 
 	while (queue->usedCount == 0) {
 		if (!(flags & OS_MSG_PERSISTENT)) {
 			OSRestoreInterrupts(interrupt);
+			#ifdef LIBPORPOISE_PORT
+			SDL_UnlockMutex(queue->sdlMutex);
+			#endif
 			return FALSE;
 		}
-
 		#ifdef LIBPORPOISE_PORT
+		SDL_UnlockMutex(queue->sdlMutex);
 		SDL_SemWait((SDL_sem*)queue->sdlSemaphore);
+		SDL_LockMutex(queue->sdlMutex);
 		#else
 		OSSleepThread(&queue->queueReceive);
 		#endif
@@ -83,6 +100,9 @@ BOOL OSReceiveMessage(OSMessageQueue* queue, OSMessage* buffer, s32 flags)
 
 	OSWakeupThread(&queue->queueSend);
 	OSRestoreInterrupts(interrupt);
+	#ifdef LIBPORPOISE_PORT
+	SDL_UnlockMutex(queue->sdlMutex);
+	#endif
 	return TRUE;
 }
 

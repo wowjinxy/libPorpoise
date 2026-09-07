@@ -28,7 +28,9 @@ static void ProcessDma() {
         sDmaAddress += framesCopied;
         sDmaLength = sDmaLength - framesCopied;
         if(sDmaLength <= 0) {
+            SDL_UnlockMutex(sDmaMutex);
             CallDmaInterrupt();
+            SDL_LockMutex(sDmaMutex);
             sDmaAddress = sDmaStartAddress;
             sDmaLength = sDmaFullLength;
         }
@@ -137,7 +139,7 @@ int MainThread(void * arg) {
             case ThreadMessageType::StartDma:
                 {
                     SDL_LockMutex(sDmaMutex);
-                    sDmaAddress = msg.mInitDma.startAddr;
+                    sDmaAddress = sDmaStartAddress;
                     sDmaLength = sDmaFullLength;
                     sDmaStarted = true;
                     SDL_UnlockMutex(sDmaMutex);

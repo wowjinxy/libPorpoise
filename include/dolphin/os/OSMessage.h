@@ -24,6 +24,7 @@ struct OSMesgQueue_s {
 	s32 usedCount;              // _1C, actual number of used messages.
 	#ifdef LIBPORPOISE_PORT
 	void * sdlSemaphore;  // Kept as void * here to avoid bringing in SDL.h in this file.
+	void * sdlMutex;
 	#endif
 };
 
