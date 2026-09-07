@@ -42,8 +42,9 @@ void SDLCallback(void *userdata, u8 *stream, int len) {
     SIM::AI::StereoFrame * outputFrames = (SIM::AI::StereoFrame *)stream;
 
 
-    SIM::AI::ConsumeAudio(frames, outputFrames);
+    u32 num = SIM::AI::ConsumeAudio(frames, outputFrames);
 
+    if(num > 0) {
     // This plays static, for testing
     //s16 * frames16 = (s16*)stream;
     //for(int i=0; i < len / 2; i++) {
@@ -51,6 +52,9 @@ void SDLCallback(void *userdata, u8 *stream, int len) {
     //    s16 value = rand();
     //    frames16[i] = value;
     //}
+    }
+
+
 }
 
 }
