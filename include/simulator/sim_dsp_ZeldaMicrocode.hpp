@@ -80,6 +80,9 @@ class ZeldaMicrocode : public IMicrocode {
         s16 * mOutputRightBufferAddr;
         u32 mSyncMaxVoiceId;
         std::array<u16, 256> mSyncVoiceSkipFlags{};
+
+        u32 mCurrentVoice;
+        u32 mCurrentFrame;
 };
 
 }

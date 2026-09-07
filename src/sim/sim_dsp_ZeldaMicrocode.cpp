@@ -196,6 +196,9 @@ void ZeldaMicrocode::RunCommand(Command& cmd) {
                 mOutputLeftBufferAddr = (s16*)(cmd.mCommandMails[0]);
                 mOutputRightBufferAddr = (s16*)(cmd.mCommandMails[1]);
 
+                mCurrentVoice = 0;
+                mCurrentFrame = 0;
+
                 if(mFlags & LightProtocol) {
                     SendAck(mRequestedFrames);
 
@@ -244,13 +247,33 @@ void ZeldaMicrocode::SendAck(u16 syncValue) {
 void ZeldaMicrocode::RenderAudio() {
     printf("ZeldaMicrocode::RenderAudio\n");
 
-    for(int i=0; i < mRequestedFrames; i++) {
+    while(mCurrentFrame < mRequestedFrames) {
+        
+
+        while(mCurrentVoice < mVoicesPerFrame) {
+
+            if(mCurrentVoice >= mSyncMaxVoiceId) {
+                return;
+            }
+
+
+
+            mCurrentVoice++;
+        }
+
+        // Finalize frame
+
+        mCurrentVoice = 0;
+        mSyncMaxVoiceId = 0;
+        mCurrentFrame++;
+    }
+
+    for(int i=0; i < mRequestedFrames * 80; i++) {
         // for now fill the buffer up with random junk so we can hear "something"
         int value = rand();
         mOutputLeftBufferAddr[i] = value;
         mOutputRightBufferAddr[i] = value;
     }
-
 
 
     mCurrentState = State::Ready;
