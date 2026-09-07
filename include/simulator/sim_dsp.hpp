@@ -13,7 +13,7 @@ namespace SIM::DSP {
 enum class ThreadMessageType {
  SendMailToDSP,
  ReadMailFromDSP,
- LoadMicrocode,
+ PeriodicProc,
  Count
 };
 
@@ -38,6 +38,8 @@ void SendMailToDSP(u32 mail);
 u32 ReadMailFromDSP();
 void CallInterrupt();
 void UploadMicrocode(u32 iramMmemAddrHndl, u32 iramAddr, u32 iramLength, u32 aramMmemAddr, u32 dspInitVector);
+void RunPeriodicProcessing();
+void SetMailboxFull();
 
 }
 

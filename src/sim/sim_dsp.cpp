@@ -17,10 +17,13 @@ namespace SIM::DSP {
 static SDL_Thread* sThread;
 static SIM::MessageQueue sMessageQueue = SIM::MessageQueue<SIM::DSP::ThreadMessage>(256);
 static IMicrocode * sMicrocode;
+static SDL_mutex * sMicrocodeMutex;
+static u32 sOutboundMailboxFull;
 
 void Init() {
     sMicrocode = new BootupMicrocode();
     sThread = SDL_CreateThread(MainThread, "SIM::DSP", nullptr);
+    sMicrocodeMutex = SDL_CreateMutex();
 }
 
 int MainThread(void * arg) {
@@ -32,19 +35,25 @@ int MainThread(void * arg) {
             // Handle mail sent to DSP
             case ThreadMessageType::SendMailToDSP:
                 {
+                    SDL_LockMutex(sMicrocodeMutex);
                     sMicrocode->ReceiveMail(msg.mSendMail);
+                    SDL_UnlockMutex(sMicrocodeMutex);
                 } break;
             // Read mail from the DSP
             case ThreadMessageType::ReadMailFromDSP:
                 {
                     u32 * valuePtr = msg.mReadMail.mailValue;
+                    SDL_LockMutex(sMicrocodeMutex);
                     *valuePtr = sMicrocode->GetOutboundMail();
+                    SDL_UnlockMutex(sMicrocodeMutex);
                     SDL_SemPost(msg.mReadMail.semaphore);
                 }
-            // Upload new microcode to DSP
-            case ThreadMessageType::LoadMicrocode:
+            // DSP Periodic processing
+            case ThreadMessageType::PeriodicProc:
                 {
-
+                    SDL_LockMutex(sMicrocodeMutex);
+                    sMicrocode->OnPeriodicUpdate();
+                    SDL_UnlockMutex(sMicrocodeMutex);
                 }
             default:
                 break;
@@ -71,6 +80,7 @@ u32 ReadMailFromDSP() {
 
     sMessageQueue.SendMessage(msg);
     SDL_SemWait(msg.mReadMail.semaphore);
+    sOutboundMailboxFull = 0;
 
     return mailResult;
 }
@@ -103,6 +113,16 @@ void CallInterrupt() {
     }
 }
 
+void RunPeriodicProcessing() {
+    ThreadMessage msg;
+    msg.mType = ThreadMessageType::PeriodicProc;
+    sMessageQueue.SendMessage(msg);
+}
+
+void SetMailboxFull() {
+    sOutboundMailboxFull = 1;
+}
+
 }
 
 // C APIs for DSP
@@ -112,4 +132,8 @@ void SIM_DSPSendMailToDSP(u32 mail) {
 
 u32 SIM_DSPReadMailFromDSP() {
     return SIM::DSP::ReadMailFromDSP();
+}
+
+u32 SIM_DSPCheckMailFromDSP() {
+    return SIM::DSP::sOutboundMailboxFull;
 }

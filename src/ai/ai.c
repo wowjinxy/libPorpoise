@@ -5,6 +5,7 @@
 #include <macros.h>
 #ifdef LIBPORPOISE_PORT
 #include <simulator/sim_ai.h>
+#include <simulator/sim_memory.h>
 #endif
 
 static AISCallback __AIS_Callback;
@@ -53,6 +54,10 @@ void AIInitDMA(u32 start_addr, u32 length)
 {
 	BOOL old;
 
+	#ifdef LIBPORPOISE_PORT
+	u32 startMemHndl = SIM_Memory_CreateMemoryHandle((void*)start_addr);
+	SIM_AIInitDma(startMemHndl, length);
+	#else
 	old           = OSDisableInterrupts();
 	__DSPRegs[24] = (__DSPRegs[24] & 0xFFFFFC00) | (start_addr >> 16);
 	__DSPRegs[25] = (__DSPRegs[25] & 0xFFFF001F) | (start_addr & 0xFFFF);
@@ -60,9 +65,16 @@ void AIInitDMA(u32 start_addr, u32 length)
 	              "AIStartDMA: length must be multiple of 32 bytes");
 	__DSPRegs[27] = (__DSPRegs[27] & 0xFFFF8000) | ((length >> 5) & 0xFFFF);
 	OSRestoreInterrupts(old);
+	#endif
 }
 
-void AIStartDMA(void) { __DSPRegs[27] = __DSPRegs[27] | 0x8000; }
+void AIStartDMA(void) { 
+	#ifdef LIBPORPOISE_PORT
+	SIM_AIStartDma();
+	#else
+	__DSPRegs[27] = __DSPRegs[27] | 0x8000; 
+	#endif
+}
 
 u32 AIGetStreamSampleCount(void) {
     return __AIRegs[2];

@@ -332,11 +332,10 @@ int main(int argc, char** argv) {
 
     SIM::Memory::Init();
     SIM::ARAM::Init();
-    SIM::Audio::Init();
-    SIM::AI::Init();
     SIM::DSP::Init();
+    SIM::AI::Init();
+    SIM::Audio::Init();
     SIM::GX::Init();
-
     SIM::VI::Init();
 
     // Spawn a new thread for DolphinMain

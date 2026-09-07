@@ -6,6 +6,7 @@ namespace SIM::DSP {
 
 BootupMicrocode::BootupMicrocode() {
     mCurrentState = State::Ready;
+    SetMailboxFull();
 }
 
 BootupMicrocode::~BootupMicrocode() {
@@ -38,26 +39,31 @@ void BootupMicrocode::ReceiveMail(u32 mail) {
             mRamMmemAddr = mail;
             mRamMmemAddrSet = true;
             mCurrentState = State::Ready;
+            SetMailboxFull();
             break;
         case State::ReceiveRamAddr:
             mRamAddr = mail;
             mRamAddrSet = true;
             mCurrentState = State::Ready;
+            SetMailboxFull();
             break;
         case State::ReceiveRamLength:
             mRamLength = mail;
             mRamLengthSet = true;
             mCurrentState = State::Ready;
+            SetMailboxFull();
             break;
         case State::ReceiveAramMmemAddr:
             mAramMmemAddr = mail;
             mAramMmemAddrSet = true;
             mCurrentState = State::Ready;
+            SetMailboxFull();
             break;
         case State::ReceiveDspInitVector:
             mDspInitVector = mail;
             mDspInitVectorSet = true;
             mCurrentState = State::Ready;
+            SetMailboxFull();
             break;
     }
 
@@ -85,6 +91,9 @@ u32 BootupMicrocode::GetOutboundMail() {
             return 0;
     }
 }
+
+// Boot code does nothing periodically
+void BootupMicrocode::OnPeriodicUpdate() {}
 
 }
 

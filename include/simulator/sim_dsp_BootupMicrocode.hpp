@@ -26,6 +26,7 @@ class BootupMicrocode : public IMicrocode {
         virtual ~BootupMicrocode();
         virtual void ReceiveMail(u32 mail);
         virtual u32 GetOutboundMail();
+        virtual void OnPeriodicUpdate();
     
     private:
         State mCurrentState;

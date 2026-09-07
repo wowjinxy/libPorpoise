@@ -12,6 +12,7 @@ class IMicrocode {
     public:
         virtual void ReceiveMail(u32 mail) = 0;
         virtual u32 GetOutboundMail() = 0;
+        virtual void OnPeriodicUpdate() = 0;
 };
 
 }

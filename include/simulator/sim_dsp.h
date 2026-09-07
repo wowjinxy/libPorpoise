@@ -9,6 +9,7 @@ extern "C" {
 
 void SIM_DSPSendMailToDSP(u32 mail);
 u32 SIM_DSPReadMailFromDSP();
+u32 SIM_DSPCheckMailFromDSP();
 
 #ifdef __cplusplus
 }

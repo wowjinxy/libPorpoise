@@ -1,15 +1,30 @@
 #include <dolphin/types.h>
 #include <dolphin/hw_regs.h>
+#include <dolphin/os/OSInterrupt.h>
 
 #include "simulator/sim_ai.hpp"
 #include "simulator/sim_MessageQueue.hpp"
+#include "simulator/sim_memory.hpp"
 
 #include <SDL2/SDL.h>
 
 namespace SIM::AI {
 static SDL_Thread* sAiThread;
 static SIM::MessageQueue sMessageQueue = SIM::MessageQueue<SIM::AI::ThreadMessage>(256);
+static RingBuffer sAudioBuffer{48000};
 
+static StereoFrame * sDmaAddress = nullptr;
+static s32 sDmaLength = 0; /* Remaining DMA length in stereo frames */
+static bool sDmaStarted = false;
+
+static void ProcessDma() {
+    u32 framesCopied = sAudioBuffer.Write(sDmaAddress, sDmaLength);
+    sDmaAddress += framesCopied;
+    sDmaLength = sDmaLength - framesCopied;
+    if(sDmaLength <= 0) {
+        CallDmaInterrupt();
+    }
+}
 
 void Init() {
     sAiThread = SDL_CreateThread(MainThread, "SIM::AI", nullptr);
@@ -101,15 +116,65 @@ int MainThread(void * arg) {
                     }
                     SDL_SemPost(msg.mSetRegValue.semaphore);
                 } break;
+            case ThreadMessageType::InitDma:
+                {
+                    sDmaAddress = msg.mInitDma.startAddr;
+                    sDmaLength = msg.mInitDma.length / 4;
+                } break;
             case ThreadMessageType::StartDma:
                 {
-
+                    sDmaStarted = true;
                 } break;
+            case ThreadMessageType::StopDma:
+                {
+                    sDmaStarted = false;
+                }
             default:
                 break;
         }
     }
     return 0;
+}
+
+void CallDmaInterrupt() {
+    __OSInterruptHandler aiHandler = __OSGetInterruptHandler(__OS_INTERRUPT_DSP_AI);
+    if(aiHandler) {
+        aiHandler(__OS_INTERRUPT_DSP_AI, nullptr);
+    }
+}
+
+void CallAiInterrupt() {
+    __OSInterruptHandler aiHandler = __OSGetInterruptHandler(__OS_INTERRUPT_AI_AI);
+    if(aiHandler) {
+        aiHandler(__OS_INTERRUPT_AI_AI, nullptr);
+    }
+}
+
+u32 ConsumeAudio(u32 numFrames, StereoFrame * outputBuffer) {
+    if((__AIRegs[2] < __AIRegs[3]) && ((__AIRegs[2] + numFrames) >= __AIRegs[3])) {
+        CallAiInterrupt();
+    }
+    SIM::AI::ControlRegister aiCtrl;
+    aiCtrl.raw = __AIRegs[0];
+
+    if(aiCtrl.playingStatus) {
+        __AIRegs[2] += numFrames;
+    }
+
+    if(sDmaStarted) {
+        ProcessDma();
+    }
+    u32 retVal = sAudioBuffer.Read(outputBuffer, numFrames);
+
+    return retVal;
+}
+
+void InitDma(u32 startMemHndl, u32 length) {
+    SIM::AI::ThreadMessage msg;
+    msg.mType = ThreadMessageType::InitDma;
+    msg.mInitDma.startAddr = (StereoFrame*)SIM::Memory::MemoryHandleToAddress(startMemHndl);
+    msg.mInitDma.length = length;
+    sMessageQueue.SendMessage(msg);
 }
 
 }
@@ -129,4 +194,14 @@ void SIM_AISetRegValue(u32 reg, u32 newVal) {
     // AI thread will post to the semaphore once it has processed the request.
     SDL_SemWait(msg.mSetRegValue.semaphore);
     SDL_DestroySemaphore(msg.mSetRegValue.semaphore);
+}
+
+void SIM_AIInitDma(u32 startMemHndl, u32 length) {
+    SIM::AI::InitDma(startMemHndl, length);
+}
+
+void SIM_AIStartDma() {
+    SIM::AI::ThreadMessage msg;
+    msg.mType = SIM::AI::ThreadMessageType::StartDma;
+    SIM::AI::sMessageQueue.SendMessage(msg);
 }
