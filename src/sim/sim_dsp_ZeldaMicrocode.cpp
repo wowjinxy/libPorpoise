@@ -5,6 +5,8 @@
 
 #include <array>
 
+#include <stdlib.h>
+
 namespace SIM::DSP {
 
 ZeldaMicrocode::ZeldaMicrocode(u32 crc) {
@@ -14,6 +16,7 @@ ZeldaMicrocode::ZeldaMicrocode(u32 crc) {
             break;
     }
     mCurrentState = State::Ready;
+    printf("ZeldaState: Ready\n");
     mOutboundMail = 0x88881111;
     SetMailboxFull();
     CallInterrupt();
@@ -32,6 +35,7 @@ void ZeldaMicrocode::ReceiveMail(u32 mail) {
 }
 
 void ZeldaMicrocode::ProcessMailLight(u32 mail) {
+    printf("mail: %d\n", mail);
     switch(mCurrentState) {
         case State::Ready: {
             bool validCommand = true;
@@ -68,6 +72,7 @@ void ZeldaMicrocode::ProcessMailLight(u32 mail) {
 
             if(mNumCommandMails) {
                 mCurrentState = State::ReceiveCommand;
+                printf("ZeldaState: ReceiveCommand\n");
             } else if(validCommand) {
                 mPendingCommands.push_back(mCurrentCommand);
                 RunPendingCommands();
@@ -81,6 +86,7 @@ void ZeldaMicrocode::ProcessMailLight(u32 mail) {
                 mPendingCommands.push_back(mCurrentCommand);
                 // Run the command now
                 mCurrentState = State::Ready;
+                printf("ZeldaState: Ready\n");
                 RunPendingCommands();
             }
         } break;
@@ -93,8 +99,8 @@ void ZeldaMicrocode::ProcessMailLight(u32 mail) {
                 mSyncVoiceSkipFlags.fill(0xFFFF);
                 RenderAudio();
                 // Generate DSP interrupt
+                printf("Zelda: Calling DSP interrupt\n");
                 SIM::DSP::CallInterrupt();
-                mCurrentState = State::Ready;
             }
         } break;
 
@@ -117,7 +123,7 @@ u32 ZeldaMicrocode::GetOutboundMail() {
 }
 
 void ZeldaMicrocode::OnPeriodicUpdate() {
-    CallInterrupt();
+    //CallInterrupt();
 }
 
 void ZeldaMicrocode::RunPendingCommands() {
@@ -153,6 +159,7 @@ void ZeldaMicrocode::RunCommand(Command& cmd) {
         case 0x09:
             if(!(mFlags & LightProtocol)) {
                 mCurrentState = State::Halted;
+                printf("ZeldaState: Halted\n");
             }
             break;
         
@@ -193,6 +200,7 @@ void ZeldaMicrocode::RunCommand(Command& cmd) {
                     SendAck(mRequestedFrames);
 
                     mCurrentState = State::Rendering;
+                    printf("ZeldaState: Rendering\n");
                 } else {
                     // Not implemented
                 }
@@ -236,9 +244,17 @@ void ZeldaMicrocode::SendAck(u16 syncValue) {
 void ZeldaMicrocode::RenderAudio() {
     printf("ZeldaMicrocode::RenderAudio\n");
 
+    for(int i=0; i < mRequestedFrames; i++) {
+        // for now fill the buffer up with random junk so we can hear "something"
+        int value = rand();
+        mOutputLeftBufferAddr[i] = value;
+        mOutputRightBufferAddr[i] = value;
+    }
+
 
 
     mCurrentState = State::Ready;
+    printf("ZeldaState: Ready\n");
 }
 
 }

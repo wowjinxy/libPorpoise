@@ -19,10 +19,12 @@ static bool sDmaStarted = false;
 
 static void ProcessDma() {
     u32 framesCopied = sAudioBuffer.Write(sDmaAddress, sDmaLength);
-    sDmaAddress += framesCopied;
-    sDmaLength = sDmaLength - framesCopied;
-    if(sDmaLength <= 0) {
-        CallDmaInterrupt();
+    if(sDmaLength > 0) {
+        sDmaAddress += framesCopied;
+        sDmaLength = sDmaLength - framesCopied;
+        if(sDmaLength <= 0) {
+            CallDmaInterrupt();
+        }
     }
 }
 
