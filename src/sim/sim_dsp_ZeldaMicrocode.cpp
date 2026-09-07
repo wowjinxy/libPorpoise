@@ -72,6 +72,7 @@ void ZeldaMicrocode::ProcessMailLight(u32 mail) {
 
             if(mNumCommandMails) {
                 mCurrentState = State::ReceiveCommand;
+                mCurrentCommandMail = 0;
                 printf("ZeldaState: ReceiveCommand\n");
             } else if(validCommand) {
                 mPendingCommands.push_back(mCurrentCommand);
@@ -80,7 +81,8 @@ void ZeldaMicrocode::ProcessMailLight(u32 mail) {
         } break;
 
         case State::ReceiveCommand: {
-            mCurrentCommand.mCommandMails[4 - mNumCommandMails] = mail;
+            mCurrentCommand.mCommandMails[mCurrentCommandMail] = mail;
+            mCurrentCommandMail++;
             mNumCommandMails--;
             if(mNumCommandMails == 0) {
                 mPendingCommands.push_back(mCurrentCommand);

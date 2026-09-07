@@ -62,6 +62,7 @@ class ZeldaMicrocode : public IMicrocode {
         u32 mFlags;
         u32 mOutboundMail;
         u32 mNumCommandMails;
+        u32 mCurrentCommandMail;
         u32 mCommandId;
         Command mCurrentCommand;
         std::deque<Command> mPendingCommands;
