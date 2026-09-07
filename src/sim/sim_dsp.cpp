@@ -99,10 +99,6 @@ void UploadMicrocode(u32 iramMmemAddrHndl, u32 iramAddr, u32 iramLength, u32 ara
                 OSReport("DSP: Unknown microcode!\n");
                 break;
         }
-
-        if(microcodeCRC != 0) {
-            printf("Here\n");
-        }
     }
 }
 
