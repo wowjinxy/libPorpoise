@@ -270,7 +270,7 @@ void ZeldaMicrocode::RenderAudio() {
 
     for(int i=0; i < mRequestedFrames * 80; i++) {
         // for now fill the buffer up with random junk so we can hear "something"
-        int value = rand();
+        s16 value = rand();
         mOutputLeftBufferAddr[i] = value;
         mOutputRightBufferAddr[i] = value;
     }

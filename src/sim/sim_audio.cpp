@@ -10,6 +10,8 @@
 #include <string>
 #include <format>
 
+#include <stdlib.h>
+
 namespace SIM::Audio {
 static SIM::MessageQueue sMessageQueue = SIM::MessageQueue<SIM::Audio::ThreadMessage>(256);
 static SDL_AudioSpec sAudioSpec;
@@ -40,10 +42,15 @@ void SDLCallback(void *userdata, u8 *stream, int len) {
     SIM::AI::StereoFrame * outputFrames = (SIM::AI::StereoFrame *)stream;
 
 
-    
-    // Get AI control register
-
     SIM::AI::ConsumeAudio(frames, outputFrames);
+
+    // This plays static, for testing
+    //s16 * frames16 = (s16*)stream;
+    //for(int i=0; i < len / 2; i++) {
+    //    // for now fill the buffer up with random junk so we can hear "something"
+    //    s16 value = rand();
+    //    frames16[i] = value;
+    //}
 }
 
 }

@@ -18,13 +18,15 @@ static s32 sDmaLength = 0; /* Remaining DMA length in stereo frames */
 static bool sDmaStarted = false;
 
 static void ProcessDma() {
-    u32 framesCopied = sAudioBuffer.Write(sDmaAddress, sDmaLength);
+    u32 framesCopied = 0;
     if(sDmaLength > 0) {
+        framesCopied = sAudioBuffer.Write(sDmaAddress, sDmaLength);
         sDmaAddress += framesCopied;
         sDmaLength = sDmaLength - framesCopied;
-        if(sDmaLength <= 0) {
-            CallDmaInterrupt();
-        }
+    }
+
+    if(sDmaLength <= 0) {
+        CallDmaInterrupt();
     }
 }
 
