@@ -13,6 +13,8 @@ static SDL_Thread* sAiThread;
 static SIM::MessageQueue sMessageQueue = SIM::MessageQueue<SIM::AI::ThreadMessage>(256);
 static RingBuffer sAudioBuffer{48000};
 
+static StereoFrame * sDmaStartAddress = nullptr;
+static u32 sDmaFullLength = 0;
 static StereoFrame * sDmaAddress = nullptr;
 static s32 sDmaLength = 0; /* Remaining DMA length in stereo frames */
 static bool sDmaStarted = false;
@@ -27,6 +29,8 @@ static void ProcessDma() {
         sDmaLength = sDmaLength - framesCopied;
         if(sDmaLength <= 0) {
             CallDmaInterrupt();
+            sDmaAddress = sDmaStartAddress;
+            sDmaLength = sDmaFullLength;
         }
     }
     SDL_UnlockMutex(sDmaMutex);
@@ -126,13 +130,15 @@ int MainThread(void * arg) {
             case ThreadMessageType::InitDma:
                 {
                     SDL_LockMutex(sDmaMutex);
-                    sDmaAddress = msg.mInitDma.startAddr;
-                    sDmaLength = msg.mInitDma.length / 4;
+                    sDmaStartAddress = msg.mInitDma.startAddr;
+                    sDmaFullLength = msg.mInitDma.length / 4;
                     SDL_UnlockMutex(sDmaMutex);
                 } break;
             case ThreadMessageType::StartDma:
                 {
                     SDL_LockMutex(sDmaMutex);
+                    sDmaAddress = msg.mInitDma.startAddr;
+                    sDmaLength = sDmaFullLength;
                     sDmaStarted = true;
                     SDL_UnlockMutex(sDmaMutex);
                 } break;
