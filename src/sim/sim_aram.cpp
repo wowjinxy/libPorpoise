@@ -43,6 +43,10 @@ int MainThread(void * arg) {
     return 0;
 }
 
+void * GetAramPointer(u32 aramAddress) {
+    return (void*)((u8*)sAramBuffer + aramAddress);
+}
+
 }
 
 // C APIs for ARAM

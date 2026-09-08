@@ -112,5 +112,31 @@ BOOL OSReceiveMessage(OSMessageQueue* queue, OSMessage* buffer, s32 flags)
  */
 BOOL OSJamMessage(OSMessageQueue* queue, OSMessage msg, s32 flags)
 {
-	TRAP_UNIMPLEMENTED;
+    int enabled = OSDisableInterrupts();
+	#ifdef LIBPORPOISE_PORT
+	SDL_LockMutex(queue->sdlMutex);
+	#endif
+
+    while(queue->msgCount <= queue->usedCount) {
+        if(!(flags & 1)) {
+            OSRestoreInterrupts(enabled);
+			#ifdef LIBPORPOISE_PORT
+			SDL_UnlockMutex(queue->sdlMutex);
+			#endif
+            return 0;
+        }
+        OSSleepThread(&queue->queueSend);
+    }
+    queue->firstIndex = (queue->firstIndex + queue->msgCount - 1) % queue->msgCount;
+    ((u32*)queue->msgArray)[queue->firstIndex] = (u32)msg;
+    queue->usedCount++;
+	#ifdef LIBPORPOISE_PORT
+	SDL_SemPost((SDL_sem*)queue->sdlSemaphore);
+	#endif
+    OSWakeupThread(&queue->queueReceive);
+    OSRestoreInterrupts(enabled);
+	#ifdef LIBPORPOISE_PORT
+	SDL_UnlockMutex(queue->sdlMutex);
+	#endif
+    return 1;
 }

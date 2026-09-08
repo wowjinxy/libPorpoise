@@ -31,6 +31,7 @@ struct ThreadMessage {
 
 void Init();
 int MainThread(void * arg);
+void * GetAramPointer(u32 aramAddress);
 
 }
 
