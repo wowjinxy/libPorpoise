@@ -17,6 +17,7 @@ struct ThreadMessage {
 
 void Init();
 int MainThread(void * arg);
+void SetSampleRate(int aiSampleRate);
 void SDLCallback(void *userdata, u8 *stream, int len);
 
 }

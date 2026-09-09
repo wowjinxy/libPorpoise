@@ -3,6 +3,7 @@
 #include <dolphin/os/OSInterrupt.h>
 
 #include "simulator/sim_ai.hpp"
+#include "simulator/sim_audio.hpp"
 #include "simulator/sim_MessageQueue.hpp"
 #include "simulator/sim_memory.hpp"
 
@@ -77,6 +78,11 @@ int MainThread(void * arg) {
 
                             if(bitfield.auxFrequency != oldBitfield.auxFrequency) {
                                 // Set aux frequency
+                                SIM::Audio::SetSampleRate(bitfield.auxFrequency);
+                            }
+
+                            if(bitfield.dspSampleRate != bitfield.dspSampleRate) {
+                                
                             }
 
                             if(bitfield.interruptMask != oldBitfield.interruptMask) {

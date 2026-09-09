@@ -15,24 +15,49 @@
 namespace SIM::Audio {
 static SIM::MessageQueue sMessageQueue = SIM::MessageQueue<SIM::Audio::ThreadMessage>(256);
 static SDL_AudioSpec sAudioSpec;
+static int sSampleRate = 0;
 
-static constexpr auto OutputSampleRrate = 48000;
+static constexpr auto OutputSampleRate48 = 48000;
+static constexpr auto OutputSampleRate32 = 32000;
 static constexpr auto OutputBytesPerSample = 2;
 static constexpr auto OutputNumChannels = 2;
+static constexpr auto SdlBufferSamples = 300;
 
+static void StopAudio() {
+    SDL_CloseAudio();
+    // do we need to wait for this at all?
+}
 
-void Init() {
-    sAudioSpec.freq = OutputSampleRrate;
+static void StartAudio() {
+    if(sSampleRate == 0) {
+        sAudioSpec.freq = OutputSampleRate48;
+    } else {
+        sAudioSpec.freq = OutputSampleRate32;
+    }
+    
     sAudioSpec.format = AUDIO_S16LSB;
     sAudioSpec.channels = 2;
 
-    sAudioSpec.samples = 300;
+    sAudioSpec.samples = SdlBufferSamples;
     sAudioSpec.callback = SDLCallback;
     if(SDL_OpenAudio(&sAudioSpec, NULL) < 0) {
         std::string errorString = std::format("Error opening audio: {}", SDL_GetError());
         SDL_ShowSimpleMessageBox(0, "Audio Error", errorString.c_str(), nullptr);
     }
     SDL_PauseAudio(0);
+}
+
+
+void Init() {
+    StartAudio();
+}
+
+void SetSampleRate(int aiSampleRate) {
+    if(aiSampleRate != sSampleRate) {
+        StopAudio();
+        sSampleRate = aiSampleRate;
+        StartAudio();
+    }
 }
 
 void SDLCallback(void *userdata, u8 *stream, int len) {
@@ -43,18 +68,6 @@ void SDLCallback(void *userdata, u8 *stream, int len) {
 
 
     u32 num = SIM::AI::ConsumeAudio(frames, outputFrames);
-
-    if(num > 0) {
-    // This plays static, for testing
-    //s16 * frames16 = (s16*)stream;
-    //for(int i=0; i < len / 2; i++) {
-    //    // for now fill the buffer up with random junk so we can hear "something"
-    //    s16 value = rand();
-    //    frames16[i] = value;
-    //}
-    }
-
-
 }
 
 }
