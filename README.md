@@ -34,7 +34,7 @@ libporpoise_dep = dependency('libPorpoise')
 
 Add the following to your project's meson.options:
 ```
-option('build_target', type: 'combo', choices: ['gc', 'win64', 'linux'], value: 'gc', description: 'Target build platform')
+option('build_target', type: 'combo', choices: ['gc', 'win32', 'win64', 'linux32', 'linux64'], value: 'gc', description: 'Target build platform', yield: true)
 ```
 
 For the most part, source code changes to decomps will not be necessary. However, there are a few exceptions:
@@ -52,7 +52,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 Huge thanks to [wowjinxy](https://github.com/wowjinxy/) for originally starting this project and providing ongoing support.
 
-Check out [PorpoiseTool](github.com/wowjinxy/Porpoise-Tool) for a static recompilation tool based on libPorpoise
+Check out [PorpoiseTool](https://github.com/wowjinxy/Porpoise-Tool) for a static recompilation tool based on libPorpoise
 
 SDK source oritingated from the [pikmin decomp](https://github.com/projectPiki/pikmin).
 
