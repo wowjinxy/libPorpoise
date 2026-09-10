@@ -11,24 +11,6 @@ libPorpoise provides a compatibility layer that allows GameCube and Wii games to
 - **API Compatible**: Drop-in replacement for GC/Wii SDK functions
 - **Cross-Platform**: Builds on GameCube, Windows, Linux. Build and debug a PC port and GameCube ELF file from the same source tree
 
-## Project Structure
-
-```
-libPorpoise/
-├── include/          # Public header files (GC/Wii SDK API)
-│   └── dolphin/      # Dolphin SDK headers
-├── src/              # Implementation files
-│   ├── os/           # Original DolphinOS with conditional compilation to support other platforms
-│   ├── gx/           # Graphics subsystem
-│   ├── pad/          # Controller input
-│   ├── card/         # Memory card
-│   ├── dvd/          # Disc reading (wraps file system APIs on other platforms)
-│   └── sim/          # Simulator library. Calls application main function, handles input, 
-│                     # GX compatibility layer. Most code to make libPorpoise work on platforms 
-│                     # other than GC.
-└── standalone/       # Example program, used to test linking in CI
-```
-
 ## Usage
 
 Add to your meson project as a subproject:
@@ -55,20 +37,20 @@ Add the following to your project's meson.options:
 option('build_target', type: 'combo', choices: ['gc', 'win64', 'linux'], value: 'gc', description: 'Target build platform')
 ```
 
-
-## Contributing
-
-Contributions are welcome! Please ensure your code:
-- Maintains API compatibility with the original SDK
-- Includes appropriate documentation
-- Passes all tests
-- Follows the project coding style
+For the most part, source code changes to decomps will not be necessary. However, there are a few exceptions:
+* Big endian byte order will still need to be fixed when porting to little endian platforms
+* * GX vertex data is expected to be stored in the native endian of your target platform
+* * Display lists created through GXBeginDisplayList/GXEndDisplayList will be in native endian and flagged as such by the GX compatibility layer
+* * All other GX display lists will be treated as big endian display lists and are supported in big endian format without conversion
+* Some include paths may need to be adjusted
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgments
+## Acknowledgments/Credits
 
-This project reimplements the API of Nintendo's GameCube and Wii SDKs for preservation and porting purposes. SDK source came from the [pikmin decomp](https://github.com/projectPiki/pikmin).
+Huge thanks to [wowjinxy](https://github.com/wowjinxy/) for originally starting this project and providing ongoing support.
+Check out [PorpoiseTool](github.com/wowjinxy/Porpoise-Tool) for a static recompilation tool based on libPorpoise
+SDK source oritingated from the [pikmin decomp](https://github.com/projectPiki/pikmin).
 
