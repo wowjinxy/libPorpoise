@@ -397,7 +397,7 @@ void GlobalState::RefreshTextureMatrices(u32 firstAddress, u32 endAddress) {
 }
 
 void GlobalState::RefreshLights(u32 firstAddress, u32 endAddress) {
-    for(auto lightId = 0; lightId < GX_MAX_LIGHT; lightId++) {
+    for(auto lightId = 0; lightId < 8; lightId++) {
         u32 lightAddr = 0x600 + (lightId * 0x10);
         if((firstAddress > lightAddr + 0x10) || (endAddress < lightAddr)) {
             continue;
