@@ -100,6 +100,23 @@ mat4 GetTextureMatrix(uint row) {
     );
 }
 
+mat3 GetNormalMatrix(uint row) {
+    if(row > 27u) {
+        return mat3(1.0);
+    }
+
+    vec3 r0 = u_normalMatrixMemory[row];
+    vec3 r1 = u_normalMatrixMemory[row+1u];
+    vec3 r2 = u_normalMatrixMemory[row+2u];
+
+    // GLSL constructor arguments are columns.
+    return mat3(
+        vec3(r0.x, r1.x, r2.x),
+        vec3(r0.y, r1.y, r2.y),
+        vec3(r0.z, r1.z, r2.z)
+    );
+}
+
 uint GetTexMtxIdx(uint texId) {
     uint idx = 0u;
     uvec4 texIdxs = texMtxIdx0;
@@ -342,7 +359,9 @@ void main()
     mat4 modelView = GetPositionMatrix(modelViewRow);
     gl_Position = u_projection * modelView * vec4(position, 1.0);
 
-    calculatedNormal = (vec4(normal.x, normal.y, normal.z, 0.0) * u_normalMtx[posNormalMtxIdx]).xyz;
+    calculatedNormal = normal * GetNormalMatrix(modelViewRow);
+
+    //calculatedNormal = (vec4(normal.x, normal.y, normal.z, 0.0) * u_normalMtx[posNormalMtxIdx]).xyz;
 
     if(dot(calculatedNormal, calculatedNormal) > 1e-10) {
         calculatedNormal = normalize(calculatedNormal);

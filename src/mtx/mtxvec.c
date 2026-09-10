@@ -32,6 +32,9 @@ void PSMTXMultVec(const register Mtx44 m, const register Vec* src, register Vec*
 	psq_st f6, Vec.z(dst), 1, qr0
 	blr
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	C_MTXMultVec(m, src, dst);
+#endif
 }
 
 #ifndef LIBPORPOISE_PORT
@@ -80,6 +83,9 @@ loop:
 	psq_stu   f12, 0x4(dstBase), 0, qr0
 	psq_stu   f13, 0x8(dstBase), 1, qr0
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	C_MTXMultVecArray(m, srcBase, dstBase, count);
+#endif
 }
 
 #ifndef LIBPORPOISE_PORT
@@ -109,18 +115,32 @@ void PSMTXMultVecSR(const register Mtx44 m, const register Vec* src, register Ve
 	ps_madd f13, f5, f7, f12
 	psq_st  f13, Vec.z(dst), 1, qr0
 #endif // clang-format on
+#ifdef LIBPORPOISE_PORT
+	C_MTXMultVecSR(m, src, dst);
+#endif
 }
 
 
 void C_MTXMultVec(const register Mtx44 m, const register Vec* src, register Vec* dst)
 {
+    f32 x = m[0][0]*src->x + m[0][1]*src->y + m[0][2]*src->z + m[0][3];
+    f32 y = m[1][0]*src->x + m[1][1]*src->y + m[1][2]*src->z + m[1][3];
+    f32 z = m[2][0]*src->x + m[2][1]*src->y + m[2][2]*src->z + m[2][3];
+    dst->x = x; dst->y = y; dst->z = z;
 }
 
 void C_MTXMultVecArray(const register Mtx m, const register Vec* srcBase,
                            register Vec* dstBase, register u32 count)
 {
+    for (u32 i = 0; i < count; i++) {
+        PSMTXMultVec(m, &srcBase[i], &dstBase[i]);
+    }
 }
 
 void C_MTXMultVecSR(const register Mtx44 m, const register Vec* src, register Vec* dst)
 {
+    f32 x = m[0][0]*src->x + m[0][1]*src->y + m[0][2]*src->z;
+    f32 y = m[1][0]*src->x + m[1][1]*src->y + m[1][2]*src->z;
+    f32 z = m[2][0]*src->x + m[2][1]*src->y + m[2][2]*src->z;
+    dst->x = x; dst->y = y; dst->z = z;
 }

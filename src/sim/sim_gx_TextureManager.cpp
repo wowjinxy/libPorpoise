@@ -155,7 +155,7 @@ static void ConvertI4Generic(u8* in, u8 * out, u16 width, u16 height, GXTexMapID
                     int py = by * blockH + y;
 
                     if (px0 < width && py < height) {
-                        u8 alpha = (upper > 0) ? 0xFF : 0;
+                        u8 alpha = upper;
                         if(isIndexed) {
                             outPtr[py * width + px0] = GetTlutColor(((inputVal & 0xF0) >> 4), texMap);
                         } else {
@@ -163,7 +163,7 @@ static void ConvertI4Generic(u8* in, u8 * out, u16 width, u16 height, GXTexMapID
                         }
                     }
                     if (px1 < width && py < height) {
-                        u8 alpha = (lower > 0) ? 0xFF : 0;
+                        u8 alpha = lower;
                         if(isIndexed) {
                             outPtr[py * width + px1] = GetTlutColor(inputVal & 0x0F, texMap);
                         } else {
@@ -203,7 +203,7 @@ static void ConvertI8Generic(u8* in, u8 * out, u16 width, u16 height, GXTexMapID
                     int px = bx * blockW + x;
                     int py = by * blockH + y;
                     if (px < width && py < height) {
-                        u8 alpha = (inputVal > 0) ? 0xFF : 0;
+                        u8 alpha = inputVal;
                         if(isIndexed) {
                             outPtr[py * width + px] = GetTlutColor(inputVal, texMap);
                         } else {

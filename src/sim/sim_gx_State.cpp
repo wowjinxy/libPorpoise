@@ -270,6 +270,7 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
                   auto texMtx = static_cast<GXTexMtx>(GetRegValue(dataWords[i], 6, 6 + j * 6));
                   mTexGenConfigs[j].mMatrixId = texMtx;
                 }
+                mTexGenDirty = true;
             } else if (reg == 0x20 && wordCount - i >= 7) {
                 // Projection matrix
                 const float p0 = WordToFloat(dataWords[i]);
@@ -296,6 +297,7 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
                     mProjectionMatrix[14] = -1.0f;
                 }
                 mProjectionMatrixValid = true;
+                mProjectionMatrixDirty = true;
 
                 i += 6;
             } else if(reg >= 0x40 && reg <= 0x4F) {
@@ -320,6 +322,7 @@ void GlobalState::SetXfData(u32 address, const u8* data, size_t wordCount) {
                   texGenConfig.mType = GX_TG_SRTG;
                   //tcg.src = tgType == 2 ? GX_TG_COLOR0 : GX_TG_COLOR1;
                 }
+                mTexGenDirty = true;
             }
         }
     }

@@ -255,27 +255,25 @@ void GlRenderer::Draw(const RenderVertex * vertices, size_t numVertices, GXPrimi
     }
 
     glUseProgram(shaderProgram);
-    glUniformMatrix4fv(
-        mProjectionLocation,
-        1,
-        GL_TRUE,
-        gxState.GetProjectionMatrix().data());
 
-    // TODO: support all normal matrices
-    for(int i=0; i<1;i++) {
+    if(gxState.GetIsProjectionMatrixDirty()) {
         glUniformMatrix4fv(
-            mNormalMtxLocation,
+            mProjectionLocation,
             1,
             GL_TRUE,
-            gxState.GetNormalMatrix(i).data()
-        );
-    }    
-
-    glUniform1ui(mNumTexGenLocation, gxState.GetNumTexGens());
-    for(int i=0; i < GX_MAX_TEXCOORD; i++) {
-        glUniform1ui(mTexGenMatrixLocation[i], gxState.GetTexGenArray()[i].mMatrixId);
-        glUniform1ui(mTexGenTypeLocation[i], gxState.GetTexGenArray()[i].mType);
+            gxState.GetProjectionMatrix().data());
+        gxState.SetProjectionMatrixDirty(false);
     }
+
+    if(gxState.GetIsTexGenDirty()) {
+        glUniform1ui(mNumTexGenLocation, gxState.GetNumTexGens());
+        for(int i=0; i < GX_MAX_TEXCOORD; i++) {
+            glUniform1ui(mTexGenMatrixLocation[i], gxState.GetTexGenArray()[i].mMatrixId);
+            glUniform1ui(mTexGenTypeLocation[i], gxState.GetTexGenArray()[i].mType);
+        }
+        gxState.SetTexGenDirty(false);
+    }
+
 
     
     glUniform1iv(mTevTexMapLocation, GX_MAX_TEVSTAGE, (const GLint*)gxState.GetTevTexMapArray());

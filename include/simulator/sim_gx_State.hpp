@@ -155,6 +155,10 @@ class GlobalState {
   inline u8 GetTlutAssignment(GXTexMapID texMap) { return mTlutAssignments[texMap]; };
   inline bool GetIsTextureDirty() { return mTextureDirty;};
   inline bool GetIsDepthDirty() { return mDepthDirty; };
+  inline bool GetIsProjectionMatrixDirty() { return mProjectionMatrixDirty; };
+  inline void SetProjectionMatrixDirty(bool dirty) { mProjectionMatrixDirty = dirty; };
+  inline bool GetIsTexGenDirty() {return mTexGenDirty;};
+  inline void SetTexGenDirty(bool dirty) {mTexGenDirty = dirty;};
   inline void SetTextureDirty(bool dirty) { mTextureDirty = dirty; };
   inline bool GetTevDirty() { return mTevDirty; };
   inline void SetTevDirty(bool dirty) { mTevDirty = dirty; };
@@ -250,6 +254,8 @@ class GlobalState {
   bool mDepthCompareEnabled;
   bool mDepthUpdateEnabled;
   bool mDepthDirty;
+  bool mProjectionMatrixDirty;
+  bool mTexGenDirty;
 };
 
 void InitGlobalState();
