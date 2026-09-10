@@ -51,6 +51,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Acknowledgments/Credits
 
 Huge thanks to [wowjinxy](https://github.com/wowjinxy/) for originally starting this project and providing ongoing support.
+
 Check out [PorpoiseTool](github.com/wowjinxy/Porpoise-Tool) for a static recompilation tool based on libPorpoise
+
 SDK source oritingated from the [pikmin decomp](https://github.com/projectPiki/pikmin).
 
