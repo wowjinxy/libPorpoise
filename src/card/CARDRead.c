@@ -1,5 +1,8 @@
 #include <dolphin/card.h>
 #include <stddef.h>
+#ifdef LIBPORPOISE_PORT
+#include <stdio.h>
+#endif
 
 /**
  * @TODO: Documentation
@@ -111,6 +114,19 @@ s32 CARDReadAsync(CARDFileInfo* fileInfo, void* buffer, s32 length, s32 offset, 
 	s32 result;
 	CARDDirectoryBlock* dir;
 	CARDDir* ent;
+
+	#ifdef LIBPORPOISE_PORT
+	if(fileInfo->pcFilePtr) {
+		fseek(fileInfo->pcFilePtr, offset, SEEK_SET);
+		fread(buffer, 1, length, fileInfo->pcFilePtr);
+		if(callback) {
+			callback(fileInfo->chan, CARD_RESULT_READY);
+		}
+		return CARD_RESULT_READY;
+	}
+
+	return CARD_RESULT_FATAL_ERROR;
+	#endif
 
 	if (OFFSET(offset, CARD_SEG_SIZE) != 0 || OFFSET(length, CARD_SEG_SIZE) != 0) {
 		return CARD_RESULT_FATAL_ERROR;

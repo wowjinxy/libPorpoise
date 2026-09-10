@@ -1,6 +1,9 @@
 #include <dolphin/card.h>
 
 #include <string.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_card.h>
+#endif
 
 /**
  * @TODO: Documentation
@@ -116,6 +119,10 @@ s32 CARDFastOpen(s32 channel, s32 fileNo, CARDFileInfo* fileInfo)
 	CARDDirectoryBlock* dir;
 	CARDDir* ent;
 
+	#ifdef LIBPORPOISE_PORT
+	return SIM_CARDFastOpen(channel, fileNo, fileInfo);
+	#endif
+
 	if (fileNo < 0 || fileNo >= CARD_MAX_FILE) {
 		return CARD_RESULT_FATAL_ERROR;
 	}
@@ -160,6 +167,10 @@ s32 CARDOpen(s32 chan, const char* fileName, CARDFileInfo* fileInfo)
 	s32 result;
 	s32 fileNo;
 
+	#ifdef LIBPORPOISE_PORT
+	return SIM_CARDOpen(chan, fileName, fileInfo);
+	#endif
+
 	fileInfo->chan = -1;
 	result         = __CARDGetControlBlock(chan, &card);
 	if (result < CARD_RESULT_READY) {
@@ -188,6 +199,13 @@ s32 CARDClose(CARDFileInfo* fileInfo)
 {
 	CARDControl* card;
 	s32 result;
+
+	#ifdef LIBPORPOISE_PORT
+	if(fileInfo->pcFilePtr) {
+		fclose(fileInfo->pcFilePtr);
+	}
+	return CARD_RESULT_READY;
+	#endif
 
 	result = __CARDGetControlBlock(fileInfo->chan, &card);
 	if (result < CARD_RESULT_READY) {

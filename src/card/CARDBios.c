@@ -739,6 +739,9 @@ s32 __CARDPutControlBlock(CARDControl* card, s32 result)
  */
 s32 CARDGetResultCode(s32 chan)
 {
+	#ifdef LIBPORPOISE_PORT
+	return CARD_RESULT_READY;
+	#endif
 	CARDControl* card;
 
 	if (chan < 0 || chan >= 2) {
@@ -760,6 +763,15 @@ s32 CARDFreeBlocks(s32 chan, s32* byteNotUsed, s32* filesNotUsed)
 	CARDDirectoryBlock* dir;
 	CARDDir* ent;
 	u16 fileNo;
+	#ifdef LIBPORPOISE_PORT
+	if(byteNotUsed) {
+		*byteNotUsed = 16 * 1024 * 1024;
+	}
+	if(filesNotUsed) {
+		*filesNotUsed = 9999;
+	}
+	return CARD_RESULT_READY;
+	#endif
 
 	result = __CARDGetControlBlock(chan, &card);
 	if (result < CARD_RESULT_READY) {
@@ -828,6 +840,9 @@ s32 CARDGetSectorSize(s32 chan, u32* size)
  */
 s32 __CARDSync(s32 chan)
 {
+	#ifdef LIBPORPOISE_PORT
+	return CARD_RESULT_READY;
+	#endif
 	CARDControl* card;
 	s32 result;
 	BOOL enabled;

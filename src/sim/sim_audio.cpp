@@ -64,10 +64,16 @@ void SDLCallback(void *userdata, u8 *stream, int len) {
     int samples = len / (OutputBytesPerSample);
     int frames = samples / OutputNumChannels;
 
+    memset(stream, 0, len);
+
     SIM::AI::StereoFrame * outputFrames = (SIM::AI::StereoFrame *)stream;
 
 
     u32 num = SIM::AI::ConsumeAudio(frames, outputFrames);
+
+    if(num < frames) {
+        printf("SDL underflow\n");
+    }
 }
 
 }

@@ -1,6 +1,9 @@
 #include <dolphin/card.h>
 #include <stddef.h>
 #include <string.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_card.h>
+#endif
 
 /**
  * @TODO: Documentation
@@ -69,6 +72,14 @@ s32 CARDCreateAsync(s32 channel, const char* fileName, u32 size, CARDFileInfo* f
 	u16 fileNo;
 	u16 freeNo;
 	CARDFatBlock* fat;
+
+	#ifdef LIBPORPOISE_PORT
+	s32 status = SIM_CARDCreate(channel, fileName, size, fileInfo);
+	if(callback) {
+		callback(channel, status);
+	}
+	return status;
+	#endif
 
 	if (strlen(fileName) > (u32)CARD_FILENAME_MAX) {
 		return CARD_RESULT_NAMETOOLONG;

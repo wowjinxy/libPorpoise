@@ -4,6 +4,9 @@
 #include <dolphin/dsp.h>
 #include <dolphin/os.h>
 #include <dolphin/types.h>
+#ifdef LIBPORPOISE_PORT
+#include <stdio.h>
+#endif
 
 BEGIN_SCOPE_EXTERN_C
 
@@ -50,6 +53,9 @@ struct CARDFileInfo {
 	s32 offset; // _08
 	s32 length; // _0C
 	u16 iBlock; // _10
+#ifdef LIBPORPOISE_PORT
+	FILE * pcFilePtr; /* File descriptor used for ported platforms */
+#endif
 };
 
 // Struct for managing CARD status (size 0x6C).

@@ -7,6 +7,7 @@
 #include <simulator/sim_ai.hpp>
 #include <simulator/sim_aram.hpp>
 #include <simulator/sim_audio.hpp>
+#include <simulator/sim_card.hpp>
 #include <simulator/sim_dsp.hpp>
 #include <simulator/sim_gx_State.hpp>
 #include <simulator/sim_memory.hpp>
@@ -337,6 +338,7 @@ int main(int argc, char** argv) {
     SIM::Audio::Init();
     SIM::GX::Init();
     SIM::VI::Init();
+    SIM::CARD::Init();
 
     // Spawn a new thread for DolphinMain
     s_dolphinMainThread = SDL_CreateThread(RunDolphinMainThread, "DolphinMain", NULL);

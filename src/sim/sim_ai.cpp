@@ -81,7 +81,7 @@ int MainThread(void * arg) {
                                 SIM::Audio::SetSampleRate(bitfield.auxFrequency);
                             }
 
-                            if(bitfield.dspSampleRate != bitfield.dspSampleRate) {
+                            if(bitfield.dspSampleRate != oldBitfield.dspSampleRate) {
                                 
                             }
 

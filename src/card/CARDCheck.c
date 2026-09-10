@@ -224,6 +224,12 @@ s32 CARDCheckExAsync(s32 channel, s32* xferBytes, CARDCallback callback)
 	BOOL updateFat    = FALSE;
 	BOOL updateDir    = FALSE;
 	BOOL updateOrphan = FALSE;
+	#ifdef LIBPORPOISE_PORT
+	if(callback) {
+		callback(channel, CARD_RESULT_READY);
+	}
+	return CARD_RESULT_READY;
+	#endif
 
 	if (xferBytes) {
 		*xferBytes = 0;

@@ -1,6 +1,9 @@
 #include <dolphin/card.h>
 #include <dolphin/exi.h>
 #include <stddef.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_card.h>
+#endif
 
 static u32 SectorSizeTable[8] = {
 	8 * 1024, 16 * 1024, 32 * 1024, 64 * 1024, 128 * 1024, 256 * 1024, 0, 0,
@@ -82,6 +85,11 @@ static inline BOOL IsCard(u32 id)
  */
 s32 CARDProbeEx(s32 channel, s32* memSize, s32* sectorSize)
 {
+	#ifdef LIBPORPOISE_PORT
+	*memSize = 16;
+	*sectorSize = 8192;
+	return CARD_RESULT_READY;
+	#endif
 	u32 id;
 	CARDControl* card;
 	BOOL enabled;
@@ -322,6 +330,14 @@ void __CARDMountCallback(s32 channel, s32 result)
  */
 s32 CARDMountAsync(s32 channel, CARDMemoryCard* workArea, CARDCallback detachCallback, CARDCallback attachCallback)
 {
+	#ifdef LIBPORPOISE_PORT
+	SIM_CARDMount(channel);
+	
+	if(attachCallback) {
+		attachCallback(channel, CARD_RESULT_READY);
+	}
+	return CARD_RESULT_READY;
+	#endif
 	CARDControl* card;
 	BOOL enabled;
 

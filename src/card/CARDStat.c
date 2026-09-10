@@ -1,5 +1,8 @@
 #include <dolphin/card.h>
 #include <string.h>
+#ifdef LIBPORPOISE_PORT
+#include <simulator/sim_card.h>
+#endif
 
 /**
  * @TODO: Documentation
@@ -86,6 +89,11 @@ s32 CARDGetStatus(s32 channel, s32 fileNo, CARDStat* state)
 	if (fileNo < 0 || CARD_MAX_FILE <= fileNo) {
 		return CARD_RESULT_FATAL_ERROR;
 	}
+
+	#ifdef LIBPORPOISE_PORT
+	return SIM_CARDGetStatus(channel, fileNo, state);
+	#endif
+
 	result = __CARDGetControlBlock(channel, &card);
 	if (result < CARD_RESULT_READY) {
 		return result;

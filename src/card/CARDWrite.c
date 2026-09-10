@@ -1,5 +1,8 @@
 #include <dolphin/card.h>
 #include <stddef.h>
+#ifdef LIBPORPOISE_PORT
+#include <stdio.h>
+#endif
 
 static void EraseCallback(s32 chan, s32 result);
 
@@ -91,6 +94,18 @@ error:
  */
 s32 CARDWriteAsync(CARDFileInfo* fileInfo, void* buffer, s32 length, s32 offset, CARDCallback callback)
 {
+	#ifdef LIBPORPOISE_PORT
+	if(fileInfo->pcFilePtr) {
+		fseek(fileInfo->pcFilePtr, offset, SEEK_SET);
+		fwrite(buffer, 1, length, fileInfo->pcFilePtr);
+		if(callback) {
+			callback(fileInfo->chan, CARD_RESULT_READY);
+		}
+		return CARD_RESULT_READY;
+	}
+
+	return CARD_RESULT_FATAL_ERROR;
+	#endif
 	CARDControl* card;
 	s32 result;
 	CARDDirectoryBlock* dir;

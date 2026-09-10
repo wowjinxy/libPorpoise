@@ -3,6 +3,7 @@ libsim_srcs = files(
     'sim_ai.cpp',
     'sim_audio.cpp',
     'sim_aram.cpp',
+    'sim_card.cpp',
     'sim_crc32.c',
     'sim_dsp.cpp',
     'sim_dsp_BootupMicrocode.cpp',
