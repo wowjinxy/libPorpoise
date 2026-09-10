@@ -121,6 +121,7 @@ void PSMTXMultVecSR(const register Mtx44 m, const register Vec* src, register Ve
 }
 
 
+#ifdef LIBPORPOISE_PORT
 void C_MTXMultVec(const register Mtx44 m, const register Vec* src, register Vec* dst)
 {
     f32 x = m[0][0]*src->x + m[0][1]*src->y + m[0][2]*src->z + m[0][3];
@@ -144,3 +145,4 @@ void C_MTXMultVecSR(const register Mtx44 m, const register Vec* src, register Ve
     f32 z = m[2][0]*src->x + m[2][1]*src->y + m[2][2]*src->z;
     dst->x = x; dst->y = y; dst->z = z;
 }
+#endif
