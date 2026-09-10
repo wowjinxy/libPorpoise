@@ -824,6 +824,12 @@ void CARDGetMemSize(void)
  */
 s32 CARDGetSectorSize(s32 chan, u32* size)
 {
+	#ifdef LIBPORPOISE_PORT
+	if(size) {
+		*size = 8192;
+	}
+	return CARD_RESULT_READY;
+	#endif
 	CARDControl* card;
 	s32 result;
 

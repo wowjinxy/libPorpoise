@@ -22,6 +22,9 @@ static void DoUnmount(s32 channel, s32 result);
  */
 BOOL CARDProbe(s32 channel)
 {
+#ifdef LIBPORPOISE_PORT
+	return 1;
+#endif
 #if OS_BUILD_VERSION >= 20011002L
 	if (GameChoice & 0x80) {
 		return 0;

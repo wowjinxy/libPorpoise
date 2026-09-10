@@ -70,10 +70,6 @@ void SDLCallback(void *userdata, u8 *stream, int len) {
 
 
     u32 num = SIM::AI::ConsumeAudio(frames, outputFrames);
-
-    if(num < frames) {
-        printf("SDL underflow\n");
-    }
 }
 
 }
